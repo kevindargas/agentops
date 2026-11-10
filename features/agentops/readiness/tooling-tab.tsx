@@ -13,8 +13,6 @@ import {
   GaugeIcon,
   WrenchIcon,
 } from "lucide-react"
-import { toast } from "sonner"
-
 import {
   DataTable,
   DataTableColumnHeader,
@@ -25,6 +23,7 @@ import {
   type FacetDef,
 } from "@/components/data-table"
 import { CopyButton } from "@/components/shared/copy-button"
+import { CountPill } from "@/components/shared/count-pill"
 import { StateBadge } from "@/components/shared/status-badge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -54,6 +53,7 @@ import type {
   SnippetDef,
   ToolDef,
 } from "@/lib/readiness/types"
+import { copyText } from "./download"
 import { DomainChip, useReadiness } from "./shared"
 
 /* ------------------------------------------------------------------------ */
@@ -76,17 +76,6 @@ const languageLabel: Record<SnippetDef["language"], string> = {
 const directionLabel: Record<MetricDef["direction"], string> = {
   "higher-is-better": "Higher is better",
   "lower-is-better": "Lower is better",
-}
-
-async function copyText(text: string, title: string) {
-  try {
-    await navigator.clipboard.writeText(text)
-    toast(title, { description: "Copied to the clipboard." })
-  } catch {
-    toast("Clipboard unavailable", {
-      description: "Copying requires a secure (https) context.",
-    })
-  }
 }
 
 function plainNumber(n: number) {
@@ -172,7 +161,11 @@ function buildToolColumns(domainById: Map<DomainId, DomainDef>) {
     toolCol.accessor((r) => r.covered.length, {
       id: "covered",
       header: ({ column }) => (
-        <DataTableColumnHeader column={column} title="Controls covered" />
+        <DataTableColumnHeader
+          column={column}
+          title="Controls covered"
+          hint="Controls whose suggested-tool list includes this tool"
+        />
       ),
       cell: ({ row }) => {
         const ids = row.original.covered
@@ -201,7 +194,11 @@ function buildToolColumns(domainById: Map<DomainId, DomainDef>) {
     }),
     toolCol.accessor("inUse", {
       header: ({ column }) => (
-        <DataTableColumnHeader column={column} title="In use" />
+        <DataTableColumnHeader
+          column={column}
+          title="In use"
+          hint="Responses in the current assessment that picked this tool"
+        />
       ),
       cell: ({ getValue }) => {
         const n = getValue()
@@ -268,6 +265,7 @@ function ToolMatrix({ controlSet }: { controlSet: ControlSet }) {
       facets={facets}
       initialSorting={[{ id: "covered", desc: true }]}
       totalLabel="tools"
+      caption="Tool matrix: which tools cover which controls"
       emptyIcon={<WrenchIcon />}
       toolbar={
         <Label className="flex items-center gap-2 text-xs font-medium whitespace-nowrap">
@@ -301,7 +299,7 @@ function SnippetCard({
       <CardHeader>
         <CardTitle className="flex flex-wrap items-center gap-2">
           {snippet.title}
-          <Badge variant="secondary" className="font-mono text-[10px]">
+          <Badge variant="secondary" className="font-mono text-3xs">
             {languageLabel[snippet.language]}
           </Badge>
         </CardTitle>
@@ -462,7 +460,11 @@ function buildMetricColumns(domainById: Map<DomainId, DomainDef>) {
     metricCol.accessor((r) => r.otel ?? "", {
       id: "otel",
       header: ({ column }) => (
-        <DataTableColumnHeader column={column} title="OTel source" />
+        <DataTableColumnHeader
+          column={column}
+          title="OTel source"
+          hint="OpenTelemetry GenAI attribute or metric the value is derived from"
+        />
       ),
       cell: ({ row }) =>
         row.original.otel ? (
@@ -513,6 +515,7 @@ function MetricCatalog({ controlSet }: { controlSet: ControlSet }) {
       initialSorting={[{ id: "domain", desc: false }]}
       pageSize={50}
       totalLabel="metrics"
+      caption="Metric catalog with warn and critical thresholds"
       emptyIcon={<GaugeIcon />}
       toolbar={
         <>
@@ -563,21 +566,15 @@ export function ToolingTab({
       <TabsList variant="line">
         <TabsTrigger value="tools">
           <WrenchIcon data-icon="inline-start" /> Tool matrix
-          <span className="text-xs text-muted-foreground tabular-nums">
-            {tools.length}
-          </span>
+          <CountPill count={tools.length} label="tools" />
         </TabsTrigger>
         <TabsTrigger value="snippets">
           <CodeIcon data-icon="inline-start" /> Instrumentation snippets
-          <span className="text-xs text-muted-foreground tabular-nums">
-            {snippets.length}
-          </span>
+          <CountPill count={snippets.length} label="snippets" />
         </TabsTrigger>
         <TabsTrigger value="metrics">
           <GaugeIcon data-icon="inline-start" /> Metric catalog
-          <span className="text-xs text-muted-foreground tabular-nums">
-            {metrics.length}
-          </span>
+          <CountPill count={metrics.length} label="metrics" />
         </TabsTrigger>
       </TabsList>
       <TabsContent value="tools">

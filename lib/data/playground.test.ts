@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest"
 
 import { deployedAgents } from "@/lib/data"
+import { getBudget } from "@/lib/data/costs"
+import { getGuardrail } from "@/lib/data/guardrails"
+import { getKnowledgeBase } from "@/lib/data/knowledge"
 import {
   configFromSearchParams,
   configToSearchParams,
@@ -16,7 +19,7 @@ import {
 describe("playground data", () => {
   it("extracts unique variables in order", () => {
     expect(
-      extractVariables("Hi {{name}}, re {{ticket}} — {{name}} again {{ x }}")
+      extractVariables("Hi {{name}}, re {{ticket}}, {{name}} again {{ x }}")
     ).toEqual(["name", "ticket", "x"])
     expect(renderPrompt("{{a}}-{{b}}", { a: "1" })).toBe("1-{{b}}")
   })
@@ -88,13 +91,24 @@ describe("playground data", () => {
     expect(simulateRun(base, "something else")).not.toEqual(r0)
   })
 
-  it("derives an ops config for every agent", () => {
+  it("derives an ops config for every agent from the other modules", () => {
     for (const a of deployedAgents) {
       const c = getAgentOpsConfig(a.id)
-      expect(c.budgets.dailyCostCap).toBeGreaterThan(a.metrics.costPerDay)
+      expect(c.budgets.dailyCostCap).toBeGreaterThan(0)
+      if (c.budgets.budgetId)
+        expect(getBudget(c.budgets.budgetId)).toBeDefined()
       expect(c.guardrails.length).toBeGreaterThan(0)
+      expect(c.guardrailIds.map((id) => getGuardrail(id)?.name)).toEqual(
+        c.guardrails
+      )
       expect(c.knowledgeSources.length).toBeGreaterThan(0)
+      expect(
+        c.knowledgeBaseIds.map((id) => getKnowledgeBase(id)?.name)
+      ).toEqual(c.knowledgeSources)
     }
     expect(getAgentOpsConfig("agt-finance-copilot").autonomy).toBe("suggest")
+    // Budgets below today's spend are the "Exceeded" story, not a bug.
+    const triage = getAgentOpsConfig("agt-support-triage")
+    expect(triage.budgets.budgetId).toBe("bud-003")
   })
 })

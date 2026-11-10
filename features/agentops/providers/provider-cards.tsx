@@ -6,6 +6,7 @@ import {
   ActivityIcon,
   CheckIcon,
   KeyRoundIcon,
+  Loader2Icon,
   PlugZapIcon,
   PowerIcon,
   PowerOffIcon,
@@ -15,6 +16,14 @@ import {
 import { toast } from "sonner"
 
 import { Sparkline } from "@/components/charts/sparkline"
+import { Eyebrow } from "@/components/shared/eyebrow"
+import { MetricTile } from "@/components/shared/metric-tile"
+import { Section } from "@/components/shared/page-header"
+import {
+  SheetBody,
+  SheetFooterActions,
+  sheetWidths,
+} from "@/components/shared/sheet-frame"
 import { StatusDot } from "@/components/shared/status-badge"
 import {
   AlertDialog,
@@ -40,7 +49,6 @@ import {
   Sheet,
   SheetContent,
   SheetDescription,
-  SheetFooter,
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
@@ -51,21 +59,42 @@ import {
   providers as seed,
   type Provider,
 } from "@/lib/data/providers"
-import { NOW } from "@/lib/data/seed"
-import { formatCurrency, formatNumber, timeAgo } from "@/lib/format"
-import { fmtMs, ModelChip } from "../shared"
+import { clock } from "@/lib/data/seed"
+import { formatCurrency, formatMs, formatNumber, timeAgo } from "@/lib/format"
+import { ModelChip } from "../shared"
 import { GatewayBadge, ProviderLogo } from "./shared"
+import { providerStore } from "./store"
+
+/** How long the simulated connection test spins before it reports. */
+const TEST_DELAY_MS = 600
 
 export function ProvidersTab() {
-  const [items, setItems] = React.useState<Provider[]>(seed)
+  const items = providerStore.use()
   const [configureId, setConfigureId] = React.useState<string | null>(null)
   const [disableId, setDisableId] = React.useState<string | null>(null)
-
-  const patch = (id: string, p: Partial<Provider>) =>
-    setItems((prev) => prev.map((x) => (x.id === id ? { ...x, ...p } : x)))
+  const [testingId, setTestingId] = React.useState<string | null>(null)
+  const timer = React.useRef<number | undefined>(undefined)
+  React.useEffect(() => () => window.clearTimeout(timer.current), [])
 
   const configuring = items.find((p) => p.id === configureId) ?? null
   const disabling = items.find((p) => p.id === disableId) ?? null
+
+  const test = (p: Provider) => {
+    setTestingId(p.id)
+    window.clearTimeout(timer.current)
+    timer.current = window.setTimeout(() => {
+      setTestingId(null)
+      providerStore.patch(p.id, { lastHealthCheck: clock().toISOString() })
+      if (p.status === "Disconnected")
+        toast.error(`${p.name}: connection failed (simulated)`, {
+          description: "TLS handshake timed out after 10 s",
+        })
+      else
+        toast.success(`${p.name} reachable (simulated)`, {
+          description: `Round trip ${p.testLatencyMs} ms · ${p.enabledModels.length} models listed`,
+        })
+    }, TEST_DELAY_MS)
+  }
 
   return (
     <div className="flex flex-col gap-5">
@@ -75,21 +104,12 @@ export function ProvidersTab() {
           <ProviderCard
             key={p.id}
             provider={p}
-            onTest={() => {
-              if (p.status === "Disconnected")
-                toast.error(`${p.name}: connection failed`, {
-                  description: "TLS handshake timed out after 10 s",
-                })
-              else
-                toast.success(`${p.name} reachable`, {
-                  description: `Round trip ${p.testLatencyMs} ms · ${p.enabledModels.length} models listed`,
-                })
-              patch(p.id, { lastHealthCheck: NOW.toISOString() })
-            }}
+            testing={testingId === p.id}
+            onTest={() => test(p)}
             onConfigure={() => setConfigureId(p.id)}
             onToggle={() => {
               if (p.status === "Disconnected") {
-                patch(p.id, { status: "Connected" })
+                providerStore.patch(p.id, { status: "Connected" })
                 toast.success(`${p.name} enabled`, {
                   description: "Routing rules that reference it resume.",
                 })
@@ -103,7 +123,7 @@ export function ProvidersTab() {
         provider={configuring}
         onClose={() => setConfigureId(null)}
         onSave={(p) => {
-          patch(p.id, p)
+          providerStore.patch(p.id, p)
           setConfigureId(null)
           toast.success(`${p.name} configuration saved`, {
             description: `${p.enabledModels.length} models enabled · ${p.regions.length} region${p.regions.length === 1 ? "" : "s"}`,
@@ -129,8 +149,20 @@ export function ProvidersTab() {
               variant="destructive"
               onClick={() => {
                 if (disabling) {
-                  patch(disabling.id, { status: "Disconnected" })
-                  toast(`${disabling.name} disabled`)
+                  const before = disabling.status
+                  providerStore.patch(disabling.id, { status: "Disconnected" })
+                  toast(`${disabling.name} disabled`, {
+                    description:
+                      "Every routing target on this provider now fails over.",
+                    duration: 8000,
+                    action: {
+                      label: "Undo",
+                      onClick: () => {
+                        providerStore.patch(disabling.id, { status: before })
+                        toast(`${disabling.name} enabled again`)
+                      },
+                    },
+                  })
                 }
                 setDisableId(null)
               }}
@@ -152,20 +184,21 @@ function VendorStatusStrip({ providers }: { providers: Provider[] }) {
   const open = providerIncidents.filter((i) => i.status !== "Resolved")
   const degraded = providers.filter((p) => p.status !== "Connected")
   return (
-    <section className="overflow-hidden rounded-xl border bg-card">
-      <div className="flex flex-wrap items-center gap-3 border-b px-5 py-3">
-        <ActivityIcon className="size-4 text-muted-foreground" />
-        <h2 className="text-sm font-semibold">Vendor status</h2>
-        <p className="text-xs text-muted-foreground">
-          {degraded.length === 0
-            ? "All providers operational"
-            : `${degraded.length} of ${providers.length} connections impaired`}
-        </p>
-        <div className="ml-auto flex flex-wrap items-center gap-1.5">
+    <Section
+      title="Vendor status"
+      icon={<ActivityIcon />}
+      count={open.length}
+      description={
+        degraded.length === 0
+          ? "All providers operational"
+          : `${degraded.length} of ${providers.length} connections impaired`
+      }
+      actions={
+        <div className="flex flex-wrap items-center gap-1.5">
           {providers.map((p) => (
             <span
               key={p.id}
-              className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px]"
+              className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-2xs"
               title={`${p.name} · ${p.status}`}
             >
               <StatusDot tone={statusTone(p.status)} />
@@ -176,8 +209,9 @@ function VendorStatusStrip({ providers }: { providers: Provider[] }) {
             </span>
           ))}
         </div>
-      </div>
-      <ul className="divide-y">
+      }
+    >
+      <ul className="divide-y overflow-hidden rounded-xl border bg-card">
         {providerIncidents.map((i) => {
           const p = providers.find((x) => x.id === i.providerId)
           return (
@@ -219,7 +253,7 @@ function VendorStatusStrip({ providers }: { providers: Provider[] }) {
           </li>
         )}
       </ul>
-    </section>
+    </Section>
   )
 }
 
@@ -233,11 +267,13 @@ function statusTone(s: Provider["status"]) {
 
 function ProviderCard({
   provider: p,
+  testing,
   onTest,
   onConfigure,
   onToggle,
 }: {
   provider: Provider
+  testing: boolean
   onTest: () => void
   onConfigure: () => void
   onToggle: () => void
@@ -251,8 +287,9 @@ function ProviderCard({
         : "var(--destructive)"
   return (
     <article
+      id={p.id}
       className={cn(
-        "flex flex-col gap-4 rounded-xl border bg-card p-5",
+        "flex scroll-mt-24 flex-col gap-4 rounded-xl border bg-card p-5 target:ring-2 target:ring-ring/40",
         off && "border-destructive/30"
       )}
     >
@@ -288,28 +325,25 @@ function ProviderCard({
                 : undefined
           }
         />
-        <Metric label="p95" value={fmtMs(p.p95Ms)} />
+        <Metric label="p95" value={formatMs(p.p95Ms)} />
       </dl>
 
-      <div className="flex items-center gap-4 rounded-lg border bg-muted/30 px-3 py-2">
-        <div className="min-w-0 flex-1">
-          <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+      <div className="grid grid-cols-[1fr_auto] gap-3">
+        <div className="flex min-w-0 flex-col gap-1 rounded-lg border bg-muted/30 px-3 py-2">
+          <Eyebrow as="span" className="truncate">
             p95 latency · 14d
-          </p>
+          </Eyebrow>
           <Sparkline
             data={p.latencyTrend}
             color={sparkColor}
-            className="mt-1 h-8 w-full"
+            className="h-8 w-full"
           />
         </div>
-        <div className="text-right">
-          <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-            Spend today
-          </p>
-          <p className="text-lg font-semibold tabular-nums">
-            {formatCurrency(p.spendToday)}
-          </p>
-        </div>
+        <MetricTile
+          label="Spend today"
+          value={formatCurrency(p.spendToday)}
+          className="items-end text-right"
+        />
       </div>
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -321,7 +355,7 @@ function ProviderCard({
           />
         ))}
         {p.enabledModels.length > 3 && (
-          <Badge variant="outline" className="h-5 px-1.5 text-[11px]">
+          <Badge variant="outline" className="h-5 px-1.5 text-2xs">
             +{p.enabledModels.length - 3}
           </Badge>
         )}
@@ -333,8 +367,18 @@ function ProviderCard({
           Checked {timeAgo(p.lastHealthCheck)}
         </span>
         <div className="ml-auto flex items-center gap-1.5">
-          <Button variant="outline" size="sm" onClick={onTest}>
-            <PlugZapIcon /> Test
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onTest}
+            disabled={testing}
+          >
+            {testing ? (
+              <Loader2Icon className="animate-spin" />
+            ) : (
+              <PlugZapIcon />
+            )}{" "}
+            Test
           </Button>
           <Button variant="outline" size="sm" onClick={onConfigure}>
             <Settings2Icon /> Configure
@@ -365,9 +409,9 @@ function Metric({
 }) {
   return (
     <div className="min-w-0">
-      <dt className="truncate text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+      <Eyebrow as="span" className="block truncate">
         {label}
-      </dt>
+      </Eyebrow>
       <dd
         className={cn(
           "mt-0.5 text-sm font-semibold tabular-nums",
@@ -396,7 +440,9 @@ function ConfigureSheet({
 }) {
   return (
     <Sheet open={provider !== null} onOpenChange={(o) => !o && onClose()}>
-      <SheetContent className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-lg">
+      <SheetContent
+        className={cn(sheetWidths.editor, "flex flex-col gap-0 p-0")}
+      >
         {provider && (
           <ConfigureForm
             key={provider.id}
@@ -426,7 +472,7 @@ function ConfigureForm({
   const [enabled, setEnabled] = React.useState<string[]>(p.enabledModels)
   const [regions, setRegions] = React.useState<string[]>(p.regions)
   const allRegions = Array.from(
-    new Set([...seed.find((s) => s.id === p.id)!.regions, ...p.regions])
+    new Set([...(seed.find((s) => s.id === p.id)?.regions ?? []), ...p.regions])
   )
 
   const parsedHeaders = Object.fromEntries(
@@ -453,124 +499,129 @@ function ConfigureForm({
           </div>
         </div>
       </SheetHeader>
-      <form
-        className="min-h-0 flex-1 overflow-y-auto px-6 py-5"
-        onSubmit={(e) => {
-          e.preventDefault()
-          onSave({
-            ...p,
-            baseUrl,
-            orgId: orgId || undefined,
-            defaultHeaders: parsedHeaders,
-            enabledModels: enabled,
-            regions,
-            region: regions[0] ?? p.region,
-          })
-        }}
-        id={`configure-${p.id}`}
-      >
-        <FieldGroup>
-          <Field>
-            <FieldLabel htmlFor={`${p.id}-url`}>Base URL</FieldLabel>
-            <Input
-              id={`${p.id}-url`}
-              value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
-              className="font-mono text-xs"
-            />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor={`${p.id}-org`}>
-              Organisation / project id
-            </FieldLabel>
-            <Input
-              id={`${p.id}-org`}
-              value={orgId}
-              onChange={(e) => setOrgId(e.target.value)}
-              placeholder="Optional"
-              className="font-mono text-xs"
-            />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor={`${p.id}-headers`}>Default headers</FieldLabel>
-            <Textarea
-              id={`${p.id}-headers`}
-              value={headers}
-              onChange={(e) => setHeaders(e.target.value)}
-              rows={3}
-              placeholder="Header-Name: value"
-              className="font-mono text-xs"
-            />
-            <FieldDescription>
-              One <code>Header: value</code> per line. Sent with every request
-              to this provider.
-            </FieldDescription>
-          </Field>
-          <Field>
-            <FieldLabel>Regions</FieldLabel>
-            <ToggleGroup
-              multiple
-              value={regions}
-              onValueChange={(v) => setRegions(v as string[])}
-              aria-label="Enabled regions"
-              className="flex-wrap"
-            >
-              {allRegions.map((r) => (
-                <ToggleGroupItem
-                  key={r}
-                  value={r}
-                  size="sm"
-                  variant="outline"
-                  className="font-mono text-xs"
-                >
-                  {r}
-                </ToggleGroupItem>
-              ))}
-            </ToggleGroup>
-          </Field>
-          <Field>
-            <FieldLabel>Enabled models</FieldLabel>
-            <ul className="divide-y rounded-lg border">
-              {p.availableModels.map((m) => {
-                const id = `${p.id}-${m.replace(/[^a-z0-9]/gi, "-")}`
-                const checked = enabled.includes(m)
-                return (
-                  <li key={m} className="flex items-center gap-3 px-3 py-2">
-                    <Checkbox
-                      id={id}
-                      checked={checked}
-                      onCheckedChange={(v) =>
-                        setEnabled((prev) =>
-                          v ? [...prev, m] : prev.filter((x) => x !== m)
-                        )
-                      }
-                    />
-                    <label
-                      htmlFor={id}
-                      className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-sm"
-                    >
-                      <ModelChip modelId={m} className="text-sm" />
-                    </label>
-                  </li>
-                )
-              })}
-            </ul>
-            <FieldDescription>
-              {enabled.length} of {p.availableModels.length} models routable
-              through this connection.
-            </FieldDescription>
-          </Field>
-        </FieldGroup>
-      </form>
-      <SheetFooter className="flex-row justify-end border-t px-6 py-4">
-        <Button
-          type="submit"
-          form={`configure-${p.id}`}
-          disabled={enabled.length === 0 || regions.length === 0}
+      <SheetBody>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            onSave({
+              ...p,
+              baseUrl,
+              orgId: orgId || undefined,
+              defaultHeaders: parsedHeaders,
+              enabledModels: enabled,
+              regions,
+              region: regions[0] ?? p.region,
+            })
+          }}
+          id={`configure-${p.id}`}
         >
-          <CheckIcon /> Save configuration
-        </Button>
-      </SheetFooter>
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor={`${p.id}-url`}>Base URL</FieldLabel>
+              <Input
+                id={`${p.id}-url`}
+                value={baseUrl}
+                onChange={(e) => setBaseUrl(e.target.value)}
+                className="font-mono text-xs"
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor={`${p.id}-org`}>
+                Organisation / project id
+              </FieldLabel>
+              <Input
+                id={`${p.id}-org`}
+                value={orgId}
+                onChange={(e) => setOrgId(e.target.value)}
+                placeholder="Optional"
+                className="font-mono text-xs"
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor={`${p.id}-headers`}>
+                Default headers
+              </FieldLabel>
+              <Textarea
+                id={`${p.id}-headers`}
+                value={headers}
+                onChange={(e) => setHeaders(e.target.value)}
+                rows={3}
+                placeholder="Header-Name: value"
+                className="font-mono text-xs"
+              />
+              <FieldDescription>
+                One <code>Header: value</code> per line. Sent with every request
+                to this provider.
+              </FieldDescription>
+            </Field>
+            <Field>
+              <FieldLabel>Regions</FieldLabel>
+              <ToggleGroup
+                multiple
+                value={regions}
+                onValueChange={(v) => setRegions(v as string[])}
+                aria-label="Enabled regions"
+                className="flex-wrap"
+              >
+                {allRegions.map((r) => (
+                  <ToggleGroupItem
+                    key={r}
+                    value={r}
+                    size="sm"
+                    variant="outline"
+                    className="font-mono text-xs"
+                  >
+                    {r}
+                  </ToggleGroupItem>
+                ))}
+              </ToggleGroup>
+            </Field>
+            <Field>
+              <FieldLabel>Enabled models</FieldLabel>
+              <ul className="divide-y rounded-lg border">
+                {p.availableModels.map((m) => {
+                  const id = `${p.id}-${m.replace(/[^a-z0-9]/gi, "-")}`
+                  const checked = enabled.includes(m)
+                  return (
+                    <li key={m} className="flex items-center gap-3 px-3 py-2">
+                      <Checkbox
+                        id={id}
+                        checked={checked}
+                        onCheckedChange={(v) =>
+                          setEnabled((prev) =>
+                            v ? [...prev, m] : prev.filter((x) => x !== m)
+                          )
+                        }
+                      />
+                      <label
+                        htmlFor={id}
+                        className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-sm"
+                      >
+                        <ModelChip modelId={m} className="text-sm" />
+                      </label>
+                    </li>
+                  )
+                })}
+              </ul>
+              <FieldDescription>
+                {enabled.length} of {p.availableModels.length} models routable
+                through this connection.
+              </FieldDescription>
+            </Field>
+          </FieldGroup>
+        </form>
+      </SheetBody>
+      <SheetFooterActions
+        primary={
+          <Button
+            type="submit"
+            form={`configure-${p.id}`}
+            disabled={enabled.length === 0 || regions.length === 0}
+          >
+            <CheckIcon /> Save configuration
+          </Button>
+        }
+      />
     </>
   )
 }

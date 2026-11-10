@@ -54,7 +54,7 @@ export function EmptyState({
             "rounded-2xl bg-linear-to-b from-card to-muted text-muted-foreground shadow-raised ring-1 ring-border/70",
             small
               ? "mb-1 size-10 [&_svg:not([class*='size-'])]:size-4.5"
-              : "mb-3 size-14 rounded-[1.125rem] [&_svg:not([class*='size-'])]:size-6"
+              : "mb-3 size-14 rounded-2xl [&_svg:not([class*='size-'])]:size-6"
           )}
         >
           {icon ?? <InboxIcon />}

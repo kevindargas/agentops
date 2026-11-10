@@ -28,7 +28,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { notifications as seed } from "@/lib/data"
+import { notifications as seed } from "@/lib/data/activity"
 import { timeAgo } from "@/lib/format"
 import type { Notification } from "@/lib/types"
 
@@ -41,8 +41,11 @@ const kinds: Record<
     icon: <ShieldCheckIcon />,
     tone: "bg-warning/15 text-warning-text",
   },
-  sla: { icon: <ClockAlertIcon />, tone: "bg-destructive/10 text-destructive" },
-  mention: { icon: <AtSignIcon />, tone: "bg-info/10 text-info" },
+  sla: {
+    icon: <ClockAlertIcon />,
+    tone: "bg-destructive/10 text-danger-text",
+  },
+  mention: { icon: <AtSignIcon />, tone: "bg-info/10 text-info-text" },
   system: { icon: <WrenchIcon />, tone: "bg-muted text-muted-foreground" },
 }
 
@@ -173,7 +176,7 @@ export function Notifications() {
                           >
                             {n.title}
                           </span>
-                          <span className="ml-auto shrink-0 text-[11px] text-muted-foreground tabular-nums">
+                          <span className="ml-auto shrink-0 text-2xs text-muted-foreground tabular-nums">
                             {timeAgo(n.timestamp)}
                           </span>
                           {!n.read && (

@@ -2,6 +2,7 @@
 
 import { BracesIcon, SlidersHorizontalIcon } from "lucide-react"
 
+import { CountPill } from "@/components/shared/count-pill"
 import { EmptyState } from "@/components/shared/empty-state"
 import {
   Select,
@@ -37,7 +38,14 @@ export function EditorTab({
   onVersionChange: (id: string) => void
 }) {
   const version = versions.find((v) => v.id === versionId) ?? versions.at(-1)
-  if (!version) return <EmptyState size="sm" title="No versions yet" />
+  if (!version)
+    return (
+      <EmptyState
+        size="sm"
+        title="No versions yet"
+        description="Use New version in the header to draft the first template."
+      />
+    )
   const variables = getPromptVariables(prompt, version)
   const lines = version.template.split("\n").length
   const items = versionSelectItems(versions)
@@ -63,7 +71,7 @@ export function EditorTab({
             </SelectContent>
           </Select>
           <LabelBadge label={version.label} size="sm" />
-          <span className="ml-auto font-mono text-[11px] text-muted-foreground tabular-nums">
+          <span className="ml-auto font-mono text-2xs text-muted-foreground tabular-nums">
             ~{formatNumber(estimateTokens(version.template))} tokens · {lines}{" "}
             lines · {formatNumber(version.template.length)} chars
           </span>
@@ -83,9 +91,7 @@ export function EditorTab({
           <h3 className="flex items-center gap-1.5 border-b px-3 py-2 text-sm font-semibold">
             <BracesIcon className="size-3.5 text-muted-foreground" />
             Variables
-            <span className="ml-auto text-xs font-normal text-muted-foreground tabular-nums">
-              {variables.length}
-            </span>
+            <CountPill count={variables.length} className="ml-auto" />
           </h3>
           {variables.length === 0 ? (
             <p className="px-3 py-3 text-xs text-muted-foreground">
@@ -96,9 +102,9 @@ export function EditorTab({
               {variables.map((v) => (
                 <li key={v.name} className="px-3 py-2.5">
                   <div className="flex items-center gap-2">
-                    <VariableChip name={v.name} className="text-[11px]" />
+                    <VariableChip name={v.name} className="text-2xs" />
                     {!v.required && (
-                      <span className="text-[11px] text-muted-foreground">
+                      <span className="text-2xs text-muted-foreground">
                         optional
                       </span>
                     )}
@@ -106,7 +112,7 @@ export function EditorTab({
                   <p className="mt-1 text-xs leading-snug text-muted-foreground">
                     {v.description}
                   </p>
-                  <p className="mt-1 truncate font-mono text-[11px]">
+                  <p className="mt-1 truncate font-mono text-2xs">
                     <span className="text-muted-foreground">e.g. </span>
                     {v.example}
                   </p>

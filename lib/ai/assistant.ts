@@ -116,7 +116,7 @@ function src(kind: Source["kind"], id: string, title: string): Source {
                   : kind === "drift"
                     ? "/agentops/drift"
                     : kind === "experiment"
-                      ? `/agentops/experiments?experiment=${id}`
+                      ? `/agentops/experiments?open=${id}`
                       : `/itsm/requests/${id}`
   return { id, title, href, kind }
 }
@@ -432,7 +432,7 @@ export function planResponse(
             },
             {
               kind: "text",
-              markdown: `**Summary of ${inc.number}**\n\n${inc.shortDescription}. Reported via ${inc.channel.toLowerCase()} by ${getUser(inc.callerId)?.name ?? "a user"}; currently **${inc.state}** at **P${inc.priority} · ${priorityLabels[inc.priority]}** with ${getGroup(inc.assignmentGroupId)?.name}${inc.assignedToId ? ` (${getUser(inc.assignedToId)?.name})` : " (unassigned)"}.\n\n**What we know**\n- Affected CI: ${ci ? `${ci.name} (${ci.class}, ${ci.environment})` : "not linked yet"}\n- ${inc.problemId ? `Linked to problem **${inc.problemId}**` : "No problem record linked"}${inc.changeId ? `; related change **${inc.changeId}**` : ""}\n- ${inc.majorIncident ? "Declared a **major incident** — bridge is active" : "Not a major incident"}\n- SLA ${inc.slaBreached ? "has **breached**" : "is on track"}\n\n**Suggested next step**\n${inc.majorIncident ? "Confirm rollback of the 14:05 deploy and post a stakeholder update." : inc.assignedToId ? "Capture troubleshooting results in a work note and update the caller." : "Assign to an engineer in the group and acknowledge the caller."}`,
+              markdown: `**Summary of ${inc.number}**\n\n${inc.shortDescription}. Reported via ${inc.channel.toLowerCase()} by ${getUser(inc.callerId)?.name ?? "a user"}; currently **${inc.state}** at **P${inc.priority} · ${priorityLabels[inc.priority]}** with ${getGroup(inc.assignmentGroupId)?.name}${inc.assignedToId ? ` (${getUser(inc.assignedToId)?.name})` : " (unassigned)"}.\n\n**What we know**\n- Affected CI: ${ci ? `${ci.name} (${ci.class}, ${ci.environment})` : "not linked yet"}\n- ${inc.problemId ? `Linked to problem **${inc.problemId}**` : "No problem record linked"}${inc.changeId ? `; related change **${inc.changeId}**` : ""}\n- ${inc.majorIncident ? "Declared a **major incident**: bridge is active" : "Not a major incident"}\n- SLA ${inc.slaBreached ? "has **breached**" : "is on track"}\n\n**Suggested next step**\n${inc.majorIncident ? "Confirm rollback of the 14:05 deploy and post a stakeholder update." : inc.assignedToId ? "Capture troubleshooting results in a work note and update the caller." : "Assign to an engineer in the group and acknowledge the caller."}`,
             },
             {
               kind: "sources",
@@ -504,7 +504,7 @@ export function planResponse(
             },
             {
               kind: "text",
-              markdown: `I found **${similar.length} similar incidents**:\n\n| Number | Short description | Priority | State | Group |\n|---|---|---|---|---|\n${similar.map(fmtInc).join("\n")}\n\n${similar.some((s) => s.state === "Resolved" || s.state === "Closed") ? `**${similar.filter((s) => ["Resolved", "Closed"].includes(s.state)).length}** of these were resolved. The most common resolution was *re-authentication and re-registering the device*, which also appears in ${kb[0]?.number ?? "a knowledge article"}.` : "None are resolved yet — this may be a recurring issue worth a problem record."}`,
+              markdown: `I found **${similar.length} similar incidents**:\n\n| Number | Short description | Priority | State | Group |\n|---|---|---|---|---|\n${similar.map(fmtInc).join("\n")}\n\n${similar.some((s) => s.state === "Resolved" || s.state === "Closed") ? `**${similar.filter((s) => ["Resolved", "Closed"].includes(s.state)).length}** of these were resolved. The most common resolution was *re-authentication and re-registering the device*, which also appears in ${kb[0]?.number ?? "a knowledge article"}.` : "None are resolved yet; this may be a recurring issue worth a problem record."}`,
             },
             {
               kind: "sources",
@@ -605,7 +605,7 @@ export function planResponse(
               kind: "text",
               markdown: inc.majorIncident
                 ? `**Most likely root cause (confidence 0.86)**\n\n\`payments-svc v2.14.0\`, deployed at **14:05 UTC**, leaks memory in its retry handler. Pods hit their memory limit (**92%** → OOMKilled) and crash-loop, which surfaces as 5xx on the Payments API.\n\n**Evidence**\n1. Memory alert fired 11 minutes after the deploy, before the 5xx alert.\n2. Crash-loop restarts correlate 1:1 with error-rate spikes.\n3. Hotfix **${inc.changeId}** targets exactly this handler.\n\n**Recommendation:** complete the rollback to v2.13.2, then let the hotfix go through an expedited CAB.`
-                : `**Hypothesis (confidence 0.62)**\n\nThe symptoms point to a configuration drift on **${ci?.name ?? "the affected CI"}** rather than a code change — no deployment overlaps the incident window and only a low-severity alert fired.\n\n**Next diagnostic steps**\n1. Compare current config with the last known-good baseline.\n2. Check whether other callers in ${getUser(inc.callerId)?.location ?? "the same location"} are affected.\n3. If confirmed, open a problem record and document the workaround.`,
+                : `**Hypothesis (confidence 0.62)**\n\nThe symptoms point to a configuration drift on **${ci?.name ?? "the affected CI"}** rather than a code change; no deployment overlaps the incident window and only a low-severity alert fired.\n\n**Next diagnostic steps**\n1. Compare current config with the last known-good baseline.\n2. Check whether other callers in ${getUser(inc.callerId)?.location ?? "the same location"} are affected.\n3. If confirmed, open a problem record and document the workaround.`,
             },
             {
               kind: "sources",
@@ -747,13 +747,13 @@ export function planResponse(
               total: 4,
               successful: 3,
               backedOut: 1,
-              lastFailure: "CHG0030988 — DNS cutover left stale cache",
+              lastFailure: "CHG0030988: DNS cutover left stale cache",
             },
             durationMs: 390,
           },
           {
             kind: "text",
-            markdown: `**Risk assessment for ${chg.number}** — current rating **${chg.risk}**\n\n| Factor | Finding | Weight |\n|---|---|---|\n| Blast radius | ${ci ? `${ci.name} supports ${ci.businessCriticality.startsWith("1") ? "tier-1" : "non-critical"} services` : "No CI linked"} | ${ci?.businessCriticality.startsWith("1") ? "High" : "Low"} |\n| Open incidents on CI | ${openOnCi} open | ${openOnCi > 0 ? "Medium" : "Low"} |\n| History | 3 of 4 similar changes succeeded | Medium |\n| Window | ${new Date(chg.plannedStart).toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" })} evening, inside the standard window | Low |\n\n**Recommendation:** ${chg.risk === "Low" ? "keep as **Low** risk; standard approval is sufficient." : "treat as **" + (openOnCi > 0 ? "High" : chg.risk) + "** risk and require CAB review. Add an explicit backout validation step and a 2-hour post-change monitoring period."}`,
+            markdown: `**Risk assessment for ${chg.number}**, current rating **${chg.risk}**\n\n| Factor | Finding | Weight |\n|---|---|---|\n| Blast radius | ${ci ? `${ci.name} supports ${ci.businessCriticality.startsWith("1") ? "tier-1" : "non-critical"} services` : "No CI linked"} | ${ci?.businessCriticality.startsWith("1") ? "High" : "Low"} |\n| Open incidents on CI | ${openOnCi} open | ${openOnCi > 0 ? "Medium" : "Low"} |\n| History | 3 of 4 similar changes succeeded | Medium |\n| Window | ${new Date(chg.plannedStart).toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" })} evening, inside the standard window | Low |\n\n**Recommendation:** ${chg.risk === "Low" ? "keep as **Low** risk; standard approval is sufficient." : "treat as **" + (openOnCi > 0 ? "High" : chg.risk) + "** risk and require CAB review. Add an explicit backout validation step and a 2-hour post-change monitoring period."}`,
           },
           {
             kind: "sources",
@@ -980,7 +980,7 @@ export function planResponse(
           },
           {
             kind: "text",
-            markdown: `**${req.number}** for ${who} is **${req.state}**, currently ${stuck}.\n\n**Items**\n${items.map((n) => `- ${n}`).join("\n")}\n\n**Status**\n- Approval: **${req.approval}**\n- Stage: **${req.stage}**\n- Due ${new Date(req.dueDate) < new Date(req.updated) ? "**overdue**" : "on track"}\n\n**Suggested next step**\n${waitingApproval ? "Nudge the approver; this request has been waiting longer than the typical approval window." : req.state === "Closed Incomplete" ? "Review the incomplete tasks with the fulfillment group and tell the requester what was not delivered." : "No action needed — fulfillment is progressing."}`,
+            markdown: `**${req.number}** for ${who} is **${req.state}**, currently ${stuck}.\n\n**Items**\n${items.map((n) => `- ${n}`).join("\n")}\n\n**Status**\n- Approval: **${req.approval}**\n- Stage: **${req.stage}**\n- Due ${new Date(req.dueDate) < new Date(req.updated) ? "**overdue**" : "on track"}\n\n**Suggested next step**\n${waitingApproval ? "Nudge the approver; this request has been waiting longer than the typical approval window." : req.state === "Closed Incomplete" ? "Review the incomplete tasks with the fulfillment group and tell the requester what was not delivered." : "No action needed; fulfillment is progressing."}`,
           },
           {
             kind: "sources",
@@ -1054,7 +1054,7 @@ export function planResponse(
           },
           {
             kind: "text",
-            markdown: `**${art.number} · ${art.title}**\n\n${art.summary}\n\n**Health**\n- ${art.views.toLocaleString("en-US")} views · ${score === null ? "no feedback yet" : `**${score}%** found it helpful`}\n- ${stale ? "Feedback suggests the steps are **out of date** — review before the next publish cycle." : "Feedback is healthy; no rewrite needed."}\n- **${related.length}** recent incident${related.length === 1 ? "" : "s"} match this article's tags${related.length ? ", so linking it from the service desk could deflect tickets" : ""}.`,
+            markdown: `**${art.number} · ${art.title}**\n\n${art.summary}\n\n**Health**\n- ${art.views.toLocaleString("en-US")} views · ${score === null ? "no feedback yet" : `**${score}%** found it helpful`}\n- ${stale ? "Feedback suggests the steps are **out of date**; review before the next publish cycle." : "Feedback is healthy; no rewrite needed."}\n- **${related.length}** recent incident${related.length === 1 ? "" : "s"} match this article's tags${related.length ? ", so linking it from the service desk could deflect tickets" : ""}.`,
           },
           {
             kind: "sources",
@@ -1214,7 +1214,7 @@ export function planResponse(
               kind: "text",
               markdown: top
                 ? `**${drift.length} open drift signal${drift.length === 1 ? "" : "s"} on ${agent.name}**\n\n${drift.map((d) => `- **${d.metric}** · ${d.severity}: ${d.baseline}${d.unit === "%" ? "%" : ""} → **${d.current}${d.unit === "%" ? "%" : ""}**`).join("\n")}\n\n**Most likely cause**\n${top.explanation}\n\n**What to do**\n${top.kind === "input" ? "Add coverage for the new topic cluster to the retrieval index and re-run the golden set; the quality drop should follow the input shift back down." : top.kind === "tool" ? "Fix or re-route the failing tool first; the cost and latency signals are downstream of the retries." : top.kind === "quality" ? "Check the retrieval hit rate on flagged traces before touching the prompt." : "Review the explanation above and acknowledge the signal if it is expected."}`
-                : `**${agent.name} is within baseline.**\n\nQuality is **${m.quality}** (14-day trend ${agent.qualityTrend.at(-1)! >= agent.qualityTrend[0] ? "flat or rising" : "slightly down"}), input PSI **${agent.driftScore.toFixed(2)}**, thumbs-down **${m.thumbsDownRate.toFixed(1)}%**. No signal has crossed its threshold.`,
+                : `**${agent.name} is within baseline.**\n\nQuality is **${m.quality}** (14-day trend ${(agent.qualityTrend.at(-1) ?? agent.qualityTrend[0]) >= agent.qualityTrend[0] ? "flat or rising" : "slightly down"}), input PSI **${agent.driftScore.toFixed(2)}**, thumbs-down **${m.thumbsDownRate.toFixed(1)}%**. No signal has crossed its threshold.`,
             },
             {
               kind: "sources",
@@ -1423,7 +1423,7 @@ export function planResponse(
               .filter((s) => s.parentId)
               .map(
                 (s, i) =>
-                  `${i + 1}. **${s.name}** (${s.type}) — ${s.status === "error" ? "**failed**: " + (s.output ?? "error") : s.output ? s.output.slice(0, 90) + (s.output.length > 90 ? "…" : "") : "ok"}`
+                  `${i + 1}. **${s.name}** (${s.type}): ${s.status === "error" ? "**failed**: " + (s.output ?? "error") : s.output ? s.output.slice(0, 90) + (s.output.length > 90 ? "…" : "") : "ok"}`
               )
               .join(
                 "\n"
@@ -1502,12 +1502,12 @@ export function planResponse(
         },
         {
           kind: "text",
-          markdown: `**${agent.name}** — quality ${delta < 0 ? "fell" : "rose"} **${Math.abs(delta).toFixed(1)} pts** week over week (${prev.toFixed(1)} → ${week.toFixed(1)}), currently **${agent.metrics.quality}** on \`${agent.evalDataset}\`.\n\n**What moved**\n${
+          markdown: `**${agent.name}**: quality ${delta < 0 ? "fell" : "rose"} **${Math.abs(delta).toFixed(1)} pts** week over week (${prev.toFixed(1)} → ${week.toFixed(1)}), currently **${agent.metrics.quality}** on \`${agent.evalDataset}\`.\n\n**What moved**\n${
             drift.length
               ? drift
                   .map(
                     (d) =>
-                      `- ${d.severity === "Critical" ? "🔴" : d.severity === "Warning" ? "🟠" : "🔵"} **${d.metric}** ${d.baseline}${d.unit} → ${d.current}${d.unit} (${d.kind} drift, ${d.state.toLowerCase()}) — ${d.explanation}`
+                      `- ${d.severity === "Critical" ? "🔴" : d.severity === "Warning" ? "🟠" : "🔵"} **${d.metric}** ${d.baseline}${d.unit} → ${d.current}${d.unit} (${d.kind} drift, ${d.state.toLowerCase()}): ${d.explanation}`
                   )
                   .join("\n")
               : "- No open drift signals on this agent."
@@ -1515,14 +1515,14 @@ export function planResponse(
             exp
               ? `- 🧪 Experiment **${exp.name}** is running (${exp.split}% to B): A ${exp.variants[0].quality} vs B ${exp.variants[1].quality} quality, ${Math.round(exp.significance * 100)}% probability B wins.`
               : ""
-          }\n- 👀 Review queue: **${pending}** pending, **${flagged}** flagged this window. Last deploy ${agent.version} (prompt ${agent.promptVersion}).\n\n**Recommendation:** ${
+          }\n- 👀 Review Queue: **${pending}** pending, **${flagged}** flagged this window. Last deploy ${agent.version} (prompt ${agent.promptVersion}).\n\n**Recommendation:** ${
             critical
-              ? `treat the **${critical.metric}** signal as the primary cause — acknowledge it, compare traces from before and after the deploy, and consider pinning the previous prompt version while you investigate.`
+              ? `treat the **${critical.metric}** signal as the primary cause: acknowledge it, compare traces from before and after the deploy, and consider pinning the previous prompt version while you investigate.`
               : exp
                 ? `the running experiment is the likely driver; check variant B's flagged traces before promoting or stopping it.`
                 : delta < 0
-                  ? `the drop is within noise so far — keep sampling into the review queue and re-check tomorrow.`
-                  : `no regression — quality is stable or improving.`
+                  ? `the drop is within noise so far; keep sampling into the review queue and re-check tomorrow.`
+                  : `no regression: quality is stable or improving.`
           }`,
         },
         {
@@ -1622,7 +1622,7 @@ export function planResponse(
             .map((a) => {
               const d = costDrift.find((x) => x.agentId === a.id)
               const r = costRecs.find((x) => x.agentId === a.id)
-              return `- **${a.name}** — ${d ? `${d.metric} ${d.unit}${d.baseline} → ${d.unit}${d.current}; ${d.explanation}` : ""}${d && r ? " " : ""}${r ? `${r.title}: saves ~$${r.savingsPerMonth?.toLocaleString("en-US")}/month (${r.status.toLowerCase()}).` : ""}`
+              return `- **${a.name}**: ${d ? `${d.metric} ${d.unit}${d.baseline} → ${d.unit}${d.current}; ${d.explanation}` : ""}${d && r ? " " : ""}${r ? `${r.title}: saves ~$${r.savingsPerMonth?.toLocaleString("en-US")}/month (${r.status.toLowerCase()}).` : ""}`
             })
             .join(
               "\n"
@@ -1700,7 +1700,7 @@ export function planResponse(
               : "- No prompt experiment is running for this agent.\n"
           }${
             hygiene
-              ? `- ⚠️ Prompt Hygiene proposes: **${hygiene.action}** — ${hygiene.rationale}\n`
+              ? `- ⚠️ Prompt Hygiene proposes **${hygiene.action}**: ${hygiene.rationale}\n`
               : `- ✅ Prompt Hygiene has no open findings; ${agent.promptVersion} is the approved version.\n`
           }- Evaluated against \`${agent.evalDataset}\`; current composite quality **${agent.metrics.quality}**.`,
         },
@@ -1761,7 +1761,7 @@ export function planResponse(
         },
         {
           kind: "text",
-          markdown: `**Here's what needs attention**\n\n1. **${hot.filter((h) => h.majorIncident).length} major incident${hot.filter((h) => h.majorIncident).length === 1 ? "" : "s"}** in progress — ${hot.find((h) => h.majorIncident)?.number ?? "none"}\n2. **${hot.filter((h) => h.slaBreached).length}** high-priority incidents have breached SLA\n3. **${pendingApprovals + 5}** approvals waiting on you (${pendingApprovals} changes, 5 requests)\n\n| Number | Short description | Priority | State | Group |\n|---|---|---|---|---|\n${hot.map(fmtInc).join("\n")}`,
+          markdown: `**Here's what needs attention**\n\n1. **${hot.filter((h) => h.majorIncident).length} major incident${hot.filter((h) => h.majorIncident).length === 1 ? "" : "s"}** in progress: ${hot.find((h) => h.majorIncident)?.number ?? "none"}\n2. **${hot.filter((h) => h.slaBreached).length}** high-priority incidents have breached SLA\n3. **${pendingApprovals + 5}** approvals waiting on you (${pendingApprovals} changes, 5 requests)\n\n| Number | Short description | Priority | State | Group |\n|---|---|---|---|---|\n${hot.map(fmtInc).join("\n")}`,
         },
         {
           kind: "sources",
@@ -1854,7 +1854,7 @@ export function planResponse(
         },
         {
           kind: "text",
-          markdown: `**Service health right now**\n\n- 🔴 **Payments API** — critical. 5xx rate elevated, 3 open incidents, rollback in progress (INC0010078).\n- 🟠 **Employee Portal** — degraded. Login p95 latency 4.8s; depends on the Payments API path.\n- 🟠 **VPN Remote Access** — degraded. Gateway licenses at 94%; capacity change CHG0031123 is scheduled.\n- 🟢 ERP, Email & Calendar, CRM — healthy.\n\n30-day availability across services averages **99.85%**.`,
+          markdown: `**Service health right now**\n\n- 🔴 **Payments API**: critical. 5xx rate elevated, 3 open incidents, rollback in progress (INC0010078).\n- 🟠 **Employee Portal**: degraded. Login p95 latency 4.8s; depends on the Payments API path.\n- 🟠 **VPN Remote Access**: degraded. Gateway licenses at 94%; capacity change CHG0031123 is scheduled.\n- 🟢 ERP, Email & Calendar, CRM: healthy.\n\n30-day availability across services averages **99.85%**.`,
         },
         {
           kind: "sources",
@@ -1906,7 +1906,7 @@ export function planResponse(
         kind: "text",
         markdown: hits.length
           ? `I found **${hits.length} incident${hits.length === 1 ? "" : "s"}** matching that:\n\n| Number | Short description | Priority | State | Group |\n|---|---|---|---|---|\n${hits.map(fmtInc).join("\n")}\n\nOpen one and ask me to summarize it, draft an update, or find the root cause.`
-          : `I couldn't find records matching that. I can help with things like:\n\n- **Triage** — "what needs my attention today?"\n- **Records** — open an incident or change and ask me to summarize, draft an update or assess risk\n- **Operations** — "summarize service health", "which changes are scheduled this week?"\n\nThere are currently ${incidents.filter((i) => openStates.includes(i.state)).length} open incidents and ${req} requests in the system.`,
+          : `I couldn't find records matching that. I can help with things like:\n\n- **Triage**: "what needs my attention today?"\n- **Records**: open an incident or change and ask me to summarize, draft an update or assess risk\n- **Operations**: "summarize service health", "which changes are scheduled this week?"\n\nThere are currently ${incidents.filter((i) => openStates.includes(i.state)).length} open incidents and ${req} requests in the system.`,
       },
       ...(hits.length
         ? [
@@ -1921,4 +1921,30 @@ export function planResponse(
       { kind: "suggestions", items: starterPrompts(ctx).slice(0, 3) },
     ],
   }
+}
+
+/* ------------------------------------------------------------------------ */
+/* PII redaction                                                             */
+/* ------------------------------------------------------------------------ */
+
+const PII_PATTERNS: [RegExp, string][] = [
+  [/[\w.+-]+@[\w-]+\.[\w.-]+/g, "[email]"],
+  [/\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){3,7}\b/g, "[iban]"],
+  [/(?:\+|\b)(?=(?:[\s()-]*\d){9,})\d[\d\s()-]{7,}\d\b/g, "[phone]"],
+]
+
+/**
+ * Masks e-mail addresses, IBANs and phone numbers before a prompt reaches the
+ * scripted engine. Applied by the assistant when the "Redact personal data"
+ * guardrail is on; returns the text unchanged when nothing matched.
+ */
+export function redactPii(text: string) {
+  let out = text
+  let hits = 0
+  for (const [re, token] of PII_PATTERNS)
+    out = out.replace(re, () => {
+      hits++
+      return token
+    })
+  return { text: out, redacted: hits }
 }

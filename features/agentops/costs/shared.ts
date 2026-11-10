@@ -15,7 +15,7 @@ export function fmtUsd(n: number) {
   }).format(n)
 }
 
-/** Per-request costs are fractions of a cent; show 3–4 significant digits. */
+/** Per-request costs are fractions of a cent; show 3 to 4 significant digits. */
 export function fmtPerRequest(n: number) {
   if (n === 0) return "$0"
   if (n < 0.01) return `$${n.toFixed(4)}`
@@ -37,7 +37,7 @@ export function budgetTone(b: Budget): MeterTone {
   return "brand"
 }
 
-/** Expected share of the period elapsed on the demo clock, 0–100. */
+/** Expected share of the period elapsed on the demo clock, 0 to 100. */
 export function periodPace(period: Budget["period"]) {
   const minutes = NOW.getUTCHours() * 60 + NOW.getUTCMinutes()
   if (period === "daily") return (minutes / (24 * 60)) * 100

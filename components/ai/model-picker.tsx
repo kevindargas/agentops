@@ -90,7 +90,7 @@ export function TierBadge({
     <Badge
       variant="outline"
       className={cn(
-        "h-4 px-1.5 text-[10px] font-medium",
+        "h-4 px-1.5 text-3xs font-medium",
         tierTone[tier],
         className
       )}
@@ -172,7 +172,7 @@ export function ModelPicker({
       <DropdownMenuContent align={align} className="w-[21rem] p-0">
         <div className="border-b px-3 py-2">
           <p className="text-xs font-semibold">Model</p>
-          <p className="text-[11px] text-muted-foreground">
+          <p className="text-2xs text-muted-foreground">
             Applies to chat and new agent runs. Agents keep their own overrides.
           </p>
         </div>
@@ -242,7 +242,7 @@ export function ModelPicker({
             className="text-xs"
           >
             <ArrowUpRightIcon /> Browse the full model catalog
-            <span className="ml-auto text-[10px] text-muted-foreground">
+            <span className="ml-auto text-3xs text-muted-foreground">
               Live from OpenRouter
             </span>
           </DropdownMenuItem>
@@ -264,7 +264,7 @@ function ModelOption({ model }: { model: PickerModel }) {
           <span className="truncate text-sm font-medium">{model.name}</span>
           {model.tier && <TierBadge tier={model.tier} />}
           {model.contextK !== undefined && (
-            <span className="ml-auto shrink-0 font-mono text-[10px] text-muted-foreground tabular-nums">
+            <span className="ml-auto shrink-0 font-mono text-3xs text-muted-foreground tabular-nums">
               {model.contextK >= 1000
                 ? `${model.contextK / 1000}M`
                 : `${model.contextK}K`}{" "}

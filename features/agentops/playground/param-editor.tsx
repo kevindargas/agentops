@@ -85,7 +85,10 @@ export function ParamEditor({
       />
 
       <div
-        className={cn("grid gap-3", compact ? "grid-cols-2" : "grid-cols-3")}
+        className={cn(
+          "grid gap-3",
+          compact ? "grid-cols-2" : "grid-cols-2 sm:grid-cols-3"
+        )}
       >
         <NumberField
           id={`${id}-max`}
@@ -133,6 +136,30 @@ export function ParamEditor({
           changed={changed("maxRetries")}
           onChange={(v) => patch("maxRetries", v ?? value.maxRetries)}
         />
+        <NumberField
+          id={`${id}-freq`}
+          label="Frequency penalty"
+          value={value.frequencyPenalty}
+          optional
+          min={-2}
+          max={2}
+          step={0.1}
+          digits={1}
+          changed={changed("frequencyPenalty")}
+          onChange={(v) => patch("frequencyPenalty", v)}
+        />
+        <NumberField
+          id={`${id}-presence`}
+          label="Presence penalty"
+          value={value.presencePenalty}
+          optional
+          min={-2}
+          max={2}
+          step={0.1}
+          digits={1}
+          changed={changed("presencePenalty")}
+          onChange={(v) => patch("presencePenalty", v)}
+        />
       </div>
 
       <SegmentField
@@ -160,7 +187,7 @@ export function ParamEditor({
             Parallel tool calls
             {changed("parallelToolCalls") && <ChangedDot />}
           </Label>
-          <p className="text-[11px] text-muted-foreground">
+          <p className="text-2xs text-muted-foreground">
             Let the model issue several calls in one turn
           </p>
         </div>
@@ -207,9 +234,10 @@ function ChangedDot() {
   return (
     <span
       className="inline-block size-1.5 rounded-full bg-brand"
-      aria-label="changed from deployed"
       title="Differs from deployed"
-    />
+    >
+      <span className="sr-only">changed from deployed</span>
+    </span>
   )
 }
 
@@ -296,7 +324,7 @@ function SliderField({
         }}
       />
       {hint && (
-        <p className="text-[11px] text-muted-foreground tabular-nums">{hint}</p>
+        <p className="text-2xs text-muted-foreground tabular-nums">{hint}</p>
       )}
     </div>
   )
@@ -309,6 +337,7 @@ function NumberField({
   min,
   max,
   step,
+  digits = 0,
   optional,
   changed,
   onChange,
@@ -319,10 +348,13 @@ function NumberField({
   min?: number
   max?: number
   step?: number
+  /** Decimal places kept; 0 rounds to an integer. */
+  digits?: number
   optional?: boolean
   changed?: boolean
   onChange: (v: number | undefined) => void
 }) {
+  const factor = 10 ** digits
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
       <FieldLabel htmlFor={id} changed={changed}>
@@ -331,7 +363,7 @@ function NumberField({
       <Input
         id={id}
         type="number"
-        inputMode="numeric"
+        inputMode={digits > 0 ? "decimal" : "numeric"}
         min={min}
         max={max}
         step={step}
@@ -347,7 +379,7 @@ function NumberField({
           if (!Number.isFinite(n)) return
           if (min !== undefined) n = Math.max(min, n)
           if (max !== undefined) n = Math.min(max, n)
-          onChange(Math.round(n))
+          onChange(Math.round(n * factor) / factor)
         }}
         className="h-7 font-mono text-xs tabular-nums"
       />
@@ -415,10 +447,10 @@ function SchemaEditor({ id }: { id: string }) {
           <Badge
             variant="outline"
             className={cn(
-              "h-4 px-1.5 text-[10px]",
+              "h-4 px-1.5 text-3xs",
               valid
                 ? "border-success/30 text-success-text"
-                : "border-destructive/40 text-destructive"
+                : "border-destructive/40 text-danger-text"
             )}
           >
             {valid ? "valid" : "invalid JSON"}
@@ -436,7 +468,7 @@ function SchemaEditor({ id }: { id: string }) {
           onChange={(e) => setSchema(e.target.value)}
           spellCheck={false}
           rows={8}
-          className="min-h-32 resize-y font-mono text-[11px] leading-relaxed"
+          className="min-h-32 resize-y font-mono text-2xs leading-relaxed"
         />
       </CollapsibleContent>
     </Collapsible>
@@ -471,7 +503,7 @@ function StopSequences({
           <Badge
             key={s}
             variant="secondary"
-            className="h-5 gap-1 pr-0.5 pl-1.5 font-mono text-[11px]"
+            className="h-5 gap-1 pr-0.5 pl-1.5 font-mono text-2xs"
           >
             {s}
             <Button
@@ -488,7 +520,7 @@ function StopSequences({
         <input
           id={id}
           value={draft}
-          placeholder={value.length ? "Add…" : "Type and press Enter"}
+          placeholder={value.length ? "Add" : "Type and press Enter"}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === ",") {

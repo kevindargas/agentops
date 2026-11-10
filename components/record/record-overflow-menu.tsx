@@ -42,6 +42,11 @@ export interface RecordOverflowItem {
   confirm?: { title?: string; description?: string; actionLabel?: string }
   separatorBefore?: boolean
   disabled?: boolean
+  /**
+   * Runs before the toast (client callers only; server pages cannot pass
+   * functions). Return `false` to suppress the toast.
+   */
+  onSelect?: () => void | boolean
 }
 
 export function RecordOverflowMenu({
@@ -56,8 +61,9 @@ export function RecordOverflowMenu({
   const [pending, setPending] = React.useState<RecordOverflowItem | null>(null)
 
   function run(item: RecordOverflowItem) {
+    if (item.onSelect?.() === false) return
     const message =
-      item.message ?? `${item.label}${number ? ` · ${number}` : ""}`
+      item.message ?? `${item.label}${number ? ` for ${number}` : ""}`
     if (item.destructive) toast(message)
     else toast.success(message)
   }
@@ -119,7 +125,7 @@ export function RecordOverflowMenu({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Keep as is</AlertDialogCancel>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               variant="destructive"
               onClick={() => {

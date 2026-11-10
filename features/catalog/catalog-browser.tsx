@@ -61,17 +61,29 @@ import {
   Sheet,
   SheetContent,
   SheetDescription,
-  SheetFooter,
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
 import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { EmptyState } from "@/components/shared/empty-state"
-import { catalogItems, getGroup, users } from "@/lib/data"
-import { currentUser } from "@/lib/data/users"
+import { Section } from "@/components/shared/page-header"
+import {
+  SheetBody,
+  SheetFooterActions,
+  sheetWidths,
+} from "@/components/shared/sheet-frame"
+import { toneClasses } from "@/components/shared/status-badge"
+import {
+  requestsStore,
+  nextItemNumber,
+  nextRequestNumber,
+} from "@/features/requests/requests-store"
+import { catalogItems } from "@/lib/data/catalog"
+import { NOW, daysFromNow } from "@/lib/data/seed"
+import { currentUser, getGroup, users } from "@/lib/data/users"
 import { formatCurrency } from "@/lib/format"
-import type { CatalogCategory, CatalogItem } from "@/lib/types"
+import type { CatalogCategory, CatalogItem, Request } from "@/lib/types"
 
 const icons: Record<string, LucideIcon> = {
   laptop: LaptopIcon,
@@ -99,40 +111,30 @@ const icons: Record<string, LucideIcon> = {
   armchair: ArmchairIcon,
 }
 
+/** Category icon and tint. Tints come from the shared tone system so they hold up in dark mode. */
 export const categoryMeta: Record<
   CatalogCategory,
   { icon: LucideIcon; tint: string }
 > = {
-  Hardware: { icon: LaptopIcon, tint: "bg-brand/10 text-brand" },
-  Software: { icon: CodeIcon, tint: "bg-info/10 text-info" },
-  "Access & Accounts": {
-    icon: KeyRoundIcon,
-    tint: "bg-warning/15 text-warning-text",
-  },
-  "Cloud & Infrastructure": {
-    icon: CloudIcon,
-    tint: "bg-chart-3/15 text-green-700 dark:text-chart-3",
-  },
+  Hardware: { icon: LaptopIcon, tint: toneClasses.progress.soft },
+  Software: { icon: CodeIcon, tint: toneClasses.info.soft },
+  "Access & Accounts": { icon: KeyRoundIcon, tint: toneClasses.warning.soft },
+  "Cloud & Infrastructure": { icon: CloudIcon, tint: toneClasses.success.soft },
   Collaboration: {
     icon: UsersIcon,
-    tint: "bg-chart-5/15 text-pink-700 dark:text-chart-5",
+    tint: "bg-chart-5/15 text-chart-5",
   },
   "HR Services": {
     icon: HeartHandshakeIcon,
-    tint: "bg-chart-2/15 text-orange-700 dark:text-chart-2",
+    tint: "bg-chart-2/15 text-chart-2",
   },
-  Facilities: { icon: BuildingIcon, tint: "bg-muted text-muted-foreground" },
+  Facilities: { icon: BuildingIcon, tint: toneClasses.muted.soft },
 }
 
-const categories: CatalogCategory[] = [
-  "Hardware",
-  "Software",
-  "Access & Accounts",
-  "Cloud & Infrastructure",
-  "Collaboration",
-  "HR Services",
-  "Facilities",
-]
+/** Categories present in the catalog data, in catalog order. */
+const categories = Array.from(
+  new Set(catalogItems.map((c) => c.category))
+) as CatalogCategory[]
 type SortKey = "popular" | "name" | "price" | "fastest"
 
 export function priceLabel(item: CatalogItem) {
@@ -207,7 +209,7 @@ export function CatalogBrowser({
               approval is routed to your manager automatically.
             </p>
           </div>
-          <InputGroup className="h-12 w-full rounded-xl bg-background shadow-sm">
+          <InputGroup className="h-12 w-full rounded-xl bg-background shadow-raised">
             <InputGroupAddon>
               <SearchIcon className="size-5 text-muted-foreground" />
             </InputGroupAddon>
@@ -289,7 +291,7 @@ export function CatalogBrowser({
           onValueChange={(v) => setSort((v as SortKey) ?? "popular")}
           items={{
             popular: "Most popular",
-            name: "Name A–Z",
+            name: "Name A to Z",
             price: "Price: low to high",
             fastest: "Fastest delivery",
           }}
@@ -299,7 +301,7 @@ export function CatalogBrowser({
           </SelectTrigger>
           <SelectContent align="end">
             <SelectItem value="popular">Most popular</SelectItem>
-            <SelectItem value="name">Name A–Z</SelectItem>
+            <SelectItem value="name">Name A to Z</SelectItem>
             <SelectItem value="price">Price: low to high</SelectItem>
             <SelectItem value="fastest">Fastest delivery</SelectItem>
           </SelectContent>
@@ -307,15 +309,11 @@ export function CatalogBrowser({
       </div>
 
       {browsing && (
-        <section className="flex flex-col gap-3">
-          <div className="flex items-center justify-between">
-            <h2 className="flex items-center gap-1.5 text-sm font-semibold">
-              <SparklesIcon className="size-4 text-brand" /> Popular right now
-            </h2>
-            <span className="text-xs text-muted-foreground">
-              Most requested across the company this month
-            </span>
-          </div>
+        <Section
+          title="Popular right now"
+          icon={<SparklesIcon className="text-brand" />}
+          description="Most requested across the company this month"
+        >
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {popular.slice(0, 4).map((item) => (
               <CatalogItemCard
@@ -326,22 +324,20 @@ export function CatalogBrowser({
               />
             ))}
           </div>
-        </section>
+        </Section>
       )}
 
-      <section className="flex flex-col gap-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold">
-            {q
-              ? `Results for “${query}”`
-              : category === "All"
-                ? "All services"
-                : category}{" "}
-            <span className="font-normal text-muted-foreground">
-              ({visible.length})
-            </span>
-          </h2>
-          {(q || category !== "All") && (
+      <Section
+        title={
+          q
+            ? `Results for "${query}"`
+            : category === "All"
+              ? "All services"
+              : category
+        }
+        count={visible.length}
+        actions={
+          (q || category !== "All") && (
             <Button
               variant="ghost"
               size="sm"
@@ -352,8 +348,9 @@ export function CatalogBrowser({
             >
               Clear
             </Button>
-          )}
-        </div>
+          )
+        }
+      >
         {visible.length === 0 ? (
           <EmptyState
             icon={<SearchIcon />}
@@ -380,7 +377,7 @@ export function CatalogBrowser({
             ))}
           </div>
         )}
-      </section>
+      </Section>
 
       <RequestSheet item={ordering} onClose={() => setOrdering(null)} />
     </div>
@@ -411,7 +408,7 @@ export function CatalogItemCard({
       }}
       className={cn(
         "group relative flex flex-col gap-3 rounded-xl border bg-card p-4 text-left text-card-foreground transition-all duration-200 outline-none",
-        "hover:-translate-y-0.5 hover:border-brand/40 hover:shadow-lg focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+        "lift hover:border-brand/40 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
       )}
     >
       <div className="flex items-start justify-between gap-3">
@@ -475,6 +472,48 @@ export function CatalogItemCard({
   )
 }
 
+/** Builds a Request from the sheet draft and appends it to `requestsStore`. */
+function submitRequest(item: CatalogItem, qty: number, forId: string) {
+  const number = nextRequestNumber()
+  const now = NOW.toISOString()
+  const state: Request["state"] = item.approvalRequired
+    ? "Pending Approval"
+    : "In Progress"
+  const stage: Request["stage"] = item.approvalRequired
+    ? "Waiting for Approval"
+    : "Fulfillment"
+  const request: Request = {
+    number,
+    requestedForId: forId,
+    requestedById: currentUser.id,
+    state,
+    stage,
+    approval: item.approvalRequired ? "Requested" : "Approved",
+    items: [
+      {
+        number: nextItemNumber(),
+        catalogItemId: item.id,
+        quantity: qty,
+        state,
+        stage,
+        assignmentGroupId: item.fulfillmentGroupId,
+        tasks: [],
+        variables: {
+          Justification: "Submitted from the service catalog.",
+          "Delivery location":
+            users.find((u) => u.id === forId)?.location ?? "Unknown",
+        },
+      },
+    ],
+    price: item.price * qty,
+    opened: now,
+    updated: now,
+    dueDate: daysFromNow(item.deliveryDays + (item.approvalRequired ? 1 : 0)),
+  }
+  requestsStore.add(request)
+  return number
+}
+
 export function RequestSheet({
   item,
   onClose,
@@ -496,10 +535,12 @@ export function RequestSheet({
 
   return (
     <Sheet open={Boolean(item)} onOpenChange={(o) => !o && onClose()}>
-      <SheetContent className="flex w-full flex-col gap-0 overflow-y-auto p-0 sm:max-w-md">
+      <SheetContent
+        className={cn(sheetWidths.detail, "flex flex-col gap-0 p-0")}
+      >
         {item && (
           <>
-            <SheetHeader className="gap-4 border-b bg-muted/30 p-6">
+            <SheetHeader className="gap-4 border-b px-6 py-5">
               <div className="flex items-start gap-3">
                 <div
                   className={cn(
@@ -516,7 +557,7 @@ export function RequestSheet({
                   </SheetDescription>
                 </div>
               </div>
-              <dl className="grid grid-cols-3 gap-3 text-xs">
+              <dl className="grid grid-cols-1 gap-3 text-xs sm:grid-cols-3">
                 <div className="rounded-lg border bg-background p-2.5">
                   <dt className="text-muted-foreground">Price</dt>
                   <dd className="font-semibold tabular-nums">
@@ -535,7 +576,7 @@ export function RequestSheet({
                 </div>
               </dl>
             </SheetHeader>
-            <div className="flex flex-1 flex-col gap-5 p-6">
+            <SheetBody className="flex flex-col gap-5">
               <Field>
                 <FieldLabel htmlFor="for">Requested for</FieldLabel>
                 <Select
@@ -589,7 +630,7 @@ export function RequestSheet({
                   placeholder={
                     item.approvalRequired
                       ? "Your manager will see this when approving."
-                      : "Optional — helps the fulfillment team."
+                      : "Optional. Helps the fulfillment team."
                   }
                   className="min-h-24"
                 />
@@ -605,21 +646,21 @@ export function RequestSheet({
                 </div>
                 <ol className="mt-3 flex flex-col gap-1.5 text-xs text-muted-foreground">
                   <li className="flex items-center gap-2">
-                    <span className="flex size-4 items-center justify-center rounded-full bg-brand text-[10px] font-semibold text-brand-foreground">
+                    <span className="flex size-4 items-center justify-center rounded-full bg-brand text-3xs font-semibold text-brand-foreground">
                       1
                     </span>
                     Submit request
                   </li>
                   {item.approvalRequired && (
                     <li className="flex items-center gap-2">
-                      <span className="flex size-4 items-center justify-center rounded-full border text-[10px] font-semibold">
+                      <span className="flex size-4 items-center justify-center rounded-full border text-3xs font-semibold">
                         2
                       </span>
                       Manager approval (usually within a day)
                     </li>
                   )}
                   <li className="flex items-center gap-2">
-                    <span className="flex size-4 items-center justify-center rounded-full border text-[10px] font-semibold">
+                    <span className="flex size-4 items-center justify-center rounded-full border text-3xs font-semibold">
                       {item.approvalRequired ? 3 : 2}
                     </span>
                     Fulfilled by {group?.name ?? "the service team"} in{" "}
@@ -627,24 +668,24 @@ export function RequestSheet({
                   </li>
                 </ol>
               </div>
-            </div>
-            <SheetFooter className="flex-row justify-end gap-2 border-t p-4">
-              <Button variant="outline" onClick={onClose}>
-                Cancel
-              </Button>
-              <Button
-                onClick={() => {
-                  toast.success("Request REQ0020337 submitted", {
-                    description: item.approvalRequired
-                      ? "Sent to your manager for approval."
-                      : `${group?.name ?? "Fulfillment"} has started working on it.`,
-                  })
-                  onClose()
-                }}
-              >
-                Submit request
-              </Button>
-            </SheetFooter>
+            </SheetBody>
+            <SheetFooterActions
+              primary={
+                <Button
+                  onClick={() => {
+                    const number = submitRequest(item, qty, forId)
+                    toast.success(`Request ${number} submitted`, {
+                      description: item.approvalRequired
+                        ? "Waiting for manager approval. It is now in the requests list."
+                        : `Added to the requests list for ${group?.name ?? "the fulfillment group"}.`,
+                    })
+                    onClose()
+                  }}
+                >
+                  Submit request
+                </Button>
+              }
+            />
           </>
         )}
       </SheetContent>

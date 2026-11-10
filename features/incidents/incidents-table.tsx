@@ -7,10 +7,15 @@ import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { DataTable, type FacetDef } from "@/components/data-table"
 import { incidentStates, priorityLabels } from "@/lib/constants"
-import { groups, incidents } from "@/lib/data"
-import { currentUser } from "@/lib/data/users"
+import { getCi } from "@/lib/data/cmdb"
+import { currentUser, getGroup, getUser, groups } from "@/lib/data/users"
 import type { Incident, Priority } from "@/lib/types"
-import { incidentColumns } from "./columns"
+import {
+  assignIncidentToMe,
+  incidentColumns,
+  resolveIncidents,
+} from "./columns"
+import { incidentsStore } from "./incidents-store"
 
 const facets: FacetDef<Incident>[] = [
   {
@@ -51,18 +56,77 @@ const facets: FacetDef<Incident>[] = [
   },
 ]
 
-export function IncidentsTable({ data = incidents }: { data?: Incident[] }) {
+const csvEscape = (v: string | number | boolean | undefined) => {
+  const s = v === undefined ? "" : String(v)
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+}
+
+/** Builds and downloads a CSV of the given incidents (real Blob download). */
+export function exportIncidentsCsv(rows: Incident[]) {
+  const header = [
+    "Number",
+    "Short description",
+    "Priority",
+    "State",
+    "Caller",
+    "Assignment group",
+    "Assigned to",
+    "Affected service",
+    "Channel",
+    "Opened",
+    "SLA due",
+    "SLA breached",
+  ]
+  const lines = rows.map((i) =>
+    [
+      i.number,
+      i.shortDescription,
+      `P${i.priority}`,
+      i.state,
+      getUser(i.callerId)?.name,
+      getGroup(i.assignmentGroupId)?.name,
+      getUser(i.assignedToId)?.name,
+      getCi(i.ciId)?.name,
+      i.channel,
+      i.opened,
+      i.slaDue,
+      i.slaBreached,
+    ]
+      .map(csvEscape)
+      .join(",")
+  )
+  const blob = new Blob([[header.join(","), ...lines].join("\n")], {
+    type: "text/csv;charset=utf-8",
+  })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement("a")
+  a.href = url
+  a.download = "incidents.csv"
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
+/**
+ * Incident list. Reads `incidentsStore` so rows created by the New incident
+ * sheet or changed by bulk actions render without a reload; pass `data` to
+ * scope it to a precomputed list.
+ */
+export function IncidentsTable({ data }: { data?: Incident[] }) {
   const params = useSearchParams()
+  const stored = incidentsStore.use()
+  const source = data ?? stored
   const view = params.get("view")
   const scoped =
     view === "major"
-      ? data.filter((i) => i.majorIncident)
+      ? source.filter((i) => i.majorIncident)
       : view === "mine"
-        ? data.filter(
+        ? source.filter(
             (i) =>
               i.assignedToId === currentUser.id || i.callerId === currentUser.id
           )
-        : data
+        : source
   const initialFacets =
     view === "open" ? { state: ["New", "In Progress", "On Hold"] } : undefined
 
@@ -87,6 +151,7 @@ export function IncidentsTable({ data = incidents }: { data?: Incident[] }) {
       }}
       rowHref={(r) => `/itsm/incidents/${r.number}`}
       totalLabel="incidents"
+      caption="Incidents"
       emptyTitle={
         view === "major"
           ? "No major incidents"
@@ -96,7 +161,7 @@ export function IncidentsTable({ data = incidents }: { data?: Incident[] }) {
       }
       emptyMessage={
         view === "major"
-          ? "All clear — no incidents are flagged as major right now."
+          ? "All clear. No incidents are flagged as major right now."
           : view === "mine"
             ? "Incidents you open or are assigned will show up here."
             : undefined
@@ -106,11 +171,12 @@ export function IncidentsTable({ data = incidents }: { data?: Incident[] }) {
         <Button
           variant="outline"
           size="sm"
-          onClick={() =>
-            toast(
-              "Export started — you will be notified when the file is ready"
+          onClick={() => {
+            exportIncidentsCsv(scoped)
+            toast.success(
+              `incidents.csv downloaded (${scoped.length} row${scoped.length === 1 ? "" : "s"})`
             )
-          }
+          }}
         >
           <DownloadIcon /> Export
         </Button>
@@ -121,6 +187,7 @@ export function IncidentsTable({ data = incidents }: { data?: Incident[] }) {
             variant="ghost"
             size="sm"
             onClick={() => {
+              assignIncidentToMe(rows.map((r) => r.original.number))
               toast.success(
                 `${rows.length} incident${rows.length === 1 ? "" : "s"} assigned to you`
               )
@@ -133,8 +200,14 @@ export function IncidentsTable({ data = incidents }: { data?: Incident[] }) {
             variant="ghost"
             size="sm"
             onClick={() => {
+              const open = rows
+                .map((r) => r.original)
+                .filter(
+                  (i) => !["Resolved", "Closed", "Canceled"].includes(i.state)
+                )
+              resolveIncidents(open.map((i) => i.number))
               toast.success(
-                `${rows.length} incident${rows.length === 1 ? "" : "s"} resolved`
+                `${open.length} incident${open.length === 1 ? "" : "s"} resolved`
               )
               clear()
             }}

@@ -3,8 +3,13 @@
 import * as React from "react"
 import {
   BanIcon,
+  BellIcon,
+  BellOffIcon,
+  BookOpenIcon,
   CheckIcon,
   ChevronDownIcon,
+  GitBranchIcon,
+  LightbulbIcon,
   PauseIcon,
   RotateCcwIcon,
   StarIcon,
@@ -58,7 +63,32 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
+import {
+  RecordOverflowMenu,
+  type RecordOverflowItem,
+} from "@/components/record/record-overflow-menu"
+import { StateBadge } from "@/components/shared/status-badge"
+import {
+  incidentAutoCloseDays,
+  onHoldAutoResolveDays,
+  onHoldReminderDays,
+} from "@/lib/constants"
+import { NOW, daysFromNow } from "@/lib/data/seed"
+import { currentUser } from "@/lib/data/users"
+import {
+  changesStore,
+  nextChangeNumber,
+} from "@/features/changes/changes-store"
+import {
+  knowledgeStore,
+  nextArticleNumber,
+} from "@/features/knowledge/knowledge-store"
+import {
+  nextProblemNumber,
+  problemsStore,
+} from "@/features/problems/problems-store"
 import type { Incident } from "@/lib/types"
+import { incidentsStore } from "./incidents-store"
 
 const resolutionCodes = {
   fixed: "Solved (Permanently)",
@@ -77,8 +107,33 @@ const holdReasons = {
 } as const
 
 const MIN_NOTES = 20
+const closedStates = ["Resolved", "Closed", "Canceled"]
 
-export function IncidentActions({ incident }: { incident: Incident }) {
+/** Current incident from the client store, falling back to the server copy. */
+export function useIncident(fallback: Incident) {
+  const list = incidentsStore.use()
+  return list.find((i) => i.number === fallback.number) ?? fallback
+}
+
+/** Header badges that follow the client store so state changes are visible. */
+export function IncidentBadges({ incident }: { incident: Incident }) {
+  const live = useIncident(incident)
+  return (
+    <>
+      <StateBadge state={live.state} />
+      {live.majorIncident && (
+        <StateBadge
+          state="Major incident"
+          tone="danger"
+          icon={<StarIcon className="size-3 fill-current" />}
+        />
+      )}
+    </>
+  )
+}
+
+export function IncidentActions({ incident: seed }: { incident: Incident }) {
+  const incident = useIncident(seed)
   const [resolveOpen, setResolveOpen] = React.useState(false)
   const [holdOpen, setHoldOpen] = React.useState(false)
   const [cancelOpen, setCancelOpen] = React.useState(false)
@@ -88,11 +143,19 @@ export function IncidentActions({ incident }: { incident: Incident }) {
   const [touched, setTouched] = React.useState(false)
   const [holdReason, setHoldReason] =
     React.useState<keyof typeof holdReasons>("caller")
+  const [following, setFollowing] = React.useState(false)
 
-  const closed = ["Resolved", "Closed", "Canceled"].includes(incident.state)
+  const closed = closedStates.includes(incident.state)
   const resolved = incident.state === "Resolved"
   const onHold = incident.state === "On Hold"
   const notesValid = notes.trim().length >= MIN_NOTES
+  const mine = incident.assignedToId === currentUser.id
+
+  const patch = (next: Partial<Incident>) =>
+    incidentsStore.patch(incident.number, {
+      ...next,
+      updated: NOW.toISOString(),
+    })
 
   function openResolve() {
     setNotes("")
@@ -106,29 +169,153 @@ export function IncidentActions({ incident }: { incident: Incident }) {
       return
     }
     setResolveOpen(false)
+    patch({ state: "Resolved", resolved: NOW.toISOString() })
     toast.success(`${incident.number} resolved`, {
-      description: `${resolutionCodes[code]}${notify ? " · caller notified by email" : ""}. Auto-closes in 3 days unless reopened.`,
+      description: `${resolutionCodes[code]}${notify ? " with a caller notification queued" : ""}. State recorded in this session.`,
     })
   }
+
+  function createProblem() {
+    const number = nextProblemNumber()
+    problemsStore.add({
+      number,
+      shortDescription: incident.shortDescription,
+      state: "New",
+      priority: incident.priority,
+      assignmentGroupId: incident.assignmentGroupId,
+      assignedToId: incident.assignedToId,
+      ciId: incident.ciId,
+      relatedIncidents: 1,
+      knownError: false,
+      opened: NOW.toISOString(),
+      updated: NOW.toISOString(),
+    })
+    patch({ problemId: number })
+    toast.success(`Problem ${number} created and linked`, {
+      description: "It is listed under Problems and in Related records.",
+    })
+  }
+
+  function createChange() {
+    const number = nextChangeNumber()
+    changesStore.add({
+      number,
+      shortDescription: `Fix: ${incident.shortDescription}`,
+      description: `Change raised from incident ${incident.number}.\n\n${incident.description}`,
+      type: "Normal",
+      state: "New",
+      risk: "Moderate",
+      impact: incident.impact,
+      priority: incident.priority,
+      category: incident.category,
+      assignmentGroupId: incident.assignmentGroupId,
+      assignedToId: incident.assignedToId,
+      requestedById: currentUser.id,
+      ciId: incident.ciId,
+      approval: "Not Yet Requested",
+      cabRequired: incident.priority <= 2,
+      plannedStart: daysFromNow(3),
+      plannedEnd: daysFromNow(3.25),
+      opened: NOW.toISOString(),
+      updated: NOW.toISOString(),
+      implementationPlan: "To be completed by the assignee.",
+      backoutPlan: "To be completed by the assignee.",
+      testPlan: "To be completed by the assignee.",
+    })
+    patch({ changeId: number })
+    toast.success(`Change ${number} created and linked`, {
+      description: "A Normal change in state New, listed under Changes.",
+    })
+  }
+
+  function createArticle() {
+    const number = nextArticleNumber()
+    knowledgeStore.add({
+      number,
+      title: incident.shortDescription,
+      summary: `Resolution steps captured from ${incident.number}.`,
+      knowledgeBase: incident.category === "Security" ? "Security" : "IT",
+      category: incident.category,
+      state: "Draft",
+      authorId: currentUser.id,
+      views: 0,
+      helpful: 0,
+      notHelpful: 0,
+      updated: NOW.toISOString(),
+      tags: [
+        incident.category.toLowerCase(),
+        incident.subcategory.toLowerCase(),
+      ],
+    })
+    toast.success(`Draft ${number} created from this incident`, {
+      description: "Listed under Knowledge as a draft.",
+    })
+  }
+
+  const overflow: RecordOverflowItem[] = [
+    {
+      label: "Create problem",
+      icon: <LightbulbIcon />,
+      disabled: Boolean(incident.problemId),
+      onSelect: () => {
+        createProblem()
+        return false
+      },
+    },
+    {
+      label: "Create change",
+      icon: <GitBranchIcon />,
+      disabled: Boolean(incident.changeId),
+      onSelect: () => {
+        createChange()
+        return false
+      },
+    },
+    {
+      label: "Create knowledge article",
+      icon: <BookOpenIcon />,
+      onSelect: () => {
+        createArticle()
+        return false
+      },
+    },
+    {
+      label: following ? "Unfollow" : "Follow",
+      icon: following ? <BellOffIcon /> : <BellIcon />,
+      separatorBefore: true,
+      message: following
+        ? `You no longer follow ${incident.number}`
+        : `You now follow ${incident.number} in this session`,
+      onSelect: () => setFollowing((f) => !f),
+    },
+  ]
 
   return (
     <>
       <Button
         variant="outline"
-        onClick={() => toast.success(`${incident.number} assigned to you`)}
-        disabled={closed}
+        onClick={() => {
+          patch({ assignedToId: currentUser.id })
+          toast.success(`${incident.number} assigned to you`)
+        }}
+        disabled={closed || mine}
       >
-        <UserCheckIcon /> Assign to me
+        <UserCheckIcon /> {mine ? "Assigned to you" : "Assign to me"}
       </Button>
       <ButtonGroup>
         {resolved ? (
           <Button
             variant="outline"
-            onClick={() =>
+            onClick={() => {
+              patch({
+                state: "In Progress",
+                resolved: undefined,
+                reopenCount: incident.reopenCount + 1,
+              })
               toast(`${incident.number} reopened`, {
                 description: "State set back to In Progress.",
               })
-            }
+            }}
           >
             <RotateCcwIcon /> Reopen
           </Button>
@@ -161,29 +348,31 @@ export function IncidentActions({ incident }: { incident: Incident }) {
             </DropdownMenuItem>
             {onHold && (
               <DropdownMenuItem
-                onClick={() =>
+                onClick={() => {
+                  patch({ state: "In Progress" })
                   toast.success(`${incident.number} resumed`, {
                     description: "State set to In Progress.",
                   })
-                }
+                }}
               >
                 <RotateCcwIcon /> Resume work
               </DropdownMenuItem>
             )}
             <DropdownMenuItem
               disabled={closed}
-              onClick={() =>
+              onClick={() => {
+                patch({ majorIncident: !incident.majorIncident })
                 toast(
                   incident.majorIncident
-                    ? "Major incident demoted"
-                    : "Major incident proposed — awaiting manager approval"
+                    ? `${incident.number} is no longer a major incident`
+                    : `${incident.number} flagged as a major incident`
                 )
-              }
+              }}
             >
               <StarIcon />{" "}
               {incident.majorIncident
                 ? "Demote major incident"
-                : "Propose major incident"}
+                : "Flag as major incident"}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem
@@ -196,14 +385,16 @@ export function IncidentActions({ incident }: { incident: Incident }) {
           </DropdownMenuContent>
         </DropdownMenu>
       </ButtonGroup>
+      <RecordOverflowMenu items={overflow} number={incident.number} />
 
       <Dialog open={resolveOpen} onOpenChange={setResolveOpen}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Resolve {incident.number}</DialogTitle>
             <DialogDescription>
-              Tell the caller what fixed the issue. They have 3 days to reopen
-              before the incident closes automatically.
+              Tell the caller what fixed the issue. They have{" "}
+              {incidentAutoCloseDays} days to reopen before the incident closes
+              automatically.
             </DialogDescription>
           </DialogHeader>
           <FieldGroup>
@@ -324,7 +515,7 @@ export function IncidentActions({ incident }: { incident: Incident }) {
               </Select>
               <FieldDescription>
                 {holdReason === "caller"
-                  ? "The caller is reminded after 2 days and the incident auto-resolves after 5."
+                  ? `The caller is reminded after ${onHoldReminderDays} days and the incident auto-resolves after ${onHoldAutoResolveDays}.`
                   : "Resumes automatically when the linked record is updated."}
               </FieldDescription>
             </Field>
@@ -336,7 +527,7 @@ export function IncidentActions({ incident }: { incident: Incident }) {
                 className="min-h-20"
               />
               <FieldDescription>
-                Internal only — not visible to the caller.
+                Internal only, not visible to the caller.
               </FieldDescription>
             </Field>
           </FieldGroup>
@@ -347,6 +538,7 @@ export function IncidentActions({ incident }: { incident: Incident }) {
             <Button
               onClick={() => {
                 setHoldOpen(false)
+                patch({ state: "On Hold" })
                 toast(`${incident.number} placed on hold`, {
                   description: holdReasons[holdReason],
                 })
@@ -366,9 +558,9 @@ export function IncidentActions({ incident }: { incident: Incident }) {
             </AlertDialogMedia>
             <AlertDialogTitle>Cancel {incident.number}?</AlertDialogTitle>
             <AlertDialogDescription>
-              The caller will be told the incident was canceled and the SLA will
-              stop. Canceled incidents are excluded from resolution metrics and
-              cannot be reopened.
+              The SLA stops and the incident leaves every open queue. Canceled
+              incidents are excluded from resolution metrics and cannot be
+              reopened.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -377,6 +569,7 @@ export function IncidentActions({ incident }: { incident: Incident }) {
               variant="destructive"
               onClick={() => {
                 setCancelOpen(false)
+                patch({ state: "Canceled" })
                 toast(`${incident.number} canceled`)
               }}
             >

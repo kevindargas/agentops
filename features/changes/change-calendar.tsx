@@ -28,45 +28,30 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { RiskBadge, StateBadge } from "@/components/shared/status-badge"
+import { EmptyState } from "@/components/shared/empty-state"
+import { Section } from "@/components/shared/page-header"
+import {
+  RiskBadge,
+  StateBadge,
+  toneClasses,
+  type Tone,
+} from "@/components/shared/status-badge"
 import { UserChip } from "@/components/shared/user-chip"
-import { changes, getGroup, NOW } from "@/lib/data"
+import { changeFreezeWindows } from "@/lib/data/itsm"
+import { NOW } from "@/lib/data/seed"
+import { getGroup } from "@/lib/data/users"
 import { formatDate } from "@/lib/format"
 import type { Change } from "@/lib/types"
+import { changesStore } from "./changes-store"
 
 type View = "month" | "week"
 
-const typeClass: Record<Change["type"], { chip: string; dot: string }> = {
-  Standard: {
-    chip: "border-border bg-muted text-foreground hover:bg-muted/70",
-    dot: "bg-muted-foreground/60",
-  },
-  Normal: {
-    chip: "border-info/30 bg-info/10 text-info hover:bg-info/15",
-    dot: "bg-info",
-  },
-  Emergency: {
-    chip: "border-destructive/30 bg-destructive/10 text-destructive hover:bg-destructive/15",
-    dot: "bg-destructive",
-  },
+/** Chip and legend tones per change type, from the shared tone system. */
+const typeTone: Record<Change["type"], Tone> = {
+  Standard: "muted",
+  Normal: "info",
+  Emergency: "danger",
 }
-
-/** Change freeze windows (UTC, inclusive). Deterministic so SSR and CSR agree. */
-const freezeWindows = [
-  {
-    name: "Black Friday freeze",
-    start: "2026-11-26",
-    end: "2026-11-30",
-    reason:
-      "Peak retail traffic — only emergency changes with CAB chair approval.",
-  },
-  {
-    name: "Year-end freeze",
-    start: "2026-12-21",
-    end: "2027-01-03",
-    reason: "Financial close and reduced staffing.",
-  },
-]
 
 const DAY = 86_400_000
 const dayKey = (d: Date) => d.toISOString().slice(0, 10)
@@ -80,8 +65,15 @@ function startOfWeek(d: Date) {
   x.setUTCDate(x.getUTCDate() - ((x.getUTCDay() + 6) % 7))
   return x
 }
+/** Freeze window covering a day key; `end` is exclusive. */
 function freezeFor(key: string) {
-  return freezeWindows.find((f) => key >= f.start && key <= f.end)
+  return changeFreezeWindows.find(
+    (f) => key >= f.start.slice(0, 10) && key < f.end.slice(0, 10)
+  )
+}
+/** Last frozen day of a window (its exclusive end minus one day). */
+function lastFrozenDay(end: string) {
+  return new Date(new Date(end).getTime() - DAY).toISOString()
 }
 function time(iso: string) {
   return new Date(iso).toLocaleTimeString("en-US", {
@@ -91,20 +83,29 @@ function time(iso: string) {
   })
 }
 
-const active = changes.filter((c) => c.state !== "Canceled")
-const byDay = active.reduce<Record<string, Change[]>>((acc, c) => {
-  const k = c.plannedStart.slice(0, 10)
-  ;(acc[k] ??= []).push(c)
-  return acc
-}, {})
-Object.values(byDay).forEach((list) =>
-  list.sort((a, b) => a.plannedStart.localeCompare(b.plannedStart))
-)
-
+/**
+ * Month and week calendar of planned change windows. Reads `changesStore` so
+ * changes created in this session appear, and `changeFreezeWindows` from the
+ * data layer so the freeze hatching agrees with the scheduler.
+ */
 export function ChangeCalendar() {
+  const changes = changesStore.use()
   const [view, setView] = React.useState<View>("month")
   const [offset, setOffset] = React.useState(0)
   const [selected, setSelected] = React.useState(todayKey)
+
+  const { active, byDay } = React.useMemo(() => {
+    const active = changes.filter((c) => c.state !== "Canceled")
+    const byDay = active.reduce<Record<string, Change[]>>((acc, c) => {
+      const k = c.plannedStart.slice(0, 10)
+      ;(acc[k] ??= []).push(c)
+      return acc
+    }, {})
+    Object.values(byDay).forEach((list) =>
+      list.sort((a, b) => a.plannedStart.localeCompare(b.plannedStart))
+    )
+    return { active, byDay }
+  }, [changes])
 
   const anchor = React.useMemo(() => {
     if (view === "month")
@@ -140,7 +141,7 @@ export function ChangeCalendar() {
           year: "numeric",
           timeZone: "UTC",
         })
-      : `${days[0].toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })} – ${days[6].toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })}`
+      : `${days[0].toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })} to ${days[6].toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })}`
 
   const inRange = days.map(dayKey)
   const visibleChanges = active.filter((c) =>
@@ -162,191 +163,204 @@ export function ChangeCalendar() {
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
       <div className="flex min-w-0 flex-col gap-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="icon-sm"
-              onClick={() => go(-1)}
-              aria-label={`Previous ${view}`}
-            >
-              <ChevronLeftIcon />
-            </Button>
-            <Button
-              variant="outline"
-              size="icon-sm"
-              onClick={() => go(1)}
-              aria-label={`Next ${view}`}
-            >
-              <ChevronRightIcon />
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setOffset(0)
-                setSelected(todayKey)
-              }}
-            >
-              Today
-            </Button>
-            <h2 className="ml-1 text-sm font-semibold md:text-base">
-              {rangeLabel}
-            </h2>
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="hidden text-xs text-muted-foreground sm:inline">
-              {visibleChanges.length} change
-              {visibleChanges.length === 1 ? "" : "s"}
-              {frozenDays > 0
-                ? ` · ${frozenDays} frozen day${frozenDays === 1 ? "" : "s"}`
-                : ""}
-            </span>
-            <ToggleGroup
-              multiple={false}
-              value={[view]}
-              onValueChange={(v) => v[0] && switchView(v[0] as View)}
-              variant="outline"
-              spacing={0}
-            >
-              <ToggleGroupItem value="month" size="sm" className="gap-1.5 px-3">
-                <CalendarDaysIcon className="size-3.5" /> Month
-              </ToggleGroupItem>
-              <ToggleGroupItem value="week" size="sm" className="gap-1.5 px-3">
-                <CalendarIcon className="size-3.5" /> Week
-              </ToggleGroupItem>
-            </ToggleGroup>
-          </div>
-        </div>
-
-        <div className="overflow-hidden rounded-xl border bg-card">
-          <div className="grid grid-cols-7 border-b bg-muted/40 text-center text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-            {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
-              <div key={d} className="py-2">
-                {d}
-              </div>
-            ))}
-          </div>
-          <div
-            className={cn(
-              "grid grid-cols-7 gap-px bg-border",
-              view === "week"
-                ? "auto-rows-[minmax(14rem,auto)]"
-                : "auto-rows-[minmax(6.5rem,auto)]"
-            )}
-          >
-            {days.map((d) => {
-              const key = dayKey(d)
-              const isToday = key === todayKey
-              const isSelected = key === selected
-              const outside =
-                view === "month" && d.getUTCMonth() !== anchor.getUTCMonth()
-              const freeze = freezeFor(key)
-              const items = byDay[key] ?? []
-              const max = view === "week" ? 6 : 3
-              const shown = items.slice(0, max)
-              return (
-                <div
-                  key={key}
-                  role="button"
-                  tabIndex={0}
-                  aria-pressed={isSelected}
-                  aria-label={`${formatDate(key)}${items.length ? `, ${items.length} changes` : ""}${freeze ? `, ${freeze.name}` : ""}`}
-                  onClick={() => setSelected(key)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault()
-                      setSelected(key)
-                    }
-                  }}
-                  className={cn(
-                    "group relative flex min-w-0 flex-col gap-1 p-1.5 text-left transition-colors outline-none",
-                    outside ? "bg-muted/30 text-muted-foreground" : "bg-card",
-                    freeze &&
-                      "bg-[repeating-linear-gradient(135deg,transparent_0_6px,color-mix(in_oklab,var(--color-warning)_14%,transparent)_6px_12px)]",
-                    isSelected
-                      ? "ring-2 ring-brand/60 ring-inset"
-                      : "hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset"
-                  )}
+        <Section
+          title={rangeLabel}
+          description={`${visibleChanges.length} change${visibleChanges.length === 1 ? "" : "s"}${
+            frozenDays > 0
+              ? ` · ${frozenDays} frozen day${frozenDays === 1 ? "" : "s"}`
+              : ""
+          }`}
+          actions={
+            <>
+              <Button
+                variant="outline"
+                size="icon-sm"
+                onClick={() => go(-1)}
+                aria-label={`Previous ${view}`}
+              >
+                <ChevronLeftIcon />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon-sm"
+                onClick={() => go(1)}
+                aria-label={`Next ${view}`}
+              >
+                <ChevronRightIcon />
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setOffset(0)
+                  setSelected(todayKey)
+                }}
+              >
+                Today
+              </Button>
+              <ToggleGroup
+                multiple={false}
+                value={[view]}
+                onValueChange={(v) => v[0] && switchView(v[0] as View)}
+                variant="outline"
+                spacing={0}
+              >
+                <ToggleGroupItem
+                  value="month"
+                  size="sm"
+                  className="gap-1.5 px-3"
                 >
-                  <div className="flex items-center justify-between gap-1">
-                    <span
-                      className={cn(
-                        "flex size-6 items-center justify-center rounded-full text-xs tabular-nums",
-                        isToday
-                          ? "bg-brand font-semibold text-brand-foreground"
-                          : outside
-                            ? "text-muted-foreground/60"
-                            : ""
-                      )}
-                    >
-                      {d.getUTCDate()}
-                    </span>
-                    {freeze && (
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <span className="inline-flex items-center gap-0.5 rounded-sm bg-warning/20 px-1 py-0.5 text-[10px] font-medium text-warning-text" />
-                          }
-                        >
-                          <LockIcon className="size-2.5" /> Freeze
-                        </TooltipTrigger>
-                        <TooltipContent side="bottom" className="max-w-56">
-                          <p className="font-medium">{freeze.name}</p>
-                          <p className="text-xs opacity-80">{freeze.reason}</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    )}
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    {shown.map((c) => (
-                      <Tooltip key={c.number}>
-                        <TooltipTrigger
-                          render={
-                            <Link
-                              href={`/itsm/changes/${c.number}`}
-                              onClick={(e) => e.stopPropagation()}
-                              className={cn(
-                                "flex min-w-0 items-center gap-1 rounded-md border px-1.5 py-0.5 text-left text-[11px] leading-tight transition-colors",
-                                typeClass[c.type].chip
-                              )}
-                            />
-                          }
-                        >
-                          <span className="hidden shrink-0 font-mono text-[10px] opacity-70 sm:inline">
-                            {time(c.plannedStart)}
-                          </span>
-                          <span className="truncate">{c.shortDescription}</span>
-                        </TooltipTrigger>
-                        <TooltipContent side="bottom" className="max-w-64">
-                          <p className="font-mono text-[10px] opacity-70">
-                            {c.number}
-                          </p>
-                          <p className="font-medium">{c.shortDescription}</p>
-                          <p className="text-xs opacity-80">
-                            {c.type} · {c.risk} risk · {time(c.plannedStart)}–
-                            {time(c.plannedEnd)}
-                          </p>
-                        </TooltipContent>
-                      </Tooltip>
-                    ))}
-                    {items.length > max && (
-                      <span className="px-1 text-[11px] text-muted-foreground">
-                        +{items.length - max} more
-                      </span>
-                    )}
-                  </div>
+                  <CalendarDaysIcon className="size-3.5" /> Month
+                </ToggleGroupItem>
+                <ToggleGroupItem
+                  value="week"
+                  size="sm"
+                  className="gap-1.5 px-3"
+                >
+                  <CalendarIcon className="size-3.5" /> Week
+                </ToggleGroupItem>
+              </ToggleGroup>
+            </>
+          }
+        >
+          <div className="overflow-x-auto rounded-xl border bg-card">
+            <div className="grid min-w-[56rem] grid-cols-7 border-b bg-muted/40 text-center text-2xs font-medium tracking-wide text-muted-foreground uppercase">
+              {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
+                <div key={d} className="py-2">
+                  {d}
                 </div>
-              )
-            })}
+              ))}
+            </div>
+            <div
+              className={cn(
+                "grid min-w-[56rem] grid-cols-7 gap-px bg-border",
+                view === "week"
+                  ? "auto-rows-[minmax(14rem,auto)]"
+                  : "auto-rows-[minmax(6.5rem,auto)]"
+              )}
+            >
+              {days.map((d) => {
+                const key = dayKey(d)
+                const isToday = key === todayKey
+                const isSelected = key === selected
+                const outside =
+                  view === "month" && d.getUTCMonth() !== anchor.getUTCMonth()
+                const freeze = freezeFor(key)
+                const items = byDay[key] ?? []
+                const max = view === "week" ? 6 : 3
+                const shown = items.slice(0, max)
+                return (
+                  <div
+                    key={key}
+                    role="button"
+                    tabIndex={0}
+                    aria-pressed={isSelected}
+                    aria-label={`${formatDate(key)}${items.length ? `, ${items.length} changes` : ""}${freeze ? `, ${freeze.name}` : ""}`}
+                    onClick={() => setSelected(key)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault()
+                        setSelected(key)
+                      }
+                    }}
+                    className={cn(
+                      "group relative flex min-w-0 flex-col gap-1 p-1.5 text-left transition-colors outline-none",
+                      outside ? "bg-muted/30 text-muted-foreground" : "bg-card",
+                      freeze &&
+                        "bg-[repeating-linear-gradient(135deg,transparent_0_6px,color-mix(in_oklab,var(--color-warning)_14%,transparent)_6px_12px)]",
+                      isSelected
+                        ? "ring-2 ring-brand/60 ring-inset"
+                        : "hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset"
+                    )}
+                  >
+                    <div className="flex items-center justify-between gap-1">
+                      <span
+                        className={cn(
+                          "flex size-6 items-center justify-center rounded-full text-xs tabular-nums",
+                          isToday
+                            ? "bg-brand font-semibold text-brand-foreground"
+                            : outside
+                              ? "text-muted-foreground/60"
+                              : ""
+                        )}
+                      >
+                        {d.getUTCDate()}
+                      </span>
+                      {freeze && (
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <span className="inline-flex items-center gap-0.5 rounded-sm bg-warning/20 px-1 py-0.5 text-3xs font-medium text-warning-text" />
+                            }
+                          >
+                            <LockIcon className="size-2.5" /> Freeze
+                          </TooltipTrigger>
+                          <TooltipContent side="bottom" className="max-w-56">
+                            <p className="font-medium">{freeze.name}</p>
+                            <p className="text-xs opacity-80">
+                              {freeze.reason}
+                            </p>
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      {shown.map((c) => (
+                        <Tooltip key={c.number}>
+                          <TooltipTrigger
+                            render={
+                              <Link
+                                href={`/itsm/changes/${c.number}`}
+                                onClick={(e) => e.stopPropagation()}
+                                className={cn(
+                                  "flex min-w-0 items-center gap-1 rounded-md border px-1.5 py-0.5 text-left text-2xs leading-tight transition-opacity hover:opacity-80",
+                                  toneClasses[typeTone[c.type]].badge
+                                )}
+                              />
+                            }
+                          >
+                            <span className="hidden shrink-0 font-mono text-3xs opacity-70 sm:inline">
+                              {time(c.plannedStart)}
+                            </span>
+                            <span className="truncate">
+                              {c.shortDescription}
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent side="bottom" className="max-w-64">
+                            <p className="font-mono text-3xs opacity-70">
+                              {c.number}
+                            </p>
+                            <p className="font-medium">{c.shortDescription}</p>
+                            <p className="text-xs opacity-80">
+                              {c.type} · {c.risk} risk · {time(c.plannedStart)}{" "}
+                              to {time(c.plannedEnd)}
+                            </p>
+                          </TooltipContent>
+                        </Tooltip>
+                      ))}
+                      {items.length > max && (
+                        <span className="px-1 text-2xs text-muted-foreground">
+                          +{items.length - max} more
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
           </div>
-        </div>
+        </Section>
 
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
           {(["Standard", "Normal", "Emergency"] as Change["type"][]).map(
             (t) => (
               <span key={t} className="inline-flex items-center gap-1.5">
-                <span className={cn("size-2.5 rounded-sm", typeClass[t].dot)} />{" "}
+                <span
+                  className={cn(
+                    "size-2.5 rounded-sm",
+                    toneClasses[typeTone[t]].dot
+                  )}
+                />{" "}
                 {t}
               </span>
             )
@@ -360,10 +374,10 @@ export function ChangeCalendar() {
           </span>
           <span className="ml-auto hidden items-center gap-1 sm:inline-flex">
             <SnowflakeIcon className="size-3" />{" "}
-            {freezeWindows
+            {changeFreezeWindows
               .map(
                 (f) =>
-                  `${f.name}: ${formatDate(f.start, { year: undefined })}–${formatDate(f.end, { year: undefined })}`
+                  `${f.name}: ${formatDate(f.start, { year: undefined })} to ${formatDate(lastFrozenDay(f.end), { year: undefined })}`
               )
               .join(" · ")}
           </span>
@@ -403,15 +417,17 @@ export function ChangeCalendar() {
             </div>
           )}
           {selectedChanges.length === 0 ? (
-            <div className="flex flex-col items-center gap-1 rounded-lg border border-dashed px-4 py-8 text-center">
-              <CalendarIcon className="size-5 text-muted-foreground" />
-              <p className="text-sm font-medium">Nothing scheduled</p>
-              <p className="text-xs text-muted-foreground">
-                {selectedFreeze
+            <EmptyState
+              size="sm"
+              bare
+              icon={<CalendarIcon />}
+              title="Nothing scheduled"
+              description={
+                selectedFreeze
                   ? "Only emergency changes may be scheduled in a freeze."
-                  : "A quiet day — a good window for low-risk standard changes."}
-              </p>
-            </div>
+                  : "A quiet day, and a good window for low-risk standard changes."
+              }
+            />
           ) : (
             <ul className="flex flex-col divide-y">
               {selectedChanges.map((c) => (
@@ -424,15 +440,15 @@ export function ChangeCalendar() {
                       <span
                         className={cn(
                           "size-2 shrink-0 rounded-full",
-                          typeClass[c.type].dot
+                          toneClasses[typeTone[c.type]].dot
                         )}
                       />
                       <span className="font-mono text-xs text-muted-foreground">
                         {c.number}
                       </span>
                       <span className="ml-auto inline-flex items-center gap-1 text-xs text-muted-foreground tabular-nums">
-                        <ClockIcon className="size-3" /> {time(c.plannedStart)}–
-                        {time(c.plannedEnd)}
+                        <ClockIcon className="size-3" /> {time(c.plannedStart)}{" "}
+                        to {time(c.plannedEnd)}
                       </span>
                     </div>
                     <p className="text-sm leading-snug font-medium group-hover:underline group-hover:underline-offset-4">

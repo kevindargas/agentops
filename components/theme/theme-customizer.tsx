@@ -54,7 +54,7 @@ function GroupLabel({
         {children}
       </p>
       {hint && (
-        <span className="truncate text-[11px] text-muted-foreground/80">
+        <span className="truncate text-2xs text-muted-foreground/80">
           {hint}
         </span>
       )}
@@ -88,11 +88,7 @@ function PresetThumb({
   const ink = dark ? "oklch(1 0 0 / 28%)" : "oklch(0.165 0.012 265 / 22%)"
   const swatch = dark ? accent.swatchDark : accent.swatch
   const shadow =
-    settings.surface === "elevated"
-      ? dark
-        ? "0 4px 10px -4px rgba(0,0,0,.7)"
-        : "0 3px 8px -3px rgba(16,24,40,.18)"
-      : undefined
+    settings.surface === "elevated" ? "var(--shadow-raised)" : undefined
   const compact = settings.density === "compact"
   return (
     <div
@@ -189,7 +185,7 @@ function LivePreview({ settings }: { settings: ThemeSettings }) {
       <span className="inline-flex h-7 items-center rounded-lg border border-input bg-card px-2.5 text-xs font-medium">
         Outline
       </span>
-      <span className="inline-flex h-5 items-center gap-1.5 rounded-4xl border border-brand/25 bg-brand/10 px-2 text-[11px] font-medium text-brand">
+      <span className="inline-flex h-5 items-center gap-1.5 rounded-4xl border border-brand/25 bg-brand/10 px-2 text-2xs font-medium text-brand">
         <span className="size-1.5 rounded-full bg-brand" />
         In Progress
       </span>
@@ -351,7 +347,7 @@ export function ThemeCustomizer() {
                           <CheckIcon className="size-3" strokeWidth={3} />
                         </span>
                       </div>
-                      <span className="line-clamp-1 text-[11px] text-muted-foreground">
+                      <span className="line-clamp-1 text-2xs text-muted-foreground">
                         {p.description}
                       </span>
                     </button>
@@ -392,11 +388,11 @@ export function ThemeCustomizer() {
                       >
                         <span
                           aria-hidden
-                          className="pointer-events-none absolute inset-0 rounded-full ring-1 ring-black/10 ring-inset dark:ring-white/15"
+                          className="pointer-events-none absolute inset-0 rounded-full ring-1 ring-foreground/10 ring-inset"
                         />
                         {active && (
                           <CheckIcon
-                            className="size-3.5 text-white drop-shadow-[0_1px_1px_rgba(0,0,0,.45)]"
+                            className="size-3.5 text-brand-foreground drop-shadow-sm"
                             strokeWidth={3}
                           />
                         )}
@@ -429,7 +425,7 @@ export function ThemeCustomizer() {
                   <ToggleGroupItem
                     key={r.id}
                     value={r.id}
-                    className="h-auto flex-col gap-1 py-1.5 text-[11px]"
+                    className="h-auto flex-col gap-1 py-1.5 text-2xs"
                   >
                     <span
                       className="size-4 border-t-2 border-l-2 border-current"
@@ -568,7 +564,7 @@ export function ThemeCustomizer() {
           </div>
         </div>
         <Separator />
-        <p className="px-4 py-2.5 text-[11px] text-muted-foreground">
+        <p className="px-4 py-2.5 text-2xs text-muted-foreground">
           Saved to this browser only. Mode follows your OS when set to Auto.
         </p>
       </PopoverContent>

@@ -8,20 +8,18 @@ import {
   DataTable,
   DataTableColumnHeader,
   DateCell,
+  EmptyValue,
   NumericCell,
   TwoLineCell,
   type DataTableFeatures,
   type FacetDef,
 } from "@/components/data-table"
-import { deployedAgents, getDeployedAgent } from "@/lib/data"
-import {
-  runStatuses,
-  scheduledRuns as seed,
-  type ScheduledRun,
-} from "@/lib/data/schedules"
-import { fmtCost } from "../format"
+import { deployedAgents, getDeployedAgent } from "@/lib/data/agentops"
+import { runStatuses, type ScheduledRun } from "@/lib/data/schedules"
+import { formatCost, formatDurationMs } from "@/lib/format"
 import { AgentChip } from "../shared"
-import { AgentDot, RunStatusBadge, TraceLink, fmtRunDuration } from "./shared"
+import { AgentDot, RunStatusBadge, TraceLink } from "./shared"
+import { runStore } from "./store"
 
 const col = createColumnHelper<DataTableFeatures, ScheduledRun>()
 
@@ -87,12 +85,16 @@ const columns = col.columns([
   }),
   col.accessor("durationMs", {
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Duration" />
+      <DataTableColumnHeader
+        column={column}
+        title="Duration"
+        hint="Wall-clock time from start to finish. Running runs have no duration yet."
+      />
     ),
     cell: ({ getValue, row }) => (
       <NumericCell
         value={getValue() || null}
-        format={fmtRunDuration}
+        format={formatDurationMs}
         muted
         className={cn(row.original.status === "Running" && "text-brand")}
       />
@@ -108,7 +110,11 @@ const columns = col.columns([
   }),
   col.accessor("itemsProcessed", {
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Items" />
+      <DataTableColumnHeader
+        column={column}
+        title="Items"
+        hint="Records the agent reported processing in this run (tickets, documents, alerts)."
+      />
     ),
     cell: ({ getValue }) => <NumericCell value={getValue() || null} muted />,
     meta: {
@@ -123,7 +129,10 @@ const columns = col.columns([
       <DataTableColumnHeader column={column} title="Cost" />
     ),
     cell: ({ getValue }) => (
-      <NumericCell value={getValue() || null} format={(n) => fmtCost(n, 2)} />
+      <NumericCell
+        value={getValue() || null}
+        format={(n) => formatCost(n, 2)}
+      />
     ),
     meta: { width: "w-20", label: "Cost", numeric: true, skeleton: "w-10" },
   }),
@@ -139,7 +148,7 @@ const columns = col.columns([
     header: "Error",
     cell: ({ getValue, row }) => {
       const v = getValue()
-      if (!v) return <span className="text-xs text-muted-foreground">—</span>
+      if (!v) return <EmptyValue />
       return (
         <span
           className={cn(
@@ -185,14 +194,19 @@ const facets: FacetDef<ScheduledRun>[] = [
 
 export function RunHistoryTable({
   agentId,
+  initialAgentId,
   sourceId,
   compact,
 }: {
+  /** Hard filter: hides the agent facet (agent record pages). */
   agentId?: string
+  /** Preselects the agent facet (`?agent=` on the list page). */
+  initialAgentId?: string
   sourceId?: string
   compact?: boolean
 }) {
-  let data = seed
+  const runs = runStore.use()
+  let data = runs
   if (agentId) data = data.filter((r) => r.agentId === agentId)
   if (sourceId) data = data.filter((r) => r.sourceId === sourceId)
   return (
@@ -205,6 +219,9 @@ export function RunHistoryTable({
       }
       searchPlaceholder="Search runs…"
       facets={agentId ? facets.filter((f) => f.id !== "agent") : facets}
+      initialFacets={
+        initialAgentId && !agentId ? { agent: [initialAgentId] } : undefined
+      }
       initialSorting={[{ id: "startedAt", desc: true }]}
       initialColumnVisibility={
         compact ? { itemsProcessed: false, error: false } : {}
@@ -212,6 +229,7 @@ export function RunHistoryTable({
       density={compact ? "compact" : undefined}
       pageSize={compact ? 10 : 25}
       totalLabel="runs"
+      caption="Run history across schedules and triggers"
       selectionLabel={(n) => (n === 1 ? "run" : "runs")}
       emptyTitle="No runs yet"
       emptyMessage="Runs appear here once a schedule fires or a trigger matches."

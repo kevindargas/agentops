@@ -1,50 +1,59 @@
 "use client"
 
 import * as React from "react"
-import { useRouter } from "next/navigation"
 
+import { setQueryParams } from "@/hooks/use-query-param"
+import { CountPill } from "@/components/shared/count-pill"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import {
-  evalDatasets,
-  evalRuns,
-  evaluators,
-  releaseGates,
-} from "@/lib/data/evals"
+import { evalRuns, evaluators } from "@/lib/data/evals"
 import { DatasetsTable } from "./datasets-table"
 import { EvaluatorsTable } from "./evaluators-table"
 import { ReleaseGates } from "./gates"
 import { EvalRunsTable } from "./runs-table"
+import { datasetStore, gateStore } from "./store"
 
 import type { EvalsTab } from "./format"
 
 /**
- * Tab shell for /agentops/evals. The server page reads `?tab=` and
- * `?dataset=` once; from then on state is local and mirrored back into the
- * URL with `router.replace` so links stay shareable without `useSearchParams`.
+ * Tab shell for /agentops/evals. The server page reads `?tab=`, `?dataset=`
+ * and `?run=` once; from then on state is local and mirrored back into the
+ * URL with `setQueryParams` (no navigation) so links stay shareable.
  */
 export function EvalsTabs({
   initialTab = "runs",
   initialDatasetId = null,
+  initialRunId = null,
+  initialAgentId = null,
 }: {
   initialTab?: EvalsTab
   initialDatasetId?: string | null
+  /** `?run=<ev-id>`: highlight and scroll to one run (releases link here). */
+  initialRunId?: string | null
+  /** `?agent=<agt-id>`: pre-select the Agent facet on the Runs tab. */
+  initialAgentId?: string | null
 }) {
-  const router = useRouter()
   const [tab, setTab] = React.useState<EvalsTab>(initialTab)
   const [datasetId, setDatasetId] = React.useState<string | null>(
     initialDatasetId
   )
+  const [runId, setRunId] = React.useState<string | null>(initialRunId)
+  const datasets = datasetStore.use()
+  const gates = gateStore.use()
 
-  const sync = (nextTab: EvalsTab, nextDataset: string | null) => {
-    const q = new URLSearchParams()
-    if (nextTab !== "runs") q.set("tab", nextTab)
-    if (nextDataset) q.set("dataset", nextDataset)
-    router.replace(`/agentops/evals${q.size ? `?${q}` : ""}`, {
-      scroll: false,
+  const sync = (
+    nextTab: EvalsTab,
+    nextDataset: string | null,
+    nextRun: string | null
+  ) => {
+    setQueryParams({
+      tab: nextTab === "runs" ? null : nextTab,
+      dataset: nextDataset,
+      run: nextRun,
+      agent: nextTab === "runs" ? initialAgentId : null,
     })
   }
 
-  const failingGates = releaseGates.filter((g) => g.status === "Failed").length
+  const failingGates = gates.filter((g) => g.status === "Failed").length
 
   return (
     <Tabs
@@ -52,7 +61,11 @@ export function EvalsTabs({
       onValueChange={(v) => {
         const next = v as EvalsTab
         setTab(next)
-        sync(next, next === "datasets" ? datasetId : null)
+        sync(
+          next,
+          next === "datasets" ? datasetId : null,
+          next === "runs" ? runId : null
+        )
       }}
       className="gap-4"
     >
@@ -63,25 +76,39 @@ export function EvalsTabs({
         <Trigger value="runs" count={evalRuns.length}>
           Runs
         </Trigger>
-        <Trigger value="datasets" count={evalDatasets.length}>
+        <Trigger value="datasets" count={datasets.length}>
           Datasets
         </Trigger>
         <Trigger value="evaluators" count={evaluators.length}>
           Evaluators
         </Trigger>
-        <Trigger value="gates" count={failingGates} countTone="danger">
+        <Trigger
+          value="gates"
+          count={failingGates}
+          tone={failingGates > 0 ? "danger" : undefined}
+          countLabel="failing"
+        >
           Gates
         </Trigger>
       </TabsList>
       <TabsContent value="runs">
-        <EvalRunsTable />
+        <EvalRunsTable
+          initialFacets={
+            initialAgentId ? { agent: [initialAgentId] } : undefined
+          }
+          linkedRunId={runId}
+          onClearLinked={() => {
+            setRunId(null)
+            sync("runs", null, null)
+          }}
+        />
       </TabsContent>
       <TabsContent value="datasets">
         <DatasetsTable
           openId={datasetId}
           onOpenChange={(id) => {
             setDatasetId(id)
-            sync("datasets", id)
+            sync("datasets", id, null)
           }}
         />
       </TabsContent>
@@ -98,12 +125,14 @@ export function EvalsTabs({
 function Trigger({
   value,
   count,
-  countTone,
+  tone,
+  countLabel,
   children,
 }: {
   value: EvalsTab
   count?: number
-  countTone?: "danger"
+  tone?: "danger"
+  countLabel?: string
   children: React.ReactNode
 }) {
   return (
@@ -113,15 +142,16 @@ function Trigger({
     >
       {children}
       {count !== undefined && count > 0 && (
-        <span
+        <CountPill
+          count={count}
+          tone={tone ?? "muted"}
+          label={countLabel}
           className={
-            countTone === "danger"
-              ? "rounded-full bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-danger-text tabular-nums"
-              : "rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground tabular-nums transition-colors group-data-active/tab:bg-foreground group-data-active/tab:text-background"
+            tone
+              ? undefined
+              : "transition-colors group-data-active/tab:bg-foreground group-data-active/tab:text-background"
           }
-        >
-          {count}
-        </span>
+        />
       )}
     </TabsTrigger>
   )

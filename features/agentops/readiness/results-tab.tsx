@@ -13,6 +13,14 @@ import {
 
 import { ChartCard } from "@/components/charts/chart-card"
 import {
+  CoverageRadar,
+  type RadarPoint,
+} from "@/components/charts/coverage-radar"
+import {
+  DomainHeatmap,
+  type HeatmapTile,
+} from "@/components/charts/domain-heatmap"
+import {
   DataTable,
   DataTableColumnHeader,
   EmptyValue,
@@ -24,6 +32,7 @@ import {
 import { EmptyState } from "@/components/shared/empty-state"
 import { Section } from "@/components/shared/page-header"
 import { StatCard } from "@/components/shared/stat-card"
+import { StatGrid } from "@/components/shared/stat-grid"
 import { toneClasses, type Tone } from "@/components/shared/status-badge"
 import { UserChip } from "@/components/shared/user-chip"
 import {
@@ -54,9 +63,9 @@ import {
   type ControlEval,
   type ControlStatus,
   type DomainDef,
+  type DomainScore,
   type Effort,
 } from "@/lib/readiness/types"
-import { CoverageRadar, DomainHeatmap } from "./coverage-radar"
 import {
   ControlStatusBadge,
   DomainChip,
@@ -65,10 +74,39 @@ import {
   MaturityBadge,
   RequiredBadge,
   RiskDots,
+  scoreSoftClass,
+  scoreTone,
   useReadiness,
 } from "./shared"
 
 const NO_COMPARE = "none"
+
+/** Domain score as a radar spoke. */
+function radarPoint(d: DomainScore): RadarPoint {
+  return {
+    id: d.domain.id,
+    short: d.domain.short,
+    title: d.domain.title,
+    score: d.score,
+  }
+}
+
+/** Domain score as a heatmap tile tinted by the score tone. */
+function heatmapTile(d: DomainScore): HeatmapTile {
+  return {
+    id: d.domain.id,
+    label: <DomainChip domain={d.domain} short className="text-foreground" />,
+    title: d.domain.title,
+    score: d.score,
+    facts: [
+      { label: "in place", value: `${d.inPlace}/${d.applicable}` },
+      { label: "required met", value: `${d.requiredMet}/${d.required}` },
+    ],
+    alerts: d.blockers,
+    alertsTitle: d.blockers === 1 ? "release blocker" : "release blockers",
+    className: scoreSoftClass[scoreTone(d.score)],
+  }
+}
 
 export function ResultsTab({ onOpen }: { onOpen: (id: string) => void }) {
   const { assessment, snapshots, controlSet, result } = useReadiness()
@@ -105,9 +143,8 @@ export function ResultsTab({ onOpen }: { onOpen: (id: string) => void }) {
 
   return (
     <div id="readiness-report" className="flex flex-col gap-6">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 print:grid-cols-3">
+      <StatGrid columns={6} className="print:grid-cols-3">
         <StatCard
-          size="sm"
           label="Overall coverage"
           value={result.overall}
           unit="/100"
@@ -115,14 +152,12 @@ export function ResultsTab({ onOpen }: { onOpen: (id: string) => void }) {
           className="print:break-inside-avoid"
         />
         <StatCard
-          size="sm"
           label="Maturity level"
           value={<MaturityBadge level={result.maturity} />}
           hint={maturityLevelHint[result.maturity]}
           className="print:break-inside-avoid"
         />
         <StatCard
-          size="sm"
           label="Release blockers"
           value={
             <span className={cn(blockers > 0 && "text-danger-text")}>
@@ -133,14 +168,12 @@ export function ResultsTab({ onOpen }: { onOpen: (id: string) => void }) {
           className="print:break-inside-avoid"
         />
         <StatCard
-          size="sm"
           label="Open gaps"
           value={result.gaps.length}
           hint="applicable controls not yet in place"
           className="print:break-inside-avoid"
         />
         <StatCard
-          size="sm"
           label="Reviews overdue"
           value={
             <span className={cn(overdue > 0 && "text-warning-text")}>
@@ -151,18 +184,17 @@ export function ResultsTab({ onOpen }: { onOpen: (id: string) => void }) {
           className="print:break-inside-avoid"
         />
         <StatCard
-          size="sm"
           label="Hidden controls"
           value={result.counts.hidden}
           hint="not applicable to this profile"
           className="print:break-inside-avoid"
         />
-      </div>
+      </StatGrid>
 
       <div className="grid gap-4 lg:grid-cols-2 print:grid-cols-2">
         <ChartCard
           title="Coverage by domain"
-          description="Weighted coverage per domain, 0–100."
+          description="Weighted coverage per domain, 0 to 100."
           className="print:break-inside-avoid"
           action={
             snapshots.length > 0 ? (
@@ -190,8 +222,8 @@ export function ResultsTab({ onOpen }: { onOpen: (id: string) => void }) {
           }
         >
           <CoverageRadar
-            domains={result.domains}
-            compare={compareResult?.domains}
+            domains={result.domains.map(radarPoint)}
+            compare={compareResult?.domains.map(radarPoint)}
             compareLabel={snapshot?.label}
           />
         </ChartCard>
@@ -200,7 +232,7 @@ export function ResultsTab({ onOpen }: { onOpen: (id: string) => void }) {
           description="Score, controls in place and required controls met per domain."
           className="print:break-inside-avoid"
         >
-          <DomainHeatmap domains={result.domains} />
+          <DomainHeatmap tiles={result.domains.map(heatmapTile)} />
         </ChartCard>
       </div>
 
@@ -289,11 +321,11 @@ function MaturityLadder({
             <div className="flex items-center gap-2">
               <span
                 className={cn(
-                  "inline-flex size-5 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold tabular-nums",
+                  "inline-flex size-5 shrink-0 items-center justify-center rounded-full text-2xs font-semibold tabular-nums",
                   active
                     ? "bg-brand text-brand-foreground"
                     : reached
-                      ? "bg-success text-white"
+                      ? "bg-success text-success-foreground"
                       : "bg-muted text-muted-foreground"
                 )}
               >
@@ -312,7 +344,7 @@ function MaturityLadder({
                 {maturityLevelLabel[level]}
               </span>
               {active && (
-                <span className="ml-auto text-[10px] font-semibold tracking-wide text-brand uppercase">
+                <span className="ml-auto text-3xs font-semibold tracking-wide text-brand uppercase">
                   Current
                 </span>
               )}
@@ -367,11 +399,11 @@ function StatusDistribution({
                   render={
                     <div
                       className={cn(
-                        "flex min-w-6 items-center justify-center gap-1 text-[11px] font-semibold tabular-nums",
+                        "flex min-w-6 items-center justify-center gap-1 text-2xs font-semibold tabular-nums",
                         s === "verified"
-                          ? "bg-success text-white"
+                          ? "bg-success text-success-foreground"
                           : s === "in-place"
-                            ? "bg-success/70 text-white"
+                            ? "bg-success/70 text-success-foreground"
                             : toneClasses[tone].soft
                       )}
                       style={{ flexGrow: pct, flexBasis: 0 }}
@@ -391,7 +423,7 @@ function StatusDistribution({
           })}
         </div>
       )}
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-2xs text-muted-foreground">
         {controlStatuses.map((s) => (
           <span key={s} className="inline-flex items-center gap-1.5">
             <span
@@ -432,6 +464,7 @@ function BlockerList({
   return (
     <div className="overflow-x-auto rounded-lg border bg-card">
       <table className="w-full min-w-[40rem] text-sm">
+        <caption className="sr-only">Release gate blockers</caption>
         <thead className="bg-muted/40 text-xs font-medium text-muted-foreground">
           <tr className="[&>th]:px-3 [&>th]:py-2 [&>th]:text-left [&>th]:font-medium">
             <th className="pl-4">Control</th>
@@ -448,30 +481,31 @@ function BlockerList({
             return (
               <tr
                 key={b.control.id}
-                tabIndex={0}
-                onClick={() => onOpen(b.control.id)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault()
-                    onOpen(b.control.id)
-                  }
-                }}
-                className="cursor-pointer transition-colors outline-none hover:bg-muted/40 focus-visible:bg-muted/40"
+                className="transition-colors hover:bg-muted/40 has-[button:focus-visible]:bg-muted/40"
               >
                 <td className="px-3 py-2 pl-4">
                   <div className="flex items-start gap-2">
-                    <ShieldAlertIcon className="mt-0.5 size-3.5 shrink-0 text-destructive" />
-                    <TwoLineCell
-                      primary={
-                        <>
-                          <span className="font-mono text-xs text-muted-foreground">
-                            {b.control.id}
-                          </span>{" "}
-                          {b.control.title}
-                        </>
-                      }
-                      title={b.control.title}
-                    />
+                    <ShieldAlertIcon className="mt-0.5 size-3.5 shrink-0 text-danger-text" />
+                    <button
+                      type="button"
+                      onClick={() => onOpen(b.control.id)}
+                      aria-label={`Open ${b.control.id} ${b.control.title}`}
+                      className="min-w-0 rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                    >
+                      <TwoLineCell
+                        primary={
+                          <>
+                            <span className="font-mono text-xs text-muted-foreground">
+                              {b.control.id}
+                            </span>{" "}
+                            <span className="underline-offset-4 hover:underline">
+                              {b.control.title}
+                            </span>
+                          </>
+                        }
+                        title={b.control.title}
+                      />
+                    </button>
                   </div>
                 </td>
                 <td className="px-3 py-2">

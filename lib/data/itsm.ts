@@ -15,6 +15,7 @@ import type {
   Urgency,
 } from "@/lib/types"
 import {
+  cabSchedule,
   calculatePriority,
   incidentCategories,
   slaTargetHours,
@@ -86,9 +87,9 @@ const incidentTitles: Record<string, string[]> = {
   ],
   Security: [
     "Suspected phishing email received by finance team",
-    "Malware alert on endpoint — quarantined",
+    "Malware alert on endpoint: quarantined",
     "Unauthorized access attempt to payroll system",
-    "Lost laptop reported — remote wipe requested",
+    "Lost laptop reported: remote wipe requested",
   ],
 }
 
@@ -131,7 +132,7 @@ function buildIncidents(count: number): Incident[] {
       state === "Resolved" || state === "Closed" || state === "Canceled"
     const target = slaTargetHours[priority]
     // Open incidents: age is a fraction of the SLA target (about 1 in 5 has breached).
-    // Closed incidents: opened any time in the last 40 days, resolved within ~0.2–1.3× target.
+    // Closed incidents: opened any time in the last 40 days, resolved within ~0.2 to 1.3× target.
     const openedHours = isClosed
       ? int(rng, 6, 24 * 40)
       : Math.max(
@@ -243,7 +244,7 @@ export function getIncident(number: string) {
 
 const problemTitles = [
   "Recurring Outlook credential prompts after tenant migration",
-  "Intermittent Wi-Fi disconnects on HQ floors 3–5",
+  "Intermittent Wi-Fi disconnects on HQ floors 3-5",
   "HANA replication lag during month-end close",
   "VPN tunnel resets every 8 hours for macOS clients",
   "Printer driver crashes on Windows 11 24H2",
@@ -258,7 +259,8 @@ const problemTitles = [
 
 function buildProblems(): Problem[] {
   const rng = createRng(4001)
-  return problemTitles.map((title, i) => {
+  return problemTitles.map((title, i_) => {
+    const i = i_
     const state = weighted<ProblemState>(rng, [
       ["New", 1],
       ["Assess", 2],
@@ -285,7 +287,10 @@ function buildProblems(): Problem[] {
       assignmentGroupId: group.id,
       assignedToId: pick(rng, agentsByGroup[group.id] ?? ["u-002"]),
       ciId: chance(rng, 0.8) ? pick(rng, configurationItems).id : undefined,
-      relatedIncidents: int(rng, 2, 48),
+      // Counted from the incidents that actually carry this problem id.
+      relatedIncidents: incidents.filter(
+        (i) => i.problemId === `PRB${pad(40001 + i_)}`
+      ).length,
       knownError,
       workaround: knownError
         ? "Documented workaround available in linked knowledge article. Apply until permanent fix is deployed."
@@ -304,6 +309,11 @@ export function getProblem(number: string) {
   return problems.find((p) => p.number === number)
 }
 
+/** Incidents linked to a problem (same figure as `Problem.relatedIncidents`). */
+export function incidentsForProblem(number: string) {
+  return incidents.filter((i) => i.problemId === number)
+}
+
 const changeTemplates: {
   title: string
   type: ChangeType
@@ -319,7 +329,7 @@ const changeTemplates: {
     ci: "ci-015",
   },
   {
-    title: "Patch Windows domain controllers — November CU",
+    title: "Patch Windows domain controllers: November CU",
     type: "Standard",
     category: "Server",
     group: "g-infra",
@@ -388,7 +398,7 @@ const changeTemplates: {
     ci: "ci-027",
   },
   {
-    title: "Monthly Linux patching — SAP application tier",
+    title: "Monthly Linux patching: SAP application tier",
     type: "Standard",
     category: "Server",
     group: "g-infra",
@@ -423,7 +433,7 @@ const changeTemplates: {
     ci: "ci-017",
   },
   {
-    title: "Portal release 2026.11 — checkout redesign",
+    title: "Portal release 2026.11: checkout redesign",
     type: "Normal",
     category: "Application",
     group: "g-app",
@@ -472,7 +482,7 @@ const changeTemplates: {
     ci: "ci-018",
   },
   {
-    title: "Quarterly DR failover test — ERP",
+    title: "Quarterly DR failover test: ERP",
     type: "Normal",
     category: "Application",
     group: "g-app",
@@ -573,7 +583,63 @@ function buildChanges(): Change[] {
   })
 }
 
-export const changes: Change[] = buildChanges()
+/**
+ * One rejected change so every approval state the UI can filter on exists in
+ * the sample: the newest change still in `New` is withdrawn by its requester.
+ */
+function withRejectedChange(list: Change[]): Change[] {
+  const idx = list.map((c) => c.state).lastIndexOf("New")
+  if (idx === -1) return list
+  return list.map((c, i) =>
+    i === idx
+      ? { ...c, state: "Canceled" as const, approval: "Rejected" as const }
+      : c
+  )
+}
+
+export const changes: Change[] = withRejectedChange(buildChanges())
+
+/** Next Change Advisory Board meeting after `from`, per `cabSchedule`. */
+export function nextCab(from: Date = NOW): Date {
+  const d = new Date(from.getTime())
+  d.setUTCHours(cabSchedule.hour, cabSchedule.minute, 0, 0)
+  const ahead = (cabSchedule.weekday - d.getUTCDay() + 7) % 7
+  d.setUTCDate(d.getUTCDate() + ahead)
+  if (d.getTime() <= from.getTime()) d.setUTCDate(d.getUTCDate() + 7)
+  return d
+}
+
+export interface ChangeFreezeWindow {
+  id: string
+  name: string
+  /** ISO timestamps, start inclusive and end exclusive. */
+  start: string
+  end: string
+  reason: string
+}
+
+/**
+ * Change freeze windows shown on the change calendar. The scheduler's
+ * `freezeWindows` (lib/data/schedules.ts) derives its deploy freezes from
+ * this list so there is one source of truth for "are we frozen".
+ */
+export const changeFreezeWindows: ChangeFreezeWindow[] = [
+  {
+    id: "frz-003",
+    name: "Black Friday freeze",
+    start: "2026-11-26T00:00:00Z",
+    end: "2026-12-01T00:00:00Z",
+    reason: "Peak retail traffic. Emergency changes only.",
+  },
+  {
+    id: "frz-004",
+    name: "Quarter-end freeze",
+    start: "2026-12-28T00:00:00Z",
+    end: "2027-01-04T00:00:00Z",
+    reason: "Financial close and reduced staffing.",
+  },
+]
+
 export function getChange(number: string) {
   return changes.find((c) => c.number === number)
 }

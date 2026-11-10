@@ -15,7 +15,14 @@ import {
 } from "@/components/ui/select"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import type { PromptVersion } from "@/lib/data/prompts"
-import { diffLines, diffStats, toSideBySide, type DiffOpType } from "./diff"
+import {
+  afterLine,
+  beforeLine,
+  diffLines,
+  diffStats,
+  toSideBySide,
+  type DiffOpType,
+} from "./diff"
 import { LabelBadge, versionSelectItems } from "./shared"
 
 type Mode = "unified" | "split"
@@ -25,7 +32,7 @@ const rowTone: Record<DiffOpType, string> = {
   add: toneClasses.success.soft,
   remove: toneClasses.danger.soft,
 }
-const marker: Record<DiffOpType, string> = { equal: " ", add: "+", remove: "−" }
+const marker: Record<DiffOpType, string> = { equal: " ", add: "+", remove: "-" }
 
 export function DiffTab({
   versions,
@@ -76,7 +83,7 @@ export function DiffTab({
         />
         <span className="ml-1 flex items-center gap-2 font-mono text-xs tabular-nums">
           <span className={toneClasses.success.text}>+{stats.added}</span>
-          <span className={toneClasses.danger.text}>−{stats.removed}</span>
+          <span className={toneClasses.danger.text}>-{stats.removed}</span>
           <span className="text-muted-foreground">
             {stats.unchanged} unchanged
           </span>
@@ -110,14 +117,17 @@ export function DiffTab({
       ) : mode === "unified" ? (
         <div className="overflow-x-auto rounded-lg border">
           <table className="w-full font-mono text-xs leading-relaxed">
+            <caption className="sr-only">
+              Unified diff from v{from.number} to v{to.number}
+            </caption>
             <tbody>
               {ops.map((op, i) => (
                 <tr key={i} className={rowTone[op.type]}>
                   <td className="w-10 px-2 text-right text-muted-foreground/70 tabular-nums select-none">
-                    {op.a ?? ""}
+                    {beforeLine(op) ?? ""}
                   </td>
                   <td className="w-10 px-2 text-right text-muted-foreground/70 tabular-nums select-none">
-                    {op.b ?? ""}
+                    {afterLine(op) ?? ""}
                   </td>
                   <td className="w-5 text-center text-muted-foreground select-none">
                     {marker[op.type]}
@@ -137,6 +147,9 @@ export function DiffTab({
             <Head version={to} />
           </div>
           <table className="w-full min-w-[48rem] table-fixed font-mono text-xs leading-relaxed">
+            <caption className="sr-only">
+              Side-by-side diff from v{from.number} to v{to.number}
+            </caption>
             <tbody>
               {toSideBySide(ops).map((row, i) => (
                 <tr key={i}>

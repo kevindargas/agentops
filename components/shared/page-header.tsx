@@ -1,19 +1,33 @@
 import { cn } from "cn"
 
+import { CountPill } from "@/components/shared/count-pill"
+import { Eyebrow } from "@/components/shared/eyebrow"
+import { findNavGroup, findNavItem } from "@/config/nav"
+
 export interface PageHeaderProps {
-  title: React.ReactNode
+  /** Defaults to the nav item's title when `nav` is given. */
+  title?: React.ReactNode
   description?: React.ReactNode
   actions?: React.ReactNode
   className?: string
   /** Rendered below the header row: tabs, filters, summary strips. */
   children?: React.ReactNode
-  /** Small uppercase label above the title, e.g. the module name ("ITSM · Incidents"). */
+  /**
+   * Small uppercase label above the title. Pass the sidebar group label
+   * ("Agent Operations", "Govern") or let `nav` resolve it.
+   */
   eyebrow?: React.ReactNode
+  /**
+   * Nav href of this page (e.g. "/agentops/traces"). Resolves `eyebrow` to the
+   * owning sidebar group, `icon` to the nav icon and `title` to the nav title
+   * unless those props are set, so the header, sidebar and breadcrumb agree.
+   */
+  nav?: string
   /** Breadcrumb or back-link slot rendered above the eyebrow/title. */
   breadcrumb?: React.ReactNode
   /** Leading icon shown in a tile next to the title. */
   icon?: React.ReactNode
-  /** Inline badges/chips rendered after the title (status, record number…). */
+  /** Inline badges/chips rendered after the title (status, record number). */
   meta?: React.ReactNode
   /** Draw a hairline under the header. Defaults to true. */
   divider?: boolean
@@ -28,12 +42,20 @@ export function PageHeader({
   className,
   children,
   eyebrow,
+  nav,
   breadcrumb,
   icon,
   meta,
   divider = true,
   size = "default",
 }: PageHeaderProps) {
+  const navItem = nav ? findNavItem(nav) : undefined
+  const navGroup = nav ? findNavGroup(nav) : undefined
+  const resolvedTitle = title ?? navItem?.title
+  const resolvedEyebrow = eyebrow ?? navGroup?.label
+  const NavIcon = navItem?.icon
+  const resolvedIcon = icon ?? (NavIcon ? <NavIcon /> : undefined)
+
   return (
     <div
       data-slot="page-header"
@@ -50,13 +72,13 @@ export function PageHeader({
       )}
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div className="flex min-w-0 items-start gap-3">
-          {icon && (
+          {resolvedIcon && (
             <span className="mt-0.5 inline-flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground ring-1 ring-border/60 ring-inset [&_svg]:size-4.5">
-              {icon}
+              {resolvedIcon}
             </span>
           )}
           <div className="min-w-0 space-y-1">
-            {eyebrow && <p className="eyebrow">{eyebrow}</p>}
+            {resolvedEyebrow && <Eyebrow>{resolvedEyebrow}</Eyebrow>}
             <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
               <h1
                 className={cn(
@@ -64,7 +86,7 @@ export function PageHeader({
                   size === "lg" ? "text-2xl md:text-3xl" : "text-xl md:text-2xl"
                 )}
               >
-                {title}
+                {resolvedTitle}
               </h1>
               {meta && (
                 <div className="flex flex-wrap items-center gap-1.5">
@@ -124,9 +146,9 @@ export function Section({
       className={cn("flex scroll-mt-20 flex-col gap-3", className)}
     >
       {(title || actions || eyebrow) && (
-        <div className="flex items-start justify-between gap-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 space-y-0.5">
-            {eyebrow && <p className="eyebrow">{eyebrow}</p>}
+            {eyebrow && <Eyebrow>{eyebrow}</Eyebrow>}
             {title && (
               <h2 className="flex items-center gap-2 text-sm font-semibold tracking-tight">
                 {icon && (
@@ -136,9 +158,7 @@ export function Section({
                 )}
                 <span className="truncate">{title}</span>
                 {count !== undefined && (
-                  <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-muted px-1.5 text-[11px] font-medium num text-muted-foreground">
-                    {count}
-                  </span>
+                  <CountPill count={count} size="default" />
                 )}
               </h2>
             )}
@@ -149,7 +169,9 @@ export function Section({
             )}
           </div>
           {actions && (
-            <div className="flex shrink-0 items-center gap-2">{actions}</div>
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              {actions}
+            </div>
           )}
         </div>
       )}

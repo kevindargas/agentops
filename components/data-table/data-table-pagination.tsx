@@ -109,7 +109,7 @@ export function DataTablePagination<TData extends RowData>({
         ) : (
           <>
             <span className="font-medium text-foreground">
-              {from}–{to}
+              {from} to {to}
             </span>{" "}
             of {total} {label}
           </>

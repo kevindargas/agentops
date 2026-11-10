@@ -56,7 +56,7 @@ export function DataTableViewOptions<TData extends RowData>({
         <Settings2Icon />
         View
         {hiddenCount > 0 && (
-          <span className="rounded-sm bg-muted px-1 font-mono text-[10px] text-muted-foreground tabular-nums">
+          <span className="rounded-sm bg-muted px-1 font-mono text-3xs text-muted-foreground tabular-nums">
             {hiddenCount} hidden
           </span>
         )}

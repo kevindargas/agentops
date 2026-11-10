@@ -231,6 +231,132 @@ export const tools: ToolDef[] = [
       "Dashboards and alert rules over OTel metrics; pairs with any OTel collector.",
     domains: ["visibility", "cost-performance", "drift"],
   },
+  {
+    id: "great-expectations",
+    name: "Great Expectations",
+    kind: "both",
+    url: "https://greatexpectations.io",
+    summary:
+      "Declarative data contracts and validation suites for inputs, outputs, knowledge sources and datasets.",
+    domains: ["quality", "drift"],
+  },
+  {
+    id: "evidently",
+    name: "Evidently",
+    kind: "both",
+    url: "https://www.evidentlyai.com",
+    summary:
+      "Data, prediction and quality drift reports; slice-level and calibration monitoring for ML and LLM systems.",
+    domains: ["drift", "quality"],
+  },
+  {
+    id: "temporal",
+    name: "Temporal",
+    kind: "both",
+    url: "https://temporal.io",
+    summary:
+      "Durable execution: checkpoints, retries, timeouts, cancellation and replay for long-running agent workflows.",
+    domains: ["cost-performance", "safety"],
+  },
+  {
+    id: "opa",
+    name: "Open Policy Agent",
+    kind: "open-source",
+    url: "https://www.openpolicyagent.org",
+    summary:
+      "Policy-as-code authorization decisions for tool calls, retrieval scopes and tenant boundaries, independent of model output.",
+    domains: ["safety", "governance"],
+  },
+  {
+    id: "sigstore",
+    name: "Sigstore / cosign",
+    kind: "open-source",
+    url: "https://www.sigstore.dev",
+    summary:
+      "Signing and verification of release bundles, model artifacts and tool definitions; provenance attestations.",
+    domains: ["safety", "governance", "drift"],
+  },
+  {
+    id: "trivy",
+    name: "Trivy",
+    kind: "open-source",
+    url: "https://trivy.dev",
+    summary:
+      "SBOM generation and vulnerability scanning for containers, dependencies and MCP server images.",
+    domains: ["safety", "governance"],
+  },
+  {
+    id: "chaos-toolkit",
+    name: "Chaos Toolkit / Litmus",
+    kind: "open-source",
+    url: "https://chaostoolkit.org",
+    summary:
+      "Fault injection for provider outages, slow tools, partial streams and region loss in staging and game days.",
+    domains: ["cost-performance"],
+  },
+  {
+    id: "k6",
+    name: "Grafana k6",
+    kind: "both",
+    url: "https://k6.io",
+    summary:
+      "Load and soak testing of agent endpoints with streaming-aware checks (TTFT, tokens/s, disconnects).",
+    domains: ["cost-performance", "visibility"],
+  },
+  {
+    id: "otel-collector",
+    name: "OpenTelemetry Collector",
+    kind: "open-source",
+    url: "https://opentelemetry.io/docs/collector/",
+    summary:
+      "Telemetry pipeline with redaction processors, tail sampling, export health metrics and backpressure.",
+    domains: ["visibility", "safety"],
+  },
+  {
+    id: "spiffe",
+    name: "SPIFFE / SPIRE",
+    kind: "open-source",
+    url: "https://spiffe.io",
+    summary:
+      "Short-lived workload identities for agents and tool servers; the basis for scoped, auditable delegation.",
+    domains: ["safety"],
+  },
+  {
+    id: "vault",
+    name: "HashiCorp Vault / OpenBao",
+    kind: "both",
+    url: "https://openbao.org",
+    summary:
+      "Secrets and short-lived credential issuance for tools and MCP servers with lease TTLs and audit logs.",
+    domains: ["safety", "governance"],
+  },
+  {
+    id: "inspect",
+    name: "Inspect (UK AISI)",
+    kind: "open-source",
+    url: "https://inspect.aisi.org.uk",
+    summary:
+      "Evaluation framework with repeated epochs, scorers and agentic task sandboxes; good for confidence intervals.",
+    domains: ["quality", "safety"],
+  },
+  {
+    id: "fairlearn",
+    name: "Fairlearn",
+    kind: "open-source",
+    url: "https://fairlearn.org",
+    summary:
+      "Disaggregated metrics and disparity measures across user groups and slices.",
+    domains: ["quality", "safety"],
+  },
+  {
+    id: "dbt",
+    name: "dbt tests",
+    kind: "both",
+    url: "https://docs.getdbt.com/docs/build/data-tests",
+    summary:
+      "Freshness, uniqueness and volume tests on the warehouse tables that feed knowledge sources, labels and KPIs.",
+    domains: ["drift", "quality", "governance"],
+  },
 ]
 
 export function getTool(id: string) {

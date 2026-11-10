@@ -24,7 +24,7 @@ export const configurationItems: ConfigurationItem[] = [
   },
   {
     id: "ci-002",
-    name: "ERP — SAP S/4HANA",
+    name: "ERP (SAP S/4HANA)",
     class: "Business Service",
     status: "Operational",
     environment: "Production",

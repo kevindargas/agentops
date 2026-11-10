@@ -1,13 +1,15 @@
 /**
- * Deployments & releases — change management for the agent fleet.
+ * Deployments & releases: change management for the agent fleet.
  *
  * Everything is derived deterministically from `deployedAgents` (seed 7901) so
  * the latest promoted production release of every agent is exactly the version,
  * model and prompt the agent currently runs. Releases ids use the `rel-` prefix.
  */
 
-import type { ChangeRisk } from "@/lib/types"
+import type { ChangeRisk, DeploymentEnvironment } from "@/lib/types"
 import { deployedAgents, experiments } from "./agentops"
+import { evalRuns, type EvalRun } from "./evals"
+import { getPromptForAgent, getPromptVersion } from "./prompts"
 import { chance, createRng, int, NOW, pick, type Rng } from "./seed"
 
 /* -------------------------------------------------------------------------- */
@@ -25,8 +27,8 @@ export type ReleaseStage =
 
 export type ReleaseStrategy = "Canary" | "Blue-green" | "Shadow" | "Direct"
 
-export type ReleaseEnvironment =
-  "production" | "staging" | "development" | "shadow"
+/** Same vocabulary as `DeploymentEnvironment` in `lib/types.ts`. */
+export type ReleaseEnvironment = DeploymentEnvironment
 
 export type ReleaseChangeKind =
   "prompt" | "model" | "tools" | "params" | "retrieval"
@@ -43,16 +45,22 @@ export type EvalGateStatus = "passed" | "failed" | "pending"
 
 export interface EvalGate {
   status: EvalGateStatus
-  /** Composite score on the agent's golden set, 0–100. */
+  /** Composite score on the agent's golden set, 0 to 100. */
   score: number
   threshold: number
+  /** Eval run (`ev-...`) the gate was evaluated on. */
   runId: string
+  /**
+   * Why a gate failed when the composite alone does not explain it, e.g.
+   * regressions on the golden set or a pass rate below the floor.
+   */
+  reason?: string
 }
 
 export interface RolloutPoint {
   /** ISO timestamp. */
   at: string
-  /** Share of live traffic on the new version, 0–100. */
+  /** Share of live traffic on the new version, 0 to 100. */
   traffic: number
   quality: number
   baselineQuality: number
@@ -79,11 +87,25 @@ export interface ReleaseEvent {
   message: string
 }
 
+export type ApproverStatus =
+  "approved" | "pending" | "rejected" | "changes requested"
+
 export interface Approver {
   userId: string
   role: string
-  status: "approved" | "pending" | "rejected" | "changes requested"
+  status: ApproverStatus
+  /** Decision time; present once `status` is no longer `pending`. */
   at?: string
+}
+
+/** Approvers that have decided, with the decision time guaranteed. */
+export function decidedApprovers(
+  approvers: Approver[]
+): (Approver & { at: string })[] {
+  return approvers.filter(
+    (a): a is Approver & { at: string } =>
+      a.status !== "pending" && typeof a.at === "string"
+  )
 }
 
 export interface Release {
@@ -99,12 +121,12 @@ export interface Release {
   summary: string
   changes: ReleaseChange[]
   evalGate?: EvalGate
-  /** Current share of traffic on the new version, 0–100. */
+  /** Current share of traffic on the new version, 0 to 100. */
   traffic: number
   /** Deltas vs the baseline version during the rollout. */
   health: { errorRateDelta: number; qualityDelta: number }
   risk: ChangeRisk
-  /** Share of the agent's guardrail suite covering this change, 0–100. */
+  /** Share of the agent's guardrail suite covering this change, 0 to 100. */
   guardrailCoverage: number
   /** Estimated change in cost per day, percent. */
   costDeltaPct: number
@@ -227,7 +249,10 @@ const extraTools = [
 const reasoningLevels = ["none", "low", "medium", "high"]
 
 interface ConfigState {
-  prompt: number
+  /** Prompt version id (`p-N`) from the agent's own registry entry. */
+  prompt: string
+  /** Every version id of the agent's system prompt, oldest first. */
+  promptChain: string[]
   modelId: string
   temperature: number
   maxOutputTokens: number
@@ -269,9 +294,11 @@ function mutate(
   for (const kind of kinds) {
     switch (kind) {
       case "prompt": {
-        const other = Math.max(1, state.prompt + dir)
-        if (other === state.prompt) break
-        emit("prompt", "Prompt", `p-${state.prompt}`, `p-${other}`)
+        // Walk along the agent's own version chain; never invent an id.
+        const idx = state.promptChain.indexOf(state.prompt)
+        const other = state.promptChain[idx + dir]
+        if (idx === -1 || !other) break
+        emit("prompt", "Prompt", state.prompt, other)
         next.prompt = other
         break
       }
@@ -342,14 +369,14 @@ function mutate(
         if (chance(rng, 0.6)) {
           // The current state has a tool the other state lacks.
           const t = pick(rng, state.tools)
-          emit("tools", "Tools", t, "—")
+          emit("tools", "Tools", t, "")
           next.tools = next.tools.filter((x) => x !== t)
         } else {
           const t = pick(
             rng,
             extraTools.filter((x) => !state.tools.includes(x))
           )
-          emit("tools", "Tools", "—", t)
+          emit("tools", "Tools", "", t)
           next.tools.push(t)
         }
         break
@@ -366,6 +393,13 @@ function mutate(
         break
       }
     }
+  }
+  // A prompt step with nowhere to go leaves nothing to ship; fall back to a
+  // parameter tweak so every release carries at least one change.
+  if (changes.length === 0 && !kinds.includes("params"))
+    return mutate(state, dir, ["params"])
+  if (changes.length === 0) {
+    emit("params", "maxRetries", "2", "3")
   }
   return { next, changes }
 }
@@ -394,7 +428,7 @@ function summarize(changes: ReleaseChange[]) {
       case "model":
         return `model ${c.before.split("/").pop()} → ${c.after.split("/").pop()}`
       case "tools":
-        return c.before === "—" ? `added ${c.after}` : `removed ${c.before}`
+        return c.before === "" ? `added ${c.after}` : `removed ${c.before}`
       case "params":
         return `${c.field} ${c.before} → ${c.after}`
       case "retrieval":
@@ -463,6 +497,90 @@ function buildRollout(
   return points
 }
 
+/* ---- eval gate runs -------------------------------------------------------- */
+
+/** Composite score a release gate requires, 0-100. */
+export const GATE_THRESHOLD = 85
+
+const finishedRuns = evalRuns.filter(
+  (r) => r.status === "Passed" || r.status === "Failed"
+)
+
+/**
+ * The eval run a release gate points at. Prefers a finished run of the same
+ * agent on the prompt version the release ships, started before the release;
+ * falls back to any finished run of the agent with the wanted result. Returns
+ * undefined when the agent has no such run, in which case the release carries
+ * no gate at all rather than a fake one.
+ */
+function gateRunFor(
+  agentId: string,
+  promptVersion: string,
+  wanted: "Passed" | "Failed",
+  beforeMs: number
+): EvalRun | undefined {
+  const mine = finishedRuns.filter(
+    (r) =>
+      r.agentId === agentId &&
+      r.status === wanted &&
+      (wanted === "Failed" || r.composite >= GATE_THRESHOLD)
+  )
+  const order = (rows: EvalRun[]) =>
+    [...rows].sort((a, b) => b.started.localeCompare(a.started))
+  const onPrompt = mine.filter((r) => r.promptVersion === promptVersion)
+  return (
+    order(
+      onPrompt.filter((r) => new Date(r.started).getTime() <= beforeMs)
+    )[0] ??
+    order(onPrompt)[0] ??
+    order(mine.filter((r) => new Date(r.started).getTime() <= beforeMs))[0] ??
+    order(mine)[0]
+  )
+}
+
+/**
+ * The release gate an eval run produces: passed when the run passed, otherwise
+ * failed with the first reason that explains it (composite under the
+ * threshold, regressions on the dataset, or a low pass rate). Used for seeded
+ * releases here and for releases drafted in the client session.
+ */
+export function gateFromRun(run: EvalRun): EvalGate {
+  const failed = run.status !== "Passed"
+  const reason = !failed
+    ? undefined
+    : run.composite < GATE_THRESHOLD
+      ? `composite ${run.composite} below ${GATE_THRESHOLD}`
+      : run.regressions > 0
+        ? `${run.regressions} regression${run.regressions === 1 ? "" : "s"} on ${run.datasetId}`
+        : `pass rate ${run.passRate}% below 80%`
+  return {
+    status: failed ? "failed" : "passed",
+    score: run.composite,
+    threshold: GATE_THRESHOLD,
+    runId: run.id,
+    reason,
+  }
+}
+
+function gateFrom(run: EvalRun | undefined): EvalGate | undefined {
+  return run ? gateFromRun(run) : undefined
+}
+
+/** Prompt version record a release change row points at, if it resolves. */
+export function releasePromptVersion(release: Release) {
+  const change = release.changes.find((c) => c.kind === "prompt")
+  return change ? getPromptVersion(change.after) : undefined
+}
+
+/** Ids of the agent's system prompt versions, oldest first. */
+function promptChainFor(agentId: string, live: string): string[] {
+  const prompt = getPromptForAgent(agentId)
+  const chain = prompt
+    ? [...prompt.versions].sort((a, b) => a.number - b.number).map((v) => v.id)
+    : []
+  return chain.includes(live) ? chain : [...chain, live]
+}
+
 let seq = 1000
 const releases_: Release[] = []
 const environments_: EnvironmentState[] = []
@@ -471,7 +589,8 @@ for (const agent of deployedAgents) {
   const liveEnv: ReleaseEnvironment =
     agent.environment === "production" ? "production" : "staging"
   const current: ConfigState = {
-    prompt: Number(agent.promptVersion.replace("p-", "")),
+    prompt: agent.promptVersion,
+    promptChain: promptChainFor(agent.id, agent.promptVersion),
     modelId: agent.modelId,
     temperature: agent.params.temperature,
     maxOutputTokens: agent.params.maxOutputTokens,
@@ -530,9 +649,14 @@ for (const agent of deployedAgents) {
         at: iso(createdMs + (2 + i * 3) * HOUR),
       })
     )
-    const evalScore =
-      Math.round((baseQ + (good ? 0.5 : -0.8) + (rng() - 0.5) * 2) * 10) / 10
+    // Keep the legacy draw so the rest of the stream is unchanged.
+    rng()
     const id = `rel-${++seq}`
+    // Gates on promoted history releases always passed; the run is the
+    // agent's finished eval on the prompt version this release shipped.
+    const gate = gateFrom(
+      gateRunFor(agent.id, state.prompt, "Passed", deployedMs)
+    )
     const activity: ReleaseEvent[] = [
       {
         id: `${id}-e1`,
@@ -541,16 +665,20 @@ for (const agent of deployedAgents) {
         actorId: agent.ownerId,
         message: `Draft created from ${formatVersion(prev)}`,
       },
-      {
-        id: `${id}-e2`,
-        kind: "eval",
-        at: iso(createdMs + HOUR),
-        message: `Eval gate passed on ${agent.evalDataset} (${evalScore.toFixed(1)} ≥ 85)`,
-      },
-      ...approvers.map<ReleaseEvent>((a, i) => ({
+      ...(gate
+        ? [
+            {
+              id: `${id}-e2`,
+              kind: "eval" as const,
+              at: iso(createdMs + HOUR),
+              message: `Eval gate passed on ${agent.evalDataset} (${gate.score.toFixed(1)} ≥ ${gate.threshold})`,
+            },
+          ]
+        : []),
+      ...decidedApprovers(approvers).map<ReleaseEvent>((a, i) => ({
         id: `${id}-a${i}`,
         kind: "approval",
-        at: a.at!,
+        at: a.at,
         actorId: a.userId,
         message: `Approved as ${a.role.toLowerCase()}`,
       })),
@@ -572,7 +700,7 @@ for (const agent of deployedAgents) {
         id: `${id}-e4`,
         kind: "advance",
         at: iso(deployedMs + (durationH / 3) * HOUR),
-        message: `Advanced to ${steps[1]}% — quality ${qDelta >= 0 ? "+" : ""}${qDelta.toFixed(1)} vs baseline`,
+        message: `Advanced to ${steps[1]}%: quality ${qDelta >= 0 ? "+" : ""}${qDelta.toFixed(1)} vs baseline`,
       })
     activity.push(
       stage === "Promoted"
@@ -589,7 +717,7 @@ for (const agent of deployedAgents) {
               kind: "rollback",
               at: iso(completedMs),
               actorId: "u-004",
-              message: `Rolled back to ${formatVersion(prev)} — error rate +${errDelta.toFixed(2)}pt`,
+              message: `Rolled back to ${formatVersion(prev)}: error rate +${errDelta.toFixed(2)}pt`,
             }
           : {
               id: `${id}-e5`,
@@ -611,12 +739,7 @@ for (const agent of deployedAgents) {
       stage,
       summary: summarize(changes),
       changes,
-      evalGate: {
-        status: "passed",
-        score: evalScore,
-        threshold: 85,
-        runId: `ev-${String(seq * 7).padStart(5, "0")}`,
-      },
+      evalGate: gate,
       traffic: stage === "Promoted" ? 100 : 0,
       health: { errorRateDelta: errDelta, qualityDelta: qDelta },
       risk,
@@ -714,13 +837,13 @@ for (const agent of deployedAgents) {
     let changes: ReleaseChange[]
     let after: ConfigState
     if (exp?.kind === "prompt" && exp.variants[1].promptVersion) {
-      const p = Number(exp.variants[1].promptVersion.replace("p-", ""))
+      const p = exp.variants[1].promptVersion
       changes = [
         {
           kind: "prompt",
           field: "Prompt",
-          before: `p-${fwdState.prompt}`,
-          after: `p-${p}`,
+          before: fwdState.prompt,
+          after: p,
         },
       ]
       after = { ...fwdState, prompt: p }
@@ -780,21 +903,21 @@ for (const agent of deployedAgents) {
     )
     const qDelta = Math.round((rng() * 2 - 0.4) * 10) / 10
     const errDelta = Math.round((rng() * 0.5 - 0.3) * 100) / 100
-    const evalScore = Math.round((baseQ + 0.8 + (rng() - 0.5) * 2) * 10) / 10
+    // Keep the legacy draw so the rest of the stream is unchanged.
+    rng()
+    // Drafts have not been evaluated yet; Knowledge Curator's pending release
+    // is the sample of a failed gate, everything else passed on a real run.
     const gate: EvalGate | undefined =
       spec.stage === "Draft"
-        ? {
-            status: "pending",
-            score: 0,
-            threshold: 85,
-            runId: `ev-${String(seq * 7).padStart(5, "0")}`,
-          }
-        : {
-            status: agent.id === "agt-kb-curator" ? "failed" : "passed",
-            score: agent.id === "agt-kb-curator" ? 83.6 : evalScore,
-            threshold: 85,
-            runId: `ev-${String(seq * 7).padStart(5, "0")}`,
-          }
+        ? undefined
+        : gateFrom(
+            gateRunFor(
+              agent.id,
+              after.prompt,
+              agent.id === "agt-kb-curator" ? "Failed" : "Passed",
+              nowMs
+            )
+          )
     const deployed =
       spec.stage === "Canary" ||
       spec.stage === "Progressing" ||
@@ -831,15 +954,15 @@ for (const agent of deployedAgents) {
         message:
           gate.status === "passed"
             ? `Eval gate passed on ${agent.evalDataset} (${gate.score.toFixed(1)} ≥ ${gate.threshold})`
-            : `Eval gate failed on ${agent.evalDataset} (${gate.score.toFixed(1)} < ${gate.threshold})`,
+            : `Eval gate failed on ${agent.evalDataset}: ${gate.reason ?? `${gate.score.toFixed(1)} < ${gate.threshold}`}`,
       })
-    approvers
+    decidedApprovers(approvers)
       .filter((a) => a.status === "approved")
       .forEach((a, i) =>
         activity.push({
           id: `${id}-a${i}`,
           kind: "approval",
-          at: a.at!,
+          at: a.at,
           actorId: a.userId,
           message: `Approved as ${a.role.toLowerCase()}`,
         })
@@ -871,7 +994,7 @@ for (const agent of deployedAgents) {
         kind: "advance",
         at: iso(deployedMs + 5 * HOUR),
         actorId: "u-004",
-        message: `Advanced to ${steps[1]}% — error rate ${errDelta >= 0 ? "+" : ""}${errDelta.toFixed(2)}pt vs baseline`,
+        message: `Advanced to ${steps[1]}%: error rate ${errDelta >= 0 ? "+" : ""}${errDelta.toFixed(2)}pt vs baseline`,
       })
     if (spec.stage === "Promoted" && completedMs)
       activity.push({
@@ -881,7 +1004,7 @@ for (const agent of deployedAgents) {
         actorId: agent.ownerId,
         message:
           spec.env === "shadow"
-            ? "Shadow run complete — parity report attached"
+            ? "Shadow run complete: parity report attached"
             : `Promoted to ${spec.env}`,
       })
 
@@ -934,7 +1057,7 @@ for (const agent of deployedAgents) {
         environment: "shadow",
         version: release.version,
         modelId: after.modelId,
-        promptVersion: `p-${after.prompt}`,
+        promptVersion: after.prompt,
         lastDeployedAt: release.deployedAt ?? release.createdAt,
         releaseId: release.id,
       })
@@ -953,19 +1076,25 @@ for (const agent of deployedAgents) {
     environment: "staging",
     version: stagingVersion,
     modelId: stagingState.modelId,
-    promptVersion: `p-${stagingState.prompt}`,
+    promptVersion: stagingState.prompt,
     lastDeployedAt: stagingAt,
     releaseId: releases_.find(
       (r) => r.agentId === agent.id && r.version === stagingVersion
     )?.id,
   })
   const dev = nextVersion(parseVersion(stagingVersion), chance(rng, 0.4))
+  // Development runs the next version in the agent's own chain when one
+  // exists (a draft or staging prompt), otherwise the same prompt as staging.
+  const devPrompt =
+    stagingState.promptChain[
+      stagingState.promptChain.indexOf(stagingState.prompt) + 1
+    ] ?? stagingState.prompt
   environments_.push({
     agentId: agent.id,
     environment: "development",
     version: formatVersion(dev),
     modelId: stagingState.modelId,
-    promptVersion: `p-${stagingState.prompt + 1}`,
+    promptVersion: devPrompt,
     lastDeployedAt: iso(NOW.getTime() - int(rng, 2, 30) * HOUR),
   })
 }
@@ -1016,6 +1145,18 @@ export const releaseApprovals: ReleaseApproval[] = releases
       approvers: r.approvers,
     }
   })
+
+/** Releases waiting on a human decision (Approvals inbox, badges). */
+export function pendingReleaseApprovalCount(list: Release[] = releases) {
+  return list.filter((r) => r.stage === "Pending approval").length
+}
+
+/** Releases currently in flight: canary, progressing or awaiting approval. */
+export function activeReleaseCount(list: Release[] = releases) {
+  return list.filter((r) =>
+    ["Canary", "Progressing", "Pending approval"].includes(r.stage)
+  ).length
+}
 
 export const releaseStages: ReleaseStage[] = [
   "Draft",

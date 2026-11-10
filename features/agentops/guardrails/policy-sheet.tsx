@@ -4,20 +4,31 @@ import * as React from "react"
 import Link from "next/link"
 import { cn } from "cn"
 import {
+  ActivityIcon,
   CopyIcon,
   DownloadIcon,
+  FlaskConicalIcon,
   HistoryIcon,
+  LanguagesIcon,
   PowerIcon,
   PowerOffIcon,
   RotateCcwIcon,
-  RouteIcon,
+  ShieldAlertIcon,
   ShieldCheckIcon,
+  TriangleAlertIcon,
 } from "lucide-react"
 import { toast } from "sonner"
 
+import { CHART_HEIGHT } from "@/components/charts/chart-primitives"
 import { IncidentTrendChart } from "@/components/charts/incident-trend-chart"
 import { CopyButton } from "@/components/shared/copy-button"
 import { EmptyState } from "@/components/shared/empty-state"
+import { MetricTile } from "@/components/shared/metric-tile"
+import {
+  SheetBody,
+  SheetFooterActions,
+  sheetWidths,
+} from "@/components/shared/sheet-frame"
 import { StateBadge } from "@/components/shared/status-badge"
 import { UserChip } from "@/components/shared/user-chip"
 import {
@@ -35,7 +46,6 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
-import { Separator } from "@/components/ui/separator"
 import {
   Sheet,
   SheetContent,
@@ -44,19 +54,32 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet"
 import { Slider } from "@/components/ui/slider"
-import { daysAgo, deployedAgents } from "@/lib/data"
-import type { Guardrail, GuardrailViolation } from "@/lib/data/guardrails"
-import { formatDate, timeAgo } from "@/lib/format"
+import { deployedAgents } from "@/lib/data/agentops"
+import { getEvalRun } from "@/lib/data/evals"
+import type {
+  Guardrail,
+  GuardrailVersion,
+  GuardrailViolation,
+} from "@/lib/data/guardrails"
+import { clock, daysAgo } from "@/lib/data/seed"
+import { currentUser } from "@/lib/data/users"
+import { formatDate, formatMs, timeAgo } from "@/lib/format"
+import { recordAudit } from "../audit/audit-store"
 import { AgentChip } from "../shared"
 import {
   ActionBadge,
+  bypassAlertThreshold,
   CategoryBadge,
   EngineCell,
+  FailModeBadge,
+  failModeMeta,
   fmtPct,
   ModeBadge,
   PolicyStatusBadge,
   scopeLabel,
+  violationsHref,
 } from "./shared"
+import { falsePositiveRate, fpTone } from "./store"
 
 export function PolicySheet({
   policy,
@@ -73,7 +96,9 @@ export function PolicySheet({
 }) {
   return (
     <Sheet open={policy !== null} onOpenChange={(o) => !o && onClose()}>
-      <SheetContent className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
+      <SheetContent
+        className={cn(sheetWidths.editor, "flex flex-col gap-0 p-0")}
+      >
         {policy && (
           <PolicyBody
             key={policy.id}
@@ -126,8 +151,23 @@ function fmtConfigValue(v: string | number | boolean | string[]) {
 function fmtThreshold(value: number, unit?: string) {
   const n = Number.isInteger(value)
     ? value.toLocaleString()
-    : value.toFixed(value < 1 ? 2 : 2).replace(/\.?0+$/, "")
+    : value.toFixed(2).replace(/\.?0+$/, "")
   return `${n}${unit ?? ""}`
+}
+
+function nextVersion(versions: GuardrailVersion[]) {
+  const nums = versions.map((v) => Number(v.version.replace(/^v/, "")) || 0)
+  const max = Math.max(0, ...nums)
+  return `v${(Math.floor(max) + 1).toFixed(1)}`
+}
+
+function policyTarget(g: Guardrail) {
+  return {
+    kind: "guardrail",
+    id: g.id,
+    label: g.name,
+    href: `/agentops/guardrails?policy=${g.id}`,
+  }
 }
 
 function PolicyBody({
@@ -157,39 +197,109 @@ function PolicyBody({
     date: daysAgo(13 - i),
     triggers: v,
   }))
+  const fp = falsePositiveRate(violations)
+  const fpToneValue = fpTone(fp.rate)
+  const current = g.versions[0]
+
+  /** Append a version entry and bump `updated`; every saved change is a version. */
+  const bump = (summary: string, extra: Partial<Guardrail> = {}) => {
+    const version: GuardrailVersion = {
+      version: nextVersion(g.versions),
+      changed: clock().toISOString(),
+      authorId: currentUser.id,
+      summary,
+    }
+    onPatch(g.id, {
+      ...extra,
+      updated: version.changed,
+      versions: [version, ...g.versions],
+    })
+    return version
+  }
 
   const saveThreshold = () => {
     if (!g.threshold) return
-    onPatch(g.id, {
+    const before = fmtThreshold(g.threshold.value, g.threshold.unit)
+    const after = fmtThreshold(threshold, g.threshold.unit)
+    const version = bump(`${g.threshold.label} ${before} to ${after}`, {
       threshold: { ...g.threshold, value: threshold },
       config: { ...g.config, [g.threshold.key]: threshold },
     })
+    const event = recordAudit({
+      action: "guardrail.threshold.changed",
+      source: "guardrail",
+      target: policyTarget(g),
+      summary: `Changed ${g.threshold.label.toLowerCase()} on ${g.name} from ${before} to ${after}`,
+      before: `${g.threshold.key}: ${before}`,
+      after: `${g.threshold.key}: ${after}`,
+      context: { policyVersion: version.version },
+    })
     toast.success("Threshold saved", {
-      description: `${g.name} · ${g.threshold.label.toLowerCase()} ${fmtThreshold(threshold, g.threshold.unit)}`,
+      description: `${g.name} ${version.version} · ${g.threshold.label.toLowerCase()} ${after}. Recorded as ${event.id}.`,
     })
   }
 
   const saveScope = () => {
     const next =
       scope.length === deployedAgents.length ? ("all" as const) : scope
-    onPatch(g.id, { scope: next })
+    const version = bump(
+      `Scope ${scopeLabel(g.scope).toLowerCase()} to ${scopeLabel(next).toLowerCase()}`,
+      { scope: next }
+    )
+    const event = recordAudit({
+      action: "guardrail.policy.updated",
+      source: "guardrail",
+      target: policyTarget(g),
+      summary: `Rescoped ${g.name} to ${scopeLabel(next).toLowerCase()}`,
+      before: scopeLabel(g.scope),
+      after: scopeLabel(next),
+      context: { policyVersion: version.version },
+    })
     toast.success("Scope updated", {
-      description: `${g.name} now applies to ${scopeLabel(next).toLowerCase()}.`,
+      description: `${g.name} now applies to ${scopeLabel(next).toLowerCase()}. Recorded as ${event.id}.`,
     })
   }
 
   const toggleStatus = () => {
     const next = g.status === "Active" ? "Disabled" : "Active"
-    onPatch(g.id, { status: next })
+    onPatch(g.id, { status: next, updated: clock().toISOString() })
+    const event = recordAudit({
+      action:
+        next === "Active"
+          ? "guardrail.policy.enabled"
+          : "guardrail.policy.disabled",
+      source: "guardrail",
+      target: policyTarget(g),
+      summary: `${next === "Active" ? "Enabled" : "Disabled"} ${g.name} for ${scopeLabel(g.scope).toLowerCase()}`,
+      before: g.status,
+      after: next,
+      context: { policyVersion: current?.version },
+    })
     toast[next === "Active" ? "success" : "warning"](
       next === "Active" ? "Policy enabled" : "Policy disabled",
       {
         description:
           next === "Active"
-            ? `${g.name} is enforcing again for ${scopeLabel(g.scope).toLowerCase()}.`
-            : `${g.name} stopped evaluating. Existing violations are kept.`,
+            ? `${g.name} is enforcing again for ${scopeLabel(g.scope).toLowerCase()}. Recorded as ${event.id}.`
+            : `${g.name} stopped evaluating. Existing violations are kept. Recorded as ${event.id}.`,
       }
     )
+  }
+
+  const rollbackTo = (v: GuardrailVersion) => {
+    const version = bump(`Rolled back to ${v.version} (${v.summary})`)
+    const event = recordAudit({
+      action: "guardrail.policy.rolled_back",
+      source: "guardrail",
+      target: policyTarget(g),
+      summary: `Rolled back ${g.name} to ${v.version}; recorded as ${version.version}`,
+      before: current?.version,
+      after: version.version,
+      context: { policyVersion: version.version },
+    })
+    toast(`Rolled back to ${v.version}`, {
+      description: `${g.name} re-deployed from ${v.version} as ${version.version}. Recorded as ${event.id}.`,
+    })
   }
 
   const exportPolicy = () => {
@@ -227,7 +337,7 @@ function PolicyBody({
         </div>
       </SheetHeader>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+      <SheetBody>
         <div className="flex flex-col gap-7">
           {/* Actions */}
           <div className="flex flex-wrap items-center gap-1.5">
@@ -254,13 +364,13 @@ function PolicyBody({
                 <AlertDialogHeader>
                   <AlertDialogTitle>
                     {g.status === "Active"
-                      ? `Disable “${g.name}”?`
-                      : `Enable “${g.name}”?`}
+                      ? `Disable "${g.name}"?`
+                      : `Enable "${g.name}"?`}
                   </AlertDialogTitle>
                   <AlertDialogDescription>
                     {g.status === "Active"
-                      ? `The policy stops evaluating for ${scopeLabel(g.scope).toLowerCase()} immediately. Agents in scope lose this ${g.category.toLowerCase()} guardrail until it is re-enabled.`
-                      : `The policy starts evaluating for ${scopeLabel(g.scope).toLowerCase()} on the next request using mode “${g.mode}”.`}
+                      ? `The policy stops evaluating for ${scopeLabel(g.scope).toLowerCase()} immediately. Agents in scope lose this ${g.category.toLowerCase()} guardrail until it is re-enabled. A guardrail.policy.disabled event is appended to the audit log.`
+                      : `The policy starts evaluating for ${scopeLabel(g.scope).toLowerCase()} on the next request using mode "${g.mode}". A guardrail.policy.enabled event is appended to the audit log.`}
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
@@ -284,36 +394,49 @@ function PolicyBody({
               variant="ghost"
               size="sm"
               className="ml-auto"
-              render={<Link href="/agentops/traces" />}
+              render={<Link href={violationsHref(g.id)} />}
             >
-              <RouteIcon /> Traces
+              <ShieldAlertIcon /> Violations
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              render={<Link href={`/agentops/traces?policy=${g.id}`} />}
+            >
+              <ActivityIcon /> Traces
             </Button>
           </div>
 
           {/* Stats */}
-          <div className="grid grid-cols-3 gap-3">
-            <Stat
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <MetricTile
               label="Triggers · 24h"
               value={g.triggers24h.toLocaleString()}
             />
-            <Stat
+            <MetricTile
               label="False-positive rate"
-              value={g.triggers24h === 0 ? "—" : fmtPct(g.falsePositiveRate)}
-              tone={
-                g.falsePositiveRate >= 0.3
-                  ? "danger"
-                  : g.falsePositiveRate >= 0.15
-                    ? "warning"
-                    : undefined
+              value={fp.rate === null ? "n/a" : fmtPct(fp.rate)}
+              tone={fpToneValue}
+              hint={
+                fp.decided
+                  ? `${fp.dismissed} of ${fp.decided} verdicts`
+                  : "No reviewer verdicts yet"
               }
             />
-            <div className="flex flex-col justify-between rounded-lg border bg-card p-3">
-              <span className="text-[11px] font-medium text-muted-foreground">
-                Engine
-              </span>
-              <EngineCell policy={g} className="mt-1" />
-            </div>
+            <MetricTile label="Engine" value={<EngineCell policy={g} />} />
           </div>
+
+          {/* Effectiveness */}
+          <Section
+            title="Effectiveness"
+            description="How the guardrail behaves under failure and attack, and where it has been validated."
+          >
+            <EffectivenessPanel
+              policy={g}
+              fpRate={fp.rate}
+              fpDecided={fp.decided}
+            />
+          </Section>
 
           {/* Configuration */}
           <Section
@@ -324,7 +447,7 @@ function PolicyBody({
               {Object.entries(g.config).map(([k, v]) => (
                 <div
                   key={k}
-                  className="grid grid-cols-[minmax(8rem,1fr)_minmax(0,2fr)] items-baseline gap-x-4 px-3 py-2"
+                  className="grid grid-cols-1 gap-x-4 gap-y-0.5 px-3 py-2 sm:grid-cols-[minmax(8rem,1fr)_minmax(0,2fr)] sm:items-baseline"
                 >
                   <dt className="font-mono text-xs text-muted-foreground">
                     {k}
@@ -336,7 +459,7 @@ function PolicyBody({
                           <Badge
                             key={item}
                             variant="outline"
-                            className="h-5 px-1.5 font-mono text-[11px] text-muted-foreground"
+                            className="h-5 px-1.5 font-mono text-2xs text-muted-foreground"
                           >
                             {item}
                           </Badge>
@@ -358,7 +481,7 @@ function PolicyBody({
             </dl>
             <div className="relative rounded-lg border bg-muted/40">
               <div className="flex items-center justify-between border-b px-3 py-1.5">
-                <span className="font-mono text-[11px] text-muted-foreground">
+                <span className="font-mono text-2xs text-muted-foreground">
                   {g.id}.yaml
                 </span>
                 <CopyButton value={g.policy} label="Copy YAML" />
@@ -413,7 +536,7 @@ function PolicyBody({
                     setThreshold(Array.isArray(v) ? v[0] : v)
                   }
                 />
-                <div className="mt-2 flex justify-between font-mono text-[11px] text-muted-foreground tabular-nums">
+                <div className="mt-2 flex justify-between font-mono text-2xs text-muted-foreground tabular-nums">
                   <span>{fmtThreshold(g.threshold.min, g.threshold.unit)}</span>
                   <span>{fmtThreshold(g.threshold.max, g.threshold.unit)}</span>
                 </div>
@@ -459,7 +582,7 @@ function PolicyBody({
                       }
                     />
                     <span className="min-w-0 flex-1 truncate">{a.name}</span>
-                    <span className="text-[11px] text-muted-foreground">
+                    <span className="text-2xs text-muted-foreground">
                       {a.environment}
                     </span>
                   </label>
@@ -488,7 +611,7 @@ function PolicyBody({
                     g.mode === "Block" ? "var(--chart-5)" : "var(--chart-1)",
                 },
               ]}
-              height={160}
+              height={CHART_HEIGHT.sm}
             />
           </Section>
 
@@ -496,6 +619,17 @@ function PolicyBody({
           <Section
             title="Recent violations"
             description={`${violations.length} in the sampled window`}
+            action={
+              violations.length > 0 ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  render={<Link href={violationsHref(g.id)} />}
+                >
+                  View all
+                </Button>
+              ) : undefined
+            }
           >
             {violations.length === 0 ? (
               <EmptyState
@@ -541,7 +675,7 @@ function PolicyBody({
           {/* Versions */}
           <Section
             title="Versions"
-            description="Every change is a new version; rolling back re-deploys the older policy."
+            description="Every saved change is a new version; rolling back re-deploys the older policy as a new version."
           >
             <ol className="divide-y rounded-lg border">
               {g.versions.map((v, i) => (
@@ -560,7 +694,7 @@ function PolicyBody({
                       {i === 0 && (
                         <Badge
                           variant="outline"
-                          className="h-4.5 px-1.5 text-[10px] text-muted-foreground"
+                          className="h-4.5 px-1.5 text-3xs text-muted-foreground"
                         >
                           current
                         </Badge>
@@ -575,53 +709,166 @@ function PolicyBody({
                     </div>
                   </div>
                   {i > 0 && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="shrink-0"
-                      onClick={() =>
-                        toast(`Rolled back to ${v.version}`, {
-                          description: `${g.name} re-deployed from ${v.version}. A new version was recorded.`,
-                        })
-                      }
-                    >
-                      <RotateCcwIcon /> Rollback
-                    </Button>
+                    <AlertDialog>
+                      <AlertDialogTrigger
+                        render={
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="shrink-0"
+                          />
+                        }
+                      >
+                        <RotateCcwIcon /> Rollback
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>
+                            Roll back {g.name} to {v.version}?
+                          </AlertDialogTitle>
+                          <AlertDialogDescription>
+                            The {v.version} configuration is re-deployed as a
+                            new version ({nextVersion(g.versions)}) for{" "}
+                            {scopeLabel(g.scope).toLowerCase()}. Threshold and
+                            scope edits made since are superseded. A
+                            guardrail.policy.rolled_back event is appended to
+                            the audit log.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          <AlertDialogAction
+                            variant="destructive"
+                            onClick={() => rollbackTo(v)}
+                          >
+                            <RotateCcwIcon /> Roll back
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
                   )}
                 </li>
               ))}
             </ol>
           </Section>
-          <Separator className="opacity-0" />
         </div>
-      </div>
+      </SheetBody>
+      <SheetFooterActions />
     </>
   )
 }
 
-function Stat({
-  label,
-  value,
-  tone,
+function EffectivenessPanel({
+  policy: g,
+  fpRate,
+  fpDecided,
 }: {
-  label: string
-  value: string
-  tone?: "warning" | "danger"
+  policy: Guardrail
+  fpRate: number | null
+  fpDecided: number
 }) {
+  const run = g.lastRedTeamRunId ? getEvalRun(g.lastRedTeamRunId) : undefined
+  const bypassHigh = g.bypassRate > bypassAlertThreshold
   return (
-    <div className="flex flex-col justify-between rounded-lg border bg-card p-3">
-      <span className="text-[11px] font-medium text-muted-foreground">
-        {label}
-      </span>
-      <span
-        className={cn(
-          "mt-1 text-xl font-semibold tabular-nums",
-          tone === "warning" && "text-warning-text",
-          tone === "danger" && "text-danger-text"
-        )}
-      >
-        {value}
-      </span>
+    <div className="flex flex-col gap-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <MetricTile
+          label="Fail mode"
+          value={<FailModeBadge failMode={g.failMode} />}
+        />
+        <MetricTile
+          label="p95 evaluation"
+          value={formatMs(g.p95Ms)}
+          tone={g.p95Ms >= 1000 ? "warning" : undefined}
+        />
+        <MetricTile
+          label="Red-team bypass"
+          value={g.lastRedTeamRunId ? fmtPct(g.bypassRate, 1) : "n/a"}
+          tone={bypassHigh ? "danger" : undefined}
+        />
+        <MetricTile
+          label="False-positive rate"
+          value={fpRate === null ? "n/a" : fmtPct(fpRate)}
+          tone={fpTone(fpRate)}
+          hint={fpDecided ? `${fpDecided} verdicts` : "No verdicts yet"}
+        />
+      </div>
+
+      {(g.failMode === "fail_open" || bypassHigh) && (
+        <ul className="flex flex-col gap-1.5 text-xs">
+          {g.failMode === "fail_open" && (
+            <li className="flex items-start gap-1.5 text-warning-text">
+              <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
+              <span>
+                {failModeMeta.fail_open.hint} Consider fail-closed for
+                security-critical scopes.
+              </span>
+            </li>
+          )}
+          {bypassHigh && (
+            <li className="flex items-start gap-1.5 text-danger-text">
+              <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
+              <span>
+                {fmtPct(g.bypassRate, 1)} of red-team attack cases got through,
+                above the {fmtPct(bypassAlertThreshold)} threshold.
+              </span>
+            </li>
+          )}
+        </ul>
+      )}
+
+      <dl className="divide-y divide-border/70 rounded-lg border text-sm">
+        <div className="grid grid-cols-1 gap-x-4 gap-y-1 px-3 py-2 sm:grid-cols-[minmax(8rem,1fr)_minmax(0,2fr)] sm:items-center">
+          <dt className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+            <FlaskConicalIcon className="size-3.5" /> Last red-team run
+          </dt>
+          <dd className="min-w-0">
+            {g.lastRedTeamRunId ? (
+              <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                <Link
+                  href={`/agentops/evals/${g.lastRedTeamRunId}`}
+                  className="font-mono text-xs underline-offset-4 hover:underline"
+                >
+                  {g.lastRedTeamRunId}
+                </Link>
+                {run && (
+                  <span className="text-xs text-muted-foreground">
+                    {run.datasetId} · {run.cases} cases · {timeAgo(run.started)}
+                  </span>
+                )}
+              </span>
+            ) : (
+              <span className="text-xs text-muted-foreground">
+                Not an attack surface: no red-team dataset targets this policy.
+              </span>
+            )}
+          </dd>
+        </div>
+        <div className="grid grid-cols-1 gap-x-4 gap-y-1 px-3 py-2 sm:grid-cols-[minmax(8rem,1fr)_minmax(0,2fr)] sm:items-center">
+          <dt className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+            <LanguagesIcon className="size-3.5" /> Language coverage
+          </dt>
+          <dd className="min-w-0">
+            {g.languages.length === 0 ? (
+              <span className="text-xs text-muted-foreground">
+                Language-agnostic
+              </span>
+            ) : (
+              <span className="flex flex-wrap gap-1">
+                {g.languages.map((l) => (
+                  <Badge
+                    key={l}
+                    variant="outline"
+                    className="h-5 px-1.5 font-mono text-2xs uppercase"
+                  >
+                    {l}
+                  </Badge>
+                ))}
+              </span>
+            )}
+          </dd>
+        </div>
+      </dl>
     </div>
   )
 }

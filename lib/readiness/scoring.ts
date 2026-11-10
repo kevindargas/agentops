@@ -19,7 +19,7 @@ import type {
   SystemProfile,
 } from "./types"
 
-/** Credit awarded per status, 0–1. */
+/** Credit awarded per status, 0 to 1. */
 export const statusCredit: Record<ControlStatus, number> = {
   none: 0,
   planned: 0.15,
@@ -200,8 +200,11 @@ export function evaluateAssessment(
     .filter((e) => e.blocker)
     .sort((a, b) => b.severity - a.severity)
   const reviews = applicable
-    .filter((e) => e.review)
-    .sort((a, b) => a.review!.dueAt.localeCompare(b.review!.dueAt))
+    .filter(
+      (e): e is ControlEval & { review: NonNullable<ControlEval["review"]> } =>
+        e.review !== undefined
+    )
+    .sort((a, b) => a.review.dueAt.localeCompare(b.review.dueAt))
   const counts = {
     none: 0,
     planned: 0,

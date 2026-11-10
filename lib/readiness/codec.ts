@@ -1,3 +1,4 @@
+import { clock } from "@/lib/data/seed"
 import type {
   Assessment,
   AssessmentResult,
@@ -16,6 +17,9 @@ import {
 import { controlStatuses, maturityTargets, systemTypes } from "./types"
 
 const SHARE_VERSION = 1
+
+/** Share links longer than this are likely to be truncated by chat clients and proxies. */
+export const SHARE_LINK_WARN_CHARS = 2000
 
 // ---- URL-safe encoding -----------------------------------------------------
 
@@ -54,8 +58,24 @@ export function encodeAssessment(a: Assessment): string {
 }
 
 export function decodeAssessment(encoded: string): Assessment {
-  const parsed = JSON.parse(fromBase64Url(encoded)) as { v: number; a: unknown }
-  if (parsed.v !== SHARE_VERSION) throw new Error("Unsupported share version")
+  let text: string
+  try {
+    text = fromBase64Url(encoded)
+  } catch {
+    throw new Error("The share link payload is not valid base64url.")
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    throw new Error("The share link payload is not JSON.")
+  }
+  if (!isRecord(parsed) || typeof parsed.v !== "number")
+    throw new Error("The share link payload has no version field.")
+  if (parsed.v !== SHARE_VERSION)
+    throw new Error(
+      `Share link version ${parsed.v} is not supported (this build reads version ${SHARE_VERSION}).`
+    )
   return parseAssessment(parsed.a)
 }
 
@@ -68,11 +88,17 @@ export function shareUrl(a: Assessment, base?: string) {
   return `${origin}#s=${encodeAssessment(a)}`
 }
 
-export function readShareHash(hash: string): Assessment | null {
+/** Decodes a `#s=` fragment, throwing a descriptive error when it cannot. */
+export function decodeShareHash(hash: string): Assessment {
   const m = /[#&]s=([A-Za-z0-9_-]+)/.exec(hash)
-  if (!m) return null
+  if (!m) throw new Error("No `s=` fragment found in the link.")
+  return decodeAssessment(m[1])
+}
+
+export function readShareHash(hash: string): Assessment | null {
+  if (!/[#&]s=/.test(hash)) return null
   try {
-    return decodeAssessment(m[1])
+    return decodeShareHash(hash)
   } catch {
     return null
   }
@@ -85,13 +111,19 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 }
 
 export function parseAssessment(input: unknown): Assessment {
-  if (!isRecord(input)) throw new Error("Not an assessment object")
+  if (!isRecord(input))
+    throw new Error("Not an assessment object (expected a JSON object).")
   const profile = input.profile
-  if (!isRecord(profile)) throw new Error("Missing system profile")
+  if (!isRecord(profile))
+    throw new Error('Missing the "profile" object with the system profile.')
   if (!systemTypes.includes(profile.systemType as SystemProfile["systemType"]))
-    throw new Error("Unknown system type")
+    throw new Error(
+      `Unknown system type "${String(profile.systemType)}" (expected one of ${systemTypes.join(", ")}).`
+    )
   if (!maturityTargets.includes(input.target as MaturityTarget))
-    throw new Error("Unknown maturity target")
+    throw new Error(
+      `Unknown maturity target "${String(input.target)}" (expected one of ${maturityTargets.join(", ")}).`
+    )
   const rawResponses = isRecord(input.responses) ? input.responses : {}
   const responses: Assessment["responses"] = {}
   for (const [id, r] of Object.entries(rawResponses)) {
@@ -116,12 +148,12 @@ export function parseAssessment(input: unknown): Assessment {
         : undefined,
     }
   }
-  const now = new Date().toISOString()
+  const now = clock().toISOString()
   return {
     id:
       typeof input.id === "string"
         ? input.id
-        : `asm-${Date.now().toString(36)}`,
+        : `asm-imported-${clock().getTime().toString(36)}`,
     name: typeof input.name === "string" ? input.name : "Imported assessment",
     controlSetId:
       typeof input.controlSetId === "string" ? input.controlSetId : "unknown",
@@ -221,7 +253,7 @@ export function toMarkdown(
   lines.push(`Control set: ${set.name} v${set.version}`)
   lines.push("")
   lines.push(
-    `**Coverage ${result.overall}/100 — ${maturityLevelLabel[result.maturity]}** · ${result.blockers.length} release blocker(s) · ${result.gaps.length} gap(s)`
+    `**Coverage ${result.overall}/100: ${maturityLevelLabel[result.maturity]}** · ${result.blockers.length} release blocker(s) · ${result.gaps.length} gap(s)`
   )
   lines.push("")
   lines.push("## Domain coverage")
@@ -238,7 +270,7 @@ export function toMarkdown(
     lines.push("")
     for (const e of result.blockers)
       lines.push(
-        `- **${e.control.id} ${e.control.title}** — ${statusLabel[e.response.status]}${e.response.ownerId ? ` · ${ownerName(e.response.ownerId)}` : ""}`
+        `- **${e.control.id} ${e.control.title}**: ${statusLabel[e.response.status]}${e.response.ownerId ? ` · ${ownerName(e.response.ownerId)}` : ""}`
       )
   }
   lines.push("")
@@ -261,7 +293,7 @@ export function toMarkdown(
       (c) => c.control.domain === domain.id
     )) {
       lines.push(
-        `- **${e.control.id} ${e.control.title}** — ${statusLabel[e.response.status]} (${applicabilityLabel[e.applicability]}${e.required ? ", required" : ""}${e.control.gate ? ", gate" : ""})`
+        `- **${e.control.id} ${e.control.title}**: ${statusLabel[e.response.status]} (${applicabilityLabel[e.applicability]}${e.required ? ", required" : ""}${e.control.gate ? ", gate" : ""})`
       )
       if (e.response.evidence)
         lines.push(`  - Evidence: ${e.response.evidence}`)

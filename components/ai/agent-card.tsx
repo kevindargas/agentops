@@ -20,6 +20,8 @@ import {
   type LucideIcon,
 } from "lucide-react"
 
+import { MetricTile } from "@/components/shared/metric-tile"
+import { StateBadge } from "@/components/shared/status-badge"
 import { Badge } from "@/components/ui/badge"
 import {
   Card,
@@ -42,8 +44,12 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { StateBadge } from "@/components/shared/status-badge"
-import { autonomyMeta, type AiAgent, type Autonomy } from "@/lib/ai/agents"
+import {
+  autonomyMeta,
+  moduleLabel,
+  type AiAgent,
+  type Autonomy,
+} from "@/lib/ai/agents"
 import { timeAgo } from "@/lib/format"
 
 /* ------------------------------------------------------------------ */
@@ -153,28 +159,6 @@ function AutonomySelect({
   )
 }
 
-function Metric({
-  label,
-  value,
-  hint,
-}: {
-  label: string
-  value: React.ReactNode
-  hint?: string
-}) {
-  return (
-    <div className="rounded-lg border bg-muted/30 px-2.5 py-2">
-      <p className="text-[11px] text-muted-foreground">{label}</p>
-      <p className="text-base leading-tight font-semibold tabular-nums">
-        {value}
-      </p>
-      {hint && (
-        <p className="truncate text-[11px] text-muted-foreground/80">{hint}</p>
-      )}
-    </div>
-  )
-}
-
 /* ------------------------------------------------------------------ */
 
 export function AgentCard({
@@ -207,10 +191,7 @@ export function AgentCard({
             >
               {agent.name}
             </p>
-            <StateBadge
-              state={agent.health}
-              className="ml-auto h-[18px] px-1.5 text-[10px]"
-            />
+            <StateBadge state={agent.health} size="sm" className="ml-auto" />
           </div>
           <p className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
             {agent.description}
@@ -222,7 +203,7 @@ export function AgentCard({
               onChange={(a) => onChange({ autonomy: a })}
               className="w-40"
             />
-            <span className="hidden text-[11px] text-muted-foreground tabular-nums @[360px]:inline">
+            <span className="hidden text-2xs text-muted-foreground tabular-nums @[360px]:inline">
               {agent.actions24h} actions · {agent.acceptanceRate}%
             </span>
             <Switch
@@ -250,16 +231,10 @@ export function AgentCard({
               <span className={cn(!agent.enabled && "text-muted-foreground")}>
                 {agent.name}
               </span>
-              <Badge
-                variant="secondary"
-                className="h-[18px] px-1.5 text-[10px]"
-              >
-                {agent.module}
+              <Badge variant="secondary" className="h-4.5 px-1.5 text-3xs">
+                {moduleLabel[agent.module]}
               </Badge>
-              <StateBadge
-                state={agent.health}
-                className="h-[18px] px-1.5 text-[10px]"
-              />
+              <StateBadge state={agent.health} size="sm" />
             </CardTitle>
             <CardDescription className="mt-1 line-clamp-2 leading-relaxed">
               {agent.description}
@@ -282,17 +257,20 @@ export function AgentCard({
 
       <CardContent className="flex flex-col gap-4">
         <div className="grid grid-cols-3 gap-2">
-          <Metric label="Runs · 24h" value={agent.runs24h.toLocaleString()} />
-          <Metric
+          <MetricTile
+            label="Runs · 24h"
+            value={agent.runs24h.toLocaleString("en-US")}
+          />
+          <MetricTile
             label="Actions"
             value={agent.actions24h}
             hint={
               agent.runs24h
                 ? `${Math.round((agent.actions24h / agent.runs24h) * 100)}% of runs`
-                : "—"
+                : "No runs"
             }
           />
-          <Metric
+          <MetricTile
             label="Time saved"
             value={
               savedHours >= 1
@@ -353,7 +331,7 @@ export function AgentCard({
                   className={cn(
                     "flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-60",
                     active
-                      ? "bg-background text-foreground shadow-xs"
+                      ? "bg-background text-foreground shadow-hairline"
                       : "text-muted-foreground hover:text-foreground"
                   )}
                 >
@@ -373,7 +351,7 @@ export function AgentCard({
             <Badge
               key={t}
               variant="outline"
-              className="h-5 rounded-md px-1.5 font-mono text-[10px] text-muted-foreground"
+              className="h-5 rounded-md px-1.5 font-mono text-3xs text-muted-foreground"
             >
               {t}
             </Badge>

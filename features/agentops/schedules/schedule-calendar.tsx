@@ -8,9 +8,10 @@ import {
   ClockIcon,
   LockIcon,
   PlayIcon,
+  WrenchIcon,
 } from "lucide-react"
-import { toast } from "sonner"
 
+import { Section } from "@/components/shared/page-header"
 import { UserChip } from "@/components/shared/user-chip"
 import { Button } from "@/components/ui/button"
 import {
@@ -26,21 +27,34 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { deployedAgents, getDeployedAgent, NOW } from "@/lib/data"
+import { deployedAgents, getDeployedAgent } from "@/lib/data/agentops"
+import { changeFreezeWindows } from "@/lib/data/itsm"
 import {
   describeCron,
   freezeWindows,
   occurrences,
-  schedules,
   type FreezeWindow,
   type Schedule,
 } from "@/lib/data/schedules"
+import { NOW } from "@/lib/data/seed"
+import { formatClock, formatDurationMs } from "@/lib/format"
 import { AgentChip } from "../shared"
-import { AgentDot, agentColor, fmtClock, fmtRunDuration } from "./shared"
+import { runScheduleNow } from "./actions"
+import { AgentDot, agentColor } from "./shared"
+import { scheduleStore } from "./store"
 
 const DAY = 86_400_000
 const dayKey = (d: Date) => d.toISOString().slice(0, 10)
 const todayKey = dayKey(NOW)
+
+/**
+ * Change freezes come from the change calendar (lib/data/itsm.ts); the
+ * scheduler's `freezeWindows` derives its deploy freezes from that list and
+ * adds provider maintenance windows. The ids tell the two kinds apart.
+ */
+const changeFreezeIds = new Set(changeFreezeWindows.map((w) => w.id))
+const freezeKind = (f: FreezeWindow) =>
+  changeFreezeIds.has(f.id) ? "Change freeze" : "Maintenance window"
 
 function startOfWeek(d: Date) {
   const x = new Date(
@@ -62,9 +76,32 @@ function freezesFor(key: string) {
   return freezeWindows.filter((f) => f.start < end && f.end > start)
 }
 
-export function ScheduleCalendar() {
+const shortDate = (d: Date, year = false) =>
+  d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    ...(year ? { year: "numeric" } : {}),
+    timeZone: "UTC",
+  })
+
+export function ScheduleCalendar({
+  initialAgentId,
+}: {
+  /** Shows only this agent's chips at first (`?agent=`); the legend can re-enable the rest. */
+  initialAgentId?: string
+}) {
+  const schedules = scheduleStore.use()
   const [offset, setOffset] = React.useState(0)
-  const [hidden, setHidden] = React.useState<Set<string>>(new Set())
+  const [hidden, setHidden] = React.useState<Set<string>>(
+    () =>
+      new Set(
+        initialAgentId && getDeployedAgent(initialAgentId)
+          ? deployedAgents
+              .filter((a) => a.id !== initialAgentId)
+              .map((a) => a.id)
+          : []
+      )
+  )
 
   const weekStart = React.useMemo(() => {
     const s = startOfWeek(NOW)
@@ -96,9 +133,9 @@ export function ScheduleCalendar() {
     for (const list of Object.values(map))
       list.sort((a, b) => a.times[0].localeCompare(b.times[0]))
     return map
-  }, [weekStart])
+  }, [weekStart, schedules])
 
-  const rangeLabel = `${days[0].toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })} – ${days[6].toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })}`
+  const rangeLabel = `${shortDate(days[0])} to ${shortDate(days[6], true)}`
   const totalRuns = days.reduce(
     (acc, d) =>
       acc +
@@ -119,9 +156,15 @@ export function ScheduleCalendar() {
   )
 
   return (
-    <div className="flex min-w-0 flex-col gap-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
+    <Section
+      title={rangeLabel}
+      description={`${totalRuns.toLocaleString()} scheduled run${totalRuns === 1 ? "" : "s"}${
+        weekFreezes.length > 0
+          ? ` · ${weekFreezes.length} freeze window${weekFreezes.length === 1 ? "" : "s"}`
+          : ""
+      } · Monday to Sunday, UTC`}
+      actions={
+        <>
           <Button
             variant="outline"
             size="icon-sm"
@@ -138,23 +181,20 @@ export function ScheduleCalendar() {
           >
             <ChevronRightIcon />
           </Button>
-          <Button variant="outline" size="sm" onClick={() => setOffset(0)}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setOffset(0)}
+            disabled={offset === 0}
+          >
             This week
           </Button>
-          <h2 className="ml-1 text-sm font-semibold md:text-base">
-            {rangeLabel}
-          </h2>
-        </div>
-        <span className="text-xs text-muted-foreground tabular-nums">
-          {totalRuns.toLocaleString()} scheduled run{totalRuns === 1 ? "" : "s"}
-          {weekFreezes.length > 0
-            ? ` · ${weekFreezes.length} freeze window${weekFreezes.length === 1 ? "" : "s"}`
-            : ""}
-        </span>
-      </div>
-
+        </>
+      }
+      className="min-w-0"
+    >
       <div className="overflow-x-auto rounded-xl border bg-card">
-        <div className="grid min-w-[56rem] grid-cols-7 border-b bg-muted/40 text-center text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+        <div className="grid min-w-[56rem] grid-cols-7 border-b bg-muted/40 text-center text-2xs font-medium tracking-wide text-muted-foreground uppercase">
           {days.map((d) => {
             const key = dayKey(d)
             return (
@@ -201,7 +241,7 @@ export function ScheduleCalendar() {
                   <FreezeChip key={f.id} freeze={f} dayKey={key} />
                 ))}
                 {groups.length === 0 && freezes.length === 0 && (
-                  <p className="px-1 pt-4 text-center text-[11px] text-muted-foreground">
+                  <p className="px-1 pt-4 text-center text-2xs text-muted-foreground">
                     No runs
                   </p>
                 )}
@@ -242,14 +282,18 @@ export function ScheduleCalendar() {
           )
         })}
         <span className="inline-flex items-center gap-1.5">
-          <span className="size-2.5 rounded-sm border bg-[repeating-linear-gradient(135deg,transparent_0_2px,color-mix(in_oklab,var(--color-warning)_45%,transparent)_2px_4px)]" />
-          Freeze / maintenance window
+          <LockIcon className="size-3 text-warning-text" />
+          Change freeze (from the change calendar)
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <WrenchIcon className="size-3 text-warning-text" />
+          Maintenance window
         </span>
         <span className="inline-flex items-center gap-1.5">
           <span className="size-2.5 rounded-full bg-brand" /> Today
         </span>
       </div>
-    </div>
+    </Section>
   )
 }
 
@@ -266,27 +310,30 @@ function FreezeChip({
   const endsToday = freeze.end <= dayEnd
   const span =
     startsToday && endsToday
-      ? `${fmtClock(freeze.start)}–${fmtClock(freeze.end)}`
+      ? `${formatClock(freeze.start)} to ${formatClock(freeze.end)}`
       : startsToday
-        ? `from ${fmtClock(freeze.start)}`
+        ? `from ${formatClock(freeze.start)}`
         : endsToday
-          ? `until ${fmtClock(freeze.end)}`
+          ? `until ${formatClock(freeze.end)}`
           : "all day"
+  const kind = freezeKind(freeze)
+  const Icon = kind === "Change freeze" ? LockIcon : WrenchIcon
   return (
     <Tooltip>
       <TooltipTrigger
         render={
-          <span className="flex min-w-0 items-center gap-1 rounded-md border border-warning/40 bg-warning/15 px-1.5 py-1 text-left text-[11px] leading-tight font-medium text-warning-text" />
+          <span className="flex min-w-0 items-center gap-1 rounded-md border border-warning/40 bg-warning/15 px-1.5 py-1 text-left text-2xs leading-tight font-medium text-warning-text" />
         }
       >
-        <LockIcon className="size-3 shrink-0" />
+        <Icon className="size-3 shrink-0" aria-label={kind} />
         <span className="truncate">{freeze.name}</span>
-        <span className="ml-auto shrink-0 font-mono text-[10px] font-normal opacity-80">
+        <span className="ml-auto shrink-0 font-mono text-3xs font-normal opacity-80">
           {span}
         </span>
       </TooltipTrigger>
       <TooltipContent side="bottom" className="max-w-64">
         <p className="font-medium">{freeze.name}</p>
+        <p className="text-xs opacity-80">{kind}</p>
         <p className="text-xs opacity-80">{freeze.scope}</p>
         <p className="text-xs opacity-80">{freeze.reason}</p>
       </TooltipContent>
@@ -302,20 +349,19 @@ function RunChip({
   frozen: FreezeWindow[]
 }) {
   const { schedule: s, times } = group
-  const agent = getDeployedAgent(s.agentId)
   const skipped = times.filter((t) =>
     frozen.some((f) => t >= f.start && t < f.end)
   ).length
   const color = agentColor(s.agentId)
   const label =
-    times.length <= 2 ? times.map(fmtClock).join(", ") : `×${times.length}`
+    times.length <= 2 ? times.map(formatClock).join(", ") : `×${times.length}`
   return (
     <Popover>
       <PopoverTrigger
         render={
           <button
             type="button"
-            className="flex min-w-0 items-center gap-1.5 rounded-md border px-1.5 py-1 text-left text-[11px] leading-tight transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
+            className="flex min-w-0 items-center gap-1.5 rounded-md border px-1.5 py-1 text-left text-2xs leading-tight transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
             style={{
               borderColor: `color-mix(in oklab, ${color} 35%, transparent)`,
               background: `color-mix(in oklab, ${color} 10%, transparent)`,
@@ -329,7 +375,7 @@ function RunChip({
           style={{ background: color }}
         />
         <span className="truncate">{s.name}</span>
-        <span className="ml-auto shrink-0 font-mono text-[10px] text-muted-foreground tabular-nums">
+        <span className="ml-auto shrink-0 font-mono text-3xs text-muted-foreground tabular-nums">
           {label}
         </span>
       </PopoverTrigger>
@@ -370,15 +416,15 @@ function RunChip({
                       )}
                     >
                       <ClockIcon className="size-2.5" />
-                      {fmtClock(t)}
+                      {formatClock(t)}
                     </span>
                   )
                 })}
               </span>
             ) : (
               <>
-                {times.length} runs · {fmtClock(times[0])} to{" "}
-                {fmtClock(times[times.length - 1])}
+                {times.length} runs · {formatClock(times[0])} to{" "}
+                {formatClock(times[times.length - 1])}
                 {skipped > 0 && (
                   <span className="block text-warning-text">
                     {skipped} skipped inside a freeze window
@@ -388,22 +434,18 @@ function RunChip({
             )}
           </dd>
           <dt className="text-muted-foreground">Avg duration</dt>
-          <dd className="tabular-nums">{fmtRunDuration(s.avgDurationMs)}</dd>
+          <dd className="tabular-nums">
+            {s.avgDurationMs
+              ? formatDurationMs(s.avgDurationMs)
+              : "No runs yet"}
+          </dd>
           <dt className="text-muted-foreground">Owner</dt>
           <dd>
             <UserChip userId={s.ownerId} size="xs" />
           </dd>
         </dl>
         <div className="flex items-center justify-end gap-2">
-          <Button
-            size="xs"
-            variant="outline"
-            onClick={() =>
-              toast.success("Run queued", {
-                description: `${s.name} starts within a minute on ${agent?.name}.`,
-              })
-            }
-          >
+          <Button size="xs" variant="outline" onClick={() => runScheduleNow(s)}>
             <PlayIcon /> Run now
           </Button>
         </div>

@@ -1,24 +1,13 @@
 import type { Metadata } from "next"
-import Link from "next/link"
 import {
-  BellIcon,
-  BookOpenIcon,
   ClockIcon,
-  FileDownIcon,
-  GitBranchIcon,
   LinkIcon,
-  LightbulbIcon,
-  PrinterIcon,
   RadioIcon,
-  ServerIcon,
-  StarIcon,
   TimerIcon,
   UserIcon,
-  UserPlusIcon,
   UsersIcon,
 } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { ActivityStream } from "@/components/record/activity-stream"
 import { MetaItem, RecordHeader } from "@/components/record/record-header"
@@ -27,10 +16,6 @@ import { RecordNotFound } from "@/components/record/record-not-found"
 import { RecordSection, SummaryRow } from "@/components/record/record-section"
 import { RecordTabs } from "@/components/record/record-tabs"
 import { RelatedList } from "@/components/record/related-list"
-import {
-  RelatedRecordCard,
-  RelatedRecordEmpty,
-} from "@/components/record/related-record-card"
 import { SlaProgress } from "@/components/record/sla-progress"
 import { DetailList } from "@/components/shared/detail-list"
 import {
@@ -43,16 +28,21 @@ import { impactLabels, slaTargetHours, urgencyLabels } from "@/lib/constants"
 import {
   alerts,
   buildActivity,
-  changes,
   getCi,
   getGroup,
   getIncident,
-  getProblem,
   incidents,
   knowledgeArticles,
 } from "@/lib/data"
 import { formatDateTime, timeAgo } from "@/lib/format"
-import { IncidentActions } from "@/features/incidents/incident-actions"
+import {
+  IncidentActions,
+  IncidentBadges,
+} from "@/features/incidents/incident-actions"
+import {
+  IncidentRelatedRecords,
+  IncidentWatchers,
+} from "@/features/incidents/incident-related-actions"
 import { RecordAiInsights } from "@/components/ai/record-ai-insights"
 
 export async function generateMetadata({
@@ -81,12 +71,6 @@ export default async function IncidentPage({
     )
 
   const ci = getCi(incident.ciId)
-  const problem = incident.problemId
-    ? getProblem(incident.problemId)
-    : undefined
-  const change = incident.changeId
-    ? changes.find((c) => c.number === incident.changeId)
-    : undefined
   const relatedAlerts = alerts.filter(
     (a) =>
       a.incidentNumber === incident.number ||
@@ -108,7 +92,6 @@ export default async function IncidentPage({
           (incident.category === "Security" ? "Security" : "IT")
     )
     .slice(0, 3)
-  const closed = ["Resolved", "Closed", "Canceled"].includes(incident.state)
   const slaTone = incident.slaBreached
     ? "danger"
     : incident.resolved
@@ -125,12 +108,7 @@ export default async function IncidentPage({
         badges={
           <>
             <PriorityBadge priority={incident.priority} />
-            <StateBadge state={incident.state} />
-            {incident.majorIncident && (
-              <span className="inline-flex h-5 items-center gap-1 rounded-full border border-destructive/30 bg-destructive/10 px-2 text-xs font-medium text-destructive">
-                <StarIcon className="size-3 fill-current" /> Major incident
-              </span>
-            )}
+            <IncidentBadges incident={incident} />
           </>
         }
         meta={
@@ -164,40 +142,6 @@ export default async function IncidentPage({
           </>
         }
         actions={<IncidentActions incident={incident} />}
-        overflow={[
-          {
-            label: "Create problem",
-            icon: <LightbulbIcon />,
-            message: "Problem PRB0040013 created and linked",
-          },
-          {
-            label: "Create change",
-            icon: <GitBranchIcon />,
-            message: "Change CHG0031126 created and linked",
-          },
-          {
-            label: "Create knowledge article",
-            icon: <BookOpenIcon />,
-            message: "Draft article created from this incident",
-          },
-          {
-            label: "Follow",
-            icon: <BellIcon />,
-            message: `You now follow ${incident.number}`,
-            separatorBefore: true,
-          },
-          { label: "Copy link", icon: <LinkIcon />, message: "Link copied" },
-          {
-            label: "Print",
-            icon: <PrinterIcon />,
-            message: "Preparing print view…",
-          },
-          {
-            label: "Export as PDF",
-            icon: <FileDownIcon />,
-            message: "Export queued — we’ll notify you when it’s ready",
-          },
-        ]}
       />
 
       <RecordLayout
@@ -233,54 +177,9 @@ export default async function IncidentPage({
               title="Related records"
               icon={<LinkIcon />}
               size="sm"
-              action={
-                <Button variant="ghost" size="xs">
-                  Link
-                </Button>
-              }
               contentClassName="flex flex-col gap-2"
             >
-              {problem ? (
-                <RelatedRecordCard
-                  number={problem.number}
-                  type="Problem"
-                  title={problem.shortDescription}
-                  href={`/itsm/problems/${problem.number}`}
-                  state={problem.state}
-                  icon={<LightbulbIcon />}
-                />
-              ) : (
-                <RelatedRecordEmpty>
-                  No problem linked.{" "}
-                  <Link
-                    href="/itsm/problems"
-                    className="font-medium text-foreground underline-offset-4 hover:underline"
-                  >
-                    Find a matching problem
-                  </Link>
-                </RelatedRecordEmpty>
-              )}
-              {change && (
-                <RelatedRecordCard
-                  number={change.number}
-                  type="Change"
-                  title={change.shortDescription}
-                  href={`/itsm/changes/${change.number}`}
-                  state={change.state}
-                  icon={<GitBranchIcon />}
-                  meta={`Planned ${formatDateTime(change.plannedStart)}`}
-                />
-              )}
-              {ci && (
-                <RelatedRecordCard
-                  number={ci.id.toUpperCase()}
-                  type={ci.class}
-                  title={ci.name}
-                  state={ci.status}
-                  icon={<ServerIcon />}
-                  meta={`${ci.environment} · ${ci.businessCriticality}`}
-                />
-              )}
+              <IncidentRelatedRecords incident={incident} />
             </RecordSection>
 
             <RecordSection
@@ -310,7 +209,7 @@ export default async function IncidentPage({
                         userId={incident.assignedToId}
                         showTitle
                         size="md"
-                        fallback="Unassigned — pick up from the queue"
+                        fallback="Unassigned. Pick up from the queue"
                       />
                     ),
                   },
@@ -329,16 +228,7 @@ export default async function IncidentPage({
                 ]}
               />
               <Separator />
-              <div className="flex flex-col gap-2">
-                <span className="text-xs font-medium text-muted-foreground">
-                  Watch list
-                </span>
-                <UserChip userId="u-001" size="xs" />
-                <UserChip userId="u-002" size="xs" />
-                <Button variant="outline" size="sm" className="mt-1 w-full">
-                  <UserPlusIcon /> Add watcher
-                </Button>
-              </div>
+              <IncidentWatchers incident={incident} />
             </RecordSection>
           </>
         }
@@ -380,14 +270,7 @@ export default async function IncidentPage({
           </p>
         </RecordSection>
 
-        <RecordSection
-          title="Details"
-          action={
-            <Button variant="ghost" size="xs" disabled={closed}>
-              Edit
-            </Button>
-          }
-        >
+        <RecordSection title="Details">
           <DetailList
             columns={2}
             items={[
@@ -396,7 +279,7 @@ export default async function IncidentPage({
                 value: <UserChip userId={incident.callerId} />,
               },
               {
-                label: "Configuration item",
+                label: "Affected service",
                 value: ci ? (
                   <span className="inline-flex items-center gap-1.5">
                     {ci.name}
@@ -454,10 +337,10 @@ export default async function IncidentPage({
               content: (
                 <RelatedList
                   title="Correlated alerts"
-                  description="Open alerts on the same configuration item, plus alerts that created this incident."
+                  description="Open alerts on the affected service, plus alerts that created this incident."
                   rows={relatedAlerts}
                   getKey={(a) => a.number}
-                  getHref={() => "/itom/alerts"}
+                  getHref={(a) => `/itom/alerts?alert=${a.number}`}
                   emptyMessage="No alerts are correlated with this incident."
                   viewAllHref="/itom/alerts"
                   columns={[

@@ -5,14 +5,15 @@
 
 export type DiffOpType = "equal" | "add" | "remove"
 
-export interface DiffOp {
-  type: DiffOpType
-  line: string
-  /** 1-based line number in the "before" text (equal / remove). */
-  a?: number
-  /** 1-based line number in the "after" text (equal / add). */
-  b?: number
-}
+/**
+ * One diff line. `a` is the 1-based line number in the "before" text, `b` in
+ * the "after" text; the union makes sure each op carries exactly the numbers
+ * its side has.
+ */
+export type DiffOp =
+  | { type: "equal"; line: string; a: number; b: number }
+  | { type: "remove"; line: string; a: number }
+  | { type: "add"; line: string; b: number }
 
 export interface DiffStats {
   added: number
@@ -30,7 +31,7 @@ export function splitLines(text: string): string[] {
   return text.replace(/\r\n/g, "\n").split("\n")
 }
 
-/** Line-level diff of `before` → `after`. */
+/** Line-level diff of `before` to `after`. */
 export function diffLines(before: string, after: string): DiffOp[] {
   const a = splitLines(before)
   const b = splitLines(after)
@@ -82,6 +83,16 @@ export function diffStats(ops: DiffOp[]): DiffStats {
   return s
 }
 
+/** Line number on the "before" side, when the op has one. */
+export function beforeLine(op: DiffOp) {
+  return op.type === "add" ? undefined : op.a
+}
+
+/** Line number on the "after" side, when the op has one. */
+export function afterLine(op: DiffOp) {
+  return op.type === "remove" ? undefined : op.b
+}
+
 /**
  * Pairs removed and added runs so they sit next to each other in a two-column
  * view. Unpaired lines leave the opposite cell empty.
@@ -93,17 +104,18 @@ export function toSideBySide(ops: DiffOp[]): SideBySideRow[] {
     const op = ops[k]
     if (op.type === "equal") {
       rows.push({
-        left: { n: op.a!, line: op.line, type: "equal" },
-        right: { n: op.b!, line: op.line, type: "equal" },
+        left: { n: op.a, line: op.line, type: "equal" },
+        right: { n: op.b, line: op.line, type: "equal" },
       })
       k++
       continue
     }
-    const removed: DiffOp[] = []
-    const added: DiffOp[] = []
+    const removed: Extract<DiffOp, { type: "remove" }>[] = []
+    const added: Extract<DiffOp, { type: "add" }>[] = []
     while (k < ops.length && ops[k].type !== "equal") {
-      if (ops[k].type === "remove") removed.push(ops[k])
-      else added.push(ops[k])
+      const cur = ops[k]
+      if (cur.type === "remove") removed.push(cur)
+      else if (cur.type === "add") added.push(cur)
       k++
     }
     const len = Math.max(removed.length, added.length)
@@ -111,8 +123,8 @@ export function toSideBySide(ops: DiffOp[]): SideBySideRow[] {
       const l = removed[r]
       const rt = added[r]
       rows.push({
-        left: l ? { n: l.a!, line: l.line, type: "remove" } : undefined,
-        right: rt ? { n: rt.b!, line: rt.line, type: "add" } : undefined,
+        left: l ? { n: l.a, line: l.line, type: "remove" } : undefined,
+        right: rt ? { n: rt.b, line: rt.line, type: "add" } : undefined,
       })
     }
   }

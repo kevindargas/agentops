@@ -1,9 +1,17 @@
 "use client"
 
 import * as React from "react"
+import { useRouter } from "next/navigation"
 import { PlusIcon } from "lucide-react"
 import { toast } from "sonner"
 
+import { cn } from "cn"
+
+import {
+  SheetBody,
+  SheetFooterActions,
+  sheetWidths,
+} from "@/components/shared/sheet-frame"
 import { Button } from "@/components/ui/button"
 import {
   Field,
@@ -23,18 +31,18 @@ import {
   Sheet,
   SheetContent,
   SheetDescription,
-  SheetFooter,
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
 import { Textarea } from "@/components/ui/textarea"
-import { deployedAgents, getDeployedAgent } from "@/lib/data"
+import { deployedAgents, getDeployedAgent } from "@/lib/data/agentops"
 import {
-  extractVariables,
   estimateTokens,
+  extractVariables,
   promptTypeLabel,
   type PromptType,
 } from "@/lib/data/prompts"
+import { createPrompt } from "./prompt-store"
 import { VariableChip } from "./shared"
 
 const agentItems = deployedAgents.map((a) => ({ value: a.id, label: a.name }))
@@ -51,7 +59,8 @@ const placeholder = `You are {{agent_name}} for the {{company}} service desk.
 ## Rules
 - Ground every claim in {{knowledge_base}}.`
 
-export function NewPromptButton() {
+export function NewPromptButton({ size }: { size?: "sm" | "default" }) {
+  const router = useRouter()
   const [open, setOpen] = React.useState(false)
   const [name, setName] = React.useState("")
   const [agentId, setAgentId] = React.useState(deployedAgents[0]?.id ?? "")
@@ -68,21 +77,39 @@ export function NewPromptButton() {
   }
 
   const save = () => {
-    const agent = getDeployedAgent(agentId)
-    toast.success(`Prompt "${name.trim()}" created as draft v1`, {
-      description: `${promptTypeLabel[type]} for ${agent?.name ?? "agent"} · ${variables.length} ${variables.length === 1 ? "variable" : "variables"} · ~${estimateTokens(template)} tokens`,
+    const agent = getDeployedAgent(agentId) ?? deployedAgents[0]
+    const prompt = createPrompt({
+      name: name.trim(),
+      agentId: agent.id,
+      type,
+      template,
+      modelId: agent.modelId,
+      params: agent.params,
+      description: `${promptTypeLabel[type]} for ${agent.name}.`,
     })
+    toast.success(
+      `${prompt.name} created as draft v${prompt.versions[0].number}`,
+      {
+        description: `${promptTypeLabel[type]} for ${agent.name} · ${variables.length} ${variables.length === 1 ? "variable" : "variables"} · ~${estimateTokens(template)} tokens. It is at the top of the list for this session.`,
+        action: {
+          label: "Open",
+          onClick: () => router.push(`/agentops/prompts/${prompt.id}`),
+        },
+      }
+    )
     reset()
     setOpen(false)
   }
 
   return (
     <>
-      <Button size="sm" onClick={() => setOpen(true)}>
+      <Button size={size} onClick={() => setOpen(true)}>
         <PlusIcon /> New prompt
       </Button>
       <Sheet open={open} onOpenChange={setOpen}>
-        <SheetContent className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-xl">
+        <SheetContent
+          className={cn(sheetWidths.editor, "flex flex-col gap-0 p-0")}
+        >
           <SheetHeader className="border-b px-6 py-5">
             <SheetTitle>New prompt</SheetTitle>
             <SheetDescription>
@@ -91,7 +118,7 @@ export function NewPromptButton() {
               placeholders.
             </SheetDescription>
           </SheetHeader>
-          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+          <SheetBody>
             <FieldGroup>
               <Field>
                 <FieldLabel htmlFor="prompt-name">Name</FieldLabel>
@@ -158,7 +185,7 @@ export function NewPromptButton() {
                   {variables.length === 0 ? (
                     <>
                       Use <code className="font-mono">{"{{variable}}"}</code>{" "}
-                      for runtime inputs — they appear here as you type.
+                      for runtime inputs; they appear here as you type.
                     </>
                   ) : (
                     <>
@@ -175,21 +202,14 @@ export function NewPromptButton() {
                 </FieldDescription>
               </Field>
             </FieldGroup>
-          </div>
-          <SheetFooter className="flex-row justify-end gap-2 border-t px-6 py-4">
-            <Button
-              variant="outline"
-              onClick={() => {
-                reset()
-                setOpen(false)
-              }}
-            >
-              Cancel
-            </Button>
-            <Button disabled={!canSave} onClick={save}>
-              Create draft
-            </Button>
-          </SheetFooter>
+          </SheetBody>
+          <SheetFooterActions
+            primary={
+              <Button disabled={!canSave} onClick={save}>
+                Create draft
+              </Button>
+            }
+          />
         </SheetContent>
       </Sheet>
     </>

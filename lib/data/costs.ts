@@ -1,10 +1,10 @@
 /**
- * Costs & budgets — FinOps view over the agent fleet. Daily series are derived
+ * Costs & budgets: FinOps view over the agent fleet. Daily series are derived
  * from the deployed agents' current run-rate so the numbers agree with the
  * fleet overview; everything is deterministic and anchored to NOW.
  */
 
-import { deployedAgents } from "./agentops"
+import { deployedAgents, modelRecommendations } from "./agentops"
 import { createRng, daysAgo, NOW } from "./seed"
 
 /* -------------------------------------------------------------------------- */
@@ -72,12 +72,13 @@ export interface AgentCost {
   costPerRequest: number
   /** % change in cost versus the previous 7 days. */
   deltaPct: number
-  /** Share of fleet cost, 0–100. */
+  /** Share of fleet cost, 0 to 100. */
   share: number
 }
 
 export type SavingsKind =
   "route" | "caching" | "output-tokens" | "batch" | "commitment"
+export type SavingsStatus = "Open" | "Applied" | "Dismissed"
 
 export interface SavingsOpportunity {
   id: string
@@ -89,7 +90,7 @@ export interface SavingsOpportunity {
   effort: "low" | "medium"
   /** Related model recommendation, when one exists. */
   recommendationId?: string
-  status: "Open" | "Applied" | "Dismissed"
+  status: SavingsStatus
 }
 
 /* -------------------------------------------------------------------------- */
@@ -122,15 +123,31 @@ export const modelPricing: Record<
 const r = createRng(7651)
 const DAYS = 30
 
-/** How each agent's traffic is split across gateway providers. */
-const providerMix: Record<string, Record<string, number>> = {
-  "agt-support-triage": { "prv-anthropic": 0.85, "prv-bedrock": 0.15 },
+/**
+ * How each agent's spend is split across gateway providers. Cohere carries
+ * the reranker calls of the retrieval-heavy agents; the vLLM cluster is
+ * disconnected, so Alert Correlator falls through entirely to OpenRouter.
+ */
+export const providerMix: Record<string, Record<string, number>> = {
+  "agt-support-triage": {
+    "prv-anthropic": 0.83,
+    "prv-bedrock": 0.15,
+    "prv-cohere": 0.02,
+  },
   "agt-it-helpdesk": { "prv-openai": 0.6, "prv-azure": 0.4 },
   "agt-ops-analyst": { "prv-anthropic": 1 },
   "agt-change-risk": { "prv-anthropic": 0.7, "prv-bedrock": 0.3 },
-  "agt-hr-answers": { "prv-vertex": 0.92, "prv-azure": 0.08 },
-  "agt-alert-correlator": { "prv-openrouter": 0.8, "prv-vllm": 0.2 },
-  "agt-kb-curator": { "prv-anthropic": 0.5, "prv-bedrock": 0.5 },
+  "agt-hr-answers": {
+    "prv-vertex": 0.9,
+    "prv-azure": 0.08,
+    "prv-cohere": 0.02,
+  },
+  "agt-alert-correlator": { "prv-openrouter": 1 },
+  "agt-kb-curator": {
+    "prv-anthropic": 0.48,
+    "prv-bedrock": 0.5,
+    "prv-cohere": 0.02,
+  },
   "agt-finance-copilot": { "prv-azure": 1 },
 }
 
@@ -194,12 +211,13 @@ export const costDaily: CostDay[] = Array.from({ length: DAYS }, (_, i) => {
 
   for (const a of deployedAgents) {
     if (a.metrics.costPerDay === 0) continue
-    // Today is partial: the fleet clock sits mid-afternoon.
-    const partial = offset === 0 ? 0.62 : 1
+    // Today is the agent's live run-rate (`metrics.costPerDay`, `requests24h`,
+    // `tokens24h`) with no noise, so every page agrees on today's number.
+    const today = offset === 0
     const drift = 1 + (agentDrift[a.id] ?? 0) * (i - (DAYS - 1))
     const seasonal = weekend ? 0.55 : 1
     const noise = 1 + (r() - 0.5) * 0.16
-    const factor = partial * seasonal * noise * drift
+    const factor = today ? 1 : seasonal * noise * drift
     const c = Math.round(a.metrics.costPerDay * factor * 100) / 100
     const req = Math.round(a.metrics.requests24h * factor)
     const tokens = Math.round(a.metrics.tokens24h * factor)
@@ -246,6 +264,31 @@ const sumBy = (rows: CostDay[], pick: (d: CostDay) => number) =>
 
 const last7 = costDaily.slice(-7)
 const prev7 = costDaily.slice(-14, -7)
+
+/** Today's row of `costDaily`; equals the live fleet run-rate. */
+export const costToday: CostDay = costDaily[costDaily.length - 1]
+
+/** Today's spend for one agent (same figure as `metrics.costPerDay`). */
+export function spendTodayByAgent(agentId: string) {
+  return costToday.byAgent[agentId] ?? 0
+}
+
+/** Today's spend routed through one provider. */
+export function spendTodayByProvider(providerId: string) {
+  return costToday.byProvider[providerId] ?? 0
+}
+
+/** Spend per provider over the whole 30-day series. */
+export function spendByProvider(rows: CostDay[] = costDaily) {
+  const out: Record<string, number> = {}
+  for (const d of rows)
+    for (const [pid, v] of Object.entries(d.byProvider))
+      out[pid] = Math.round(((out[pid] ?? 0) + v) * 100) / 100
+  return out
+}
+
+/** Window (in days) the `costByAgent` allocation table sums over. */
+export const costByAgentWindowDays = 7
 
 const agentTokens = (agentId: string, rows: CostDay[]) => {
   const a = deployedAgents.find((x) => x.id === agentId)
@@ -333,9 +376,11 @@ function budget(
     period === "daily"
       ? history[history.length - 1].spent
       : Math.round(mtd.reduce((s, h) => s + h.spent, 0) * 100) / 100
+  // Daily budgets compare against the full-day run-rate, which is what
+  // `costDaily` records for today, so no extrapolation is needed.
   const projected =
     period === "daily"
-      ? spent / Math.max(0.2, todayFraction)
+      ? spent
       : (spent / Math.max(1, dayOfMonth - 1 + todayFraction)) * daysInMonth
   const status: BudgetStatus =
     spent >= limit
@@ -407,7 +452,7 @@ export const budgets: Budget[] = [
     180,
     [80, 100],
     "Throttle",
-    "u-003",
+    "u-002",
     3
   ),
   budget(
@@ -429,18 +474,18 @@ export const budgets: Budget[] = [
     3400,
     [50, 80, 100],
     "Alert only",
-    "u-005",
+    "u-020",
     20
   ),
   budget(
     "bud-006",
-    "HR Answers · monthly",
+    "Policy Answers · monthly",
     agent("agt-hr-answers"),
     "monthly",
     800,
     [80, 100],
     "Alert only",
-    "u-009",
+    "u-007",
     9
   ),
   budget(
@@ -462,7 +507,7 @@ export const budgets: Budget[] = [
     6,
     [80, 100],
     "Throttle",
-    "u-011",
+    "u-018",
     2
   ),
   budget(
@@ -473,7 +518,7 @@ export const budgets: Budget[] = [
     400,
     [50, 80, 100],
     "Alert only",
-    "u-011",
+    "u-018",
     30
   ),
   budget(
@@ -495,7 +540,7 @@ export const budgets: Budget[] = [
     400,
     [50, 80, 100],
     "Pause agent",
-    "u-012",
+    "u-016",
     1
   ),
   budget(
@@ -526,19 +571,32 @@ export function getBudget(id: string) {
   return budgets.find((b) => b.id === id)
 }
 
+/** Budgets that are exceeded or projected to breach (stat cards, badges). */
+export function budgetsAtRiskCount(list: Budget[] = budgets) {
+  return list.filter((b) => b.status !== "On track").length
+}
+
 /* -------------------------------------------------------------------------- */
 /* Savings opportunities                                                       */
 /* -------------------------------------------------------------------------- */
+
+/** Monthly savings quoted by the linked recommendation, when it has one. */
+function recommendedSavings(recommendationId: string, fallback: number) {
+  return (
+    modelRecommendations.find((r) => r.id === recommendationId)
+      ?.savingsPerMonth ?? fallback
+  )
+}
 
 export const savingsOpportunities: SavingsOpportunity[] = [
   {
     id: "sav-001",
     title: "Route low-complexity intents on Support Triage to Haiku 5.5",
     summary:
-      "41% of triage traffic is password resets and status lookups. Shadow evals show Haiku matches Sonnet quality on those intents.",
+      "61% of triage traffic is how-to questions with grounded score above 0.9. Shadow evals show Haiku matches Sonnet quality on that slice.",
     agentId: "agt-support-triage",
     kind: "route",
-    estimatedMonthlySavings: 1840,
+    estimatedMonthlySavings: recommendedSavings("rec-002", 1840),
     effort: "low",
     recommendationId: "rec-002",
     status: "Open",
@@ -561,7 +619,7 @@ export const savingsOpportunities: SavingsOpportunity[] = [
       "p95 completion length is 2,900 tokens; the 8,192 cap only matters for 1.2% of runs and output tokens are 5x input price on Fable.",
     agentId: "agt-ops-analyst",
     kind: "output-tokens",
-    estimatedMonthlySavings: 610,
+    estimatedMonthlySavings: recommendedSavings("rec-005", 610),
     effort: "low",
     recommendationId: "rec-005",
     status: "Open",

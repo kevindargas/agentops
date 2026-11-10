@@ -7,7 +7,6 @@
  */
 
 import { models, type AiModel } from "@/lib/ai/agents"
-import type { Autonomy } from "@/lib/ai/agents"
 import type { DeployedAgent, ModelParams, ReasoningEffort } from "@/lib/types"
 import { deployedAgents, getDeployedAgent } from "./agentops"
 import { createRng, int, pick, type Rng } from "./seed"
@@ -30,7 +29,7 @@ export interface RunMetrics {
   tokensOut: number
   /** USD. */
   cost: number
-  /** 0–100 heuristic quality estimate. */
+  /** 0 to 100 heuristic quality estimate. */
   quality: number
 }
 
@@ -87,6 +86,12 @@ export const modelPricing: Record<string, { input: number; output: number }> = {
   "deepseek/deepseek-v3.2": { input: 0.28, output: 0.42 },
   "x-ai/grok-4.7": { input: 3, output: 15 },
 }
+
+/**
+ * Same table under a name that does not collide with `modelPricing` in
+ * lib/data/costs.ts when both modules are re-exported from the barrel.
+ */
+export const playgroundModelPricing = modelPricing
 
 const fallbackPricing = { input: 2, output: 8 }
 
@@ -253,19 +258,6 @@ export function defaultPlaygroundConfig(
   }
 }
 
-/** Deployed version plus a couple of synthetic drafts to compare against. */
-export function promptVersionOptions(agent: DeployedAgent) {
-  const n = Number(agent.promptVersion.replace(/\D/g, "")) || 1
-  return [
-    { value: agent.promptVersion, label: `${agent.promptVersion} · deployed` },
-    { value: `p-${n + 1}-draft`, label: `p-${n + 1}-draft · tighter tone` },
-    {
-      value: `p-${n + 2}-draft`,
-      label: `p-${n + 2}-draft · explicit citations`,
-    },
-  ]
-}
-
 /** Example JSON schema shown when response format is `json_schema`. */
 export const sampleJsonSchema = JSON.stringify(
   {
@@ -384,6 +376,9 @@ export function extractVariables(prompt: string) {
   return out
 }
 
+/** Barrel-safe alias of `extractVariables` (prompts.ts exports one too). */
+export const extractPlaygroundVariables = extractVariables
+
 export function renderPrompt(prompt: string, vars: Record<string, string>) {
   return prompt.replace(VAR_RE, (_, name: string) =>
     vars[name] !== undefined && vars[name] !== "" ? vars[name] : `{{${name}}}`
@@ -422,7 +417,7 @@ const samplePrompts: Record<string, SamplePrompt> = {
   },
   "agt-change-risk": {
     text: "Assess the risk of change {{change}} scheduled for {{window}}. Consider blast radius, open incidents and prior failures. Return a CAB-ready summary.",
-    variables: { change: "CHG0041237", window: "Sat 08 Nov 02:00–04:00 UTC" },
+    variables: { change: "CHG0041237", window: "Sat 08 Nov 02:00-04:00 UTC" },
   },
   "agt-hr-answers": {
     text: 'Employee in {{country}} asks: "{{question}}"\nAnswer from policy, redact anything sensitive and open a case if a decision is needed.',
@@ -601,7 +596,7 @@ const toolSims: Record<string, ToolSim> = {
     output: {
       type: "Normal",
       ci: "payments-db-primary",
-      window: "Sat 02:00–04:00 UTC",
+      window: "Sat 02:00-04:00 UTC",
       cab_required: true,
       implementer: pick(rng, ["DBA team", "Platform SRE"]),
     },
@@ -716,11 +711,11 @@ const answerTemplates: Record<string, (tools: SimulatedToolCall[]) => string> =
   {
     "agt-support-triage": (t) => {
       const ticket = findOut(t, "create_ticket", "number") ?? "a new ticket"
-      return `**Classification:** Access · SSO session · *P2*\n\nThe account is on the Enterprise plan with Okta SAML. The symptom matches KB0010421 (signing certificate rotation on the IdP invalidates existing sessions).\n\n**Draft reply**\n\n> Hi — thanks for flagging this. We can see sessions for your tenant are being rejected right after SSO, which usually points to a recent certificate change on your identity provider. We've opened ${ticket} with our Identity team and will update you within 30 minutes. In the meantime, an admin can re-upload the IdP metadata under *Settings → SSO* to restore access immediately.`
+      return `**Classification:** Access · SSO session · *P2*\n\nThe account is on the Enterprise plan with Okta SAML. The symptom matches KB0010421 (signing certificate rotation on the IdP invalidates existing sessions).\n\n**Draft reply**\n\n> Hi, thanks for flagging this. We can see sessions for your tenant are being rejected right after SSO, which usually points to a recent certificate change on your identity provider. We've opened ${ticket} with our Identity team and will update you within 30 minutes. In the meantime, an admin can re-upload the IdP metadata under *Settings → SSO* to restore access immediately.`
     },
     "agt-it-helpdesk": (t) => {
       const ritm = findOut(t, "request_access", "request") ?? "RITM0007421"
-      return `Done — here's what I did:\n\n1. **Unlocked the account** and issued a temporary password (expires in 60 min, MFA required on first login).\n2. **Requested read access** to the finance share as ${ritm}; the data owner has been notified and the request is pending approval.\n\nI did not create a ticket since both steps were self-service. Reply if the finance share isn't visible after approval.`
+      return `Done. Here's what I did:\n\n1. **Unlocked the account** and issued a temporary password (expires in 60 min, MFA required on first login).\n2. **Requested read access** to the finance share as ${ritm}; the data owner has been notified and the request is pending approval.\n\nI did not create a ticket since both steps were self-service. Reply if the finance share isn't visible after approval.`
     },
     "agt-ops-analyst": (t) => {
       const rows = (findOut(t, "run_sql", "rows") as
@@ -734,18 +729,18 @@ const answerTemplates: Record<string, (tools: SimulatedToolCall[]) => string> =
       return `Over the last 7 days, **${rows[0].service}** breached SLA most often.\n\n| Service | Breaches | MTTR |\n| --- | ---: | ---: |\n${table}\n\nSource: \`sem-sla-breach\` joined to \`sem-service\`; MTTR is the mean of \`mttr_minutes\` per breach.`
     },
     "agt-change-risk": () =>
-      `**Risk: High** (score 74/100)\n\n- **Blast radius:** tier-1 CI with 11 dependents across Checkout, Refunds and Billing.\n- **History:** 1 failed change on this CI in the last 12 months (2026-07-14).\n- **Open incidents:** none open; 1 P1 in the last 30 days.\n- **Window:** Saturday 02:00–04:00 UTC, outside the payments freeze.\n\n**CAB note:** approve with a mandatory rollback rehearsal and a 30-minute post-change validation on the Checkout synthetic.`,
+      `**Risk: High** (score 74/100)\n\n- **Blast radius:** tier-1 CI with 11 dependents across Checkout, Refunds and Billing.\n- **History:** 1 failed change on this CI in the last 12 months (2026-07-14).\n- **Open incidents:** none open; 1 P1 in the last 30 days.\n- **Window:** Saturday 02:00-04:00 UTC, outside the payments freeze.\n\n**CAB note:** approve with a mandatory rollback rehearsal and a 30-minute post-change validation on the Checkout synthetic.`,
     "agt-hr-answers": (t) => {
       const kase = findOut(t, "open_hr_case", "number")
       return `Under **POL-HR-114 (Parental leave, Germany)** you are entitled to up to **3 years of Elternzeit** per child, which can be split into three blocks. You must notify your manager and HR in writing **at least 7 weeks** before the leave starts (13 weeks for leave taken between the child's 3rd and 8th birthday).${kase ? `\n\nI've opened ${kase} so HR can confirm dates and pay (Elterngeld) details with you confidentially.` : ""}`
     },
     "agt-alert-correlator": (t) => {
       const inc = findOut(t, "create_incident", "number") ?? "INC0048841"
-      return `Grouped **31 alerts** across 5 hosts into one episode.\n\n- **Probable root CI:** \`payments-db-primary\` — connection saturation started 90 s before downstream \`http.5xx\` on the API tier.\n- **Suppressed:** 24 duplicate \`cpu.high\` alerts from autoscaled replicas.\n\nProposed **${inc}** (P2, Platform SRE) with all alerts linked.`
+      return `Grouped **31 alerts** across 5 hosts into one episode.\n\n- **Probable root CI:** \`payments-db-primary\`; connection saturation started 90 s before downstream \`http.5xx\` on the API tier.\n- **Suppressed:** 24 duplicate \`cpu.high\` alerts from autoscaled replicas.\n\nProposed **${inc}** (P2, Platform SRE) with all alerts linked.`
     },
     "agt-kb-curator": (t) => {
       const kb = findOut(t, "create_article", "number") ?? "KB0010522"
-      return `Drafted **${kb} — Portal SSO sessions expire immediately after login**.\n\n- **Symptom:** users redirected to login with "session expired" after a successful SSO.\n- **Cause:** expired SAML signing certificate on the IdP.\n- **Fix:** rotate the certificate, re-upload IdP metadata, clear the portal session cache.\n\nNo duplicate found (closest: KB0010421, 0.91 similarity — I linked it as related). Tagged \`sso\`, \`identity\`, \`portal\`.`
+      return `Drafted **${kb}: Portal SSO sessions expire immediately after login**.\n\n- **Symptom:** users redirected to login with "session expired" after a successful SSO.\n- **Cause:** expired SAML signing certificate on the IdP.\n- **Fix:** rotate the certificate, re-upload IdP metadata, clear the portal session cache.\n\nNo duplicate found (closest: KB0010421, 0.91 similarity; I linked it as related). Tagged \`sso\`, \`identity\`, \`portal\`.`
     },
     "agt-finance-copilot": () =>
       `Cloud spend for **FY26 Q3** is **4.2% over budget** overall.\n\n| Business unit | Actual | Budget | Variance |\n| --- | ---: | ---: | ---: |\n| Platform | $1.84M | $1.70M | +8.2% |\n| Data | $0.96M | $0.98M | −2.0% |\n| Product | $0.71M | $0.69M | +2.9% |\n\nEntities queried: \`sem-cloud-spend\`, \`sem-budget\`, \`sem-business-unit\`.`,
@@ -930,94 +925,10 @@ export function simulateRun(
 /* Agent configuration surface                                               */
 /* ------------------------------------------------------------------------ */
 
-export interface AgentOpsConfig {
-  autonomy: Autonomy
-  budgets: {
-    /** USD per day. */
-    dailyCostCap: number
-    /** Spend so far this month, USD. */
-    monthToDate: number
-    maxTokensPerRun: number
-  }
-  guardrails: string[]
-  knowledgeSources: string[]
-  schedule: { label: string; detail: string }
-}
-
-const writeVerbs = /^(create|open|reset|request|update|close|retire)_/
-
-const guardrailPool = [
-  "PII redaction",
-  "Prompt-injection filter",
-  "Toxicity classifier",
-  "Topic allowlist",
-  "Citation required",
-  "Max 3 tool retries",
-]
-
-const knowledgePools: Record<string, string[]> = {
-  "Service Desk": ["Support KB", "Product docs", "Account notes"],
-  "IT Operations": ["Runbooks", "CMDB snapshots", "Alert catalog"],
-  "Change Management": ["Change history", "CMDB snapshots", "CAB minutes"],
-  "People Ops": ["HR policy library", "Benefits FAQ"],
-  Analytics: ["Semantic layer", "Metric definitions", "Finance ledger"],
-}
-
-/** Deterministic autonomy, budgets, guardrails, knowledge and schedule for an agent. */
-export function getAgentOpsConfig(agentId: string): AgentOpsConfig {
-  const agent = getDeployedAgent(agentId) ?? deployedAgents[0]
-  const rng = createRng(hashString(`cfg:${agent.id}`))
-  const writes = agent.tools.some((t) => writeVerbs.test(t))
-  const autonomy: Autonomy =
-    agent.environment === "staging"
-      ? "suggest"
-      : writes
-        ? "approve"
-        : "autonomous"
-
-  const cap = Math.max(
-    50,
-    Math.ceil((agent.metrics.costPerDay * 1.5) / 50) * 50
-  )
-  const dayOfMonth = 5
-  const budgets = {
-    dailyCostCap: cap,
-    monthToDate: Math.round(
-      agent.metrics.costPerDay * dayOfMonth * (0.92 + rng() * 0.1)
-    ),
-    maxTokensPerRun: agent.params.maxOutputTokens * 6 + 8000,
-  }
-
-  const guardrails = [...guardrailPool]
-    .sort(() => rng() - 0.5)
-    .slice(0, int(rng, 2, 4))
-  if (agent.tools.includes("run_sql")) guardrails.unshift("SQL read-only")
-  if (
-    agent.tools.includes("redact_pii") &&
-    !guardrails.includes("PII redaction")
-  )
-    guardrails.unshift("PII redaction")
-
-  const pool =
-    knowledgePools[agent.team] ??
-    (agent.tools.includes("semantic_lookup")
-      ? knowledgePools.Analytics
-      : knowledgePools["Service Desk"])
-  const knowledgeSources = pool.slice(0, int(rng, 1, pool.length))
-
-  const schedule = agent.tools.includes("read_alerts")
-    ? { label: "Every 60 s", detail: "Polls the alert stream; skips when idle" }
-    : agent.tools.includes("create_article")
-      ? {
-          label: "Nightly · 02:00 UTC",
-          detail: "Batch over incidents resolved in the last 24 h",
-        }
-      : agent.tools.includes("read_change")
-        ? { label: "Event-driven", detail: "On change moved to Assess" }
-        : {
-            label: "Event-driven",
-            detail: "On conversation or request created",
-          }
-
-  return { autonomy, budgets, guardrails, knowledgeSources, schedule }
-}
+// Lives in lib/data/agent-config.ts; re-exported here so existing imports keep
+// working. New code should import from "@/lib/data/agent-config".
+export {
+  getAgentOpsConfig,
+  type AgentOpsConfig,
+  type Autonomy,
+} from "./agent-config"

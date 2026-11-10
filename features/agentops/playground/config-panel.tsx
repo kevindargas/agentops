@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { cn } from "cn"
 import {
   ArrowRightIcon,
@@ -39,17 +40,25 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
-import { modelDisplayName } from "@/features/agentops/format"
+import {
+  createVersion,
+  findVersion,
+  promptForAgent,
+  promptStore,
+  versionsForAgent,
+} from "@/features/agentops/prompts/prompt-store"
 import { models, providerMeta, type ModelProvider } from "@/lib/ai/agents"
-import { deployedAgents, getDeployedAgent } from "@/lib/data"
+import { deployedAgents, getDeployedAgent } from "@/lib/data/agentops"
 import {
   cloneParams,
   configToSearchParams,
-  diffParams,
-  promptVersionOptions,
   type PlaygroundConfig,
 } from "@/lib/data/playground"
+import { productionVersion } from "@/lib/data/prompts"
+import { modelDisplayName } from "@/lib/format"
+import { applyConfig, useBaseline } from "./applied-config-store"
 import { ParamEditor } from "./param-editor"
+import { diffAllParams, writePenaltyParams } from "./param-fields"
 
 export interface ConfigPanelProps {
   config: PlaygroundConfig
@@ -73,9 +82,9 @@ const modelItems = models
 const agentItems = deployedAgents.map((a) => ({ value: a.id, label: a.name }))
 
 /**
- * Left-hand "Configuration" panel for the playground: agent, prompt version,
- * model and the full parameter editor, plus a diff against what is deployed
- * and the promote / share actions.
+ * Left-hand "Configuration" panel for the playground: agent, prompt version
+ * (from the Prompt Registry store), model and the full parameter editor, plus
+ * a diff against what is deployed and the save / apply / share actions.
  */
 export function ConfigPanel({
   config,
@@ -84,35 +93,39 @@ export function ConfigPanel({
   className,
 }: ConfigPanelProps) {
   const id = React.useId()
+  const router = useRouter()
   const agent = getDeployedAgent(config.agentId) ?? deployedAgents[0]
-  const pvOptions = React.useMemo(() => promptVersionOptions(agent), [agent])
-  const pvItems = React.useMemo(
-    () =>
-      pvOptions.some((o) => o.value === config.promptVersion)
-        ? pvOptions
-        : [
-            ...pvOptions,
-            { value: config.promptVersion, label: config.promptVersion },
-          ],
-    [pvOptions, config.promptVersion]
-  )
+  const prompts = promptStore.use()
+  const baseline = useBaseline(agent)
+  const base = baseline.config
 
-  const paramDiff = diffParams(config.params, agent.params)
-  const modelChanged = config.modelId !== agent.modelId
-  const pvChanged = config.promptVersion !== agent.promptVersion
+  const pvItems = React.useMemo(() => {
+    const items = versionsForAgent(agent.id, prompts).map((v) => ({
+      value: v.id,
+      label: `${v.id} · ${v.label}${v.id === agent.promptVersion ? " · deployed" : ""}`,
+    }))
+    return items.some((o) => o.value === config.promptVersion)
+      ? items
+      : [...items, { value: config.promptVersion, label: config.promptVersion }]
+  }, [agent.id, agent.promptVersion, prompts, config.promptVersion])
+
+  const paramDiff = diffAllParams(config.params, base.params)
+  const modelChanged = config.modelId !== base.modelId
+  const pvChanged = config.promptVersion !== base.promptVersion
   const diffCount =
     paramDiff.length + (modelChanged ? 1 : 0) + (pvChanged ? 1 : 0)
+  const baselineLabel = baseline.applied ? "applied" : "deployed"
 
   const reset = () =>
     onChange({
       ...config,
-      modelId: agent.modelId,
-      promptVersion: agent.promptVersion,
-      params: cloneParams(agent.params),
+      modelId: base.modelId,
+      promptVersion: base.promptVersion,
+      params: cloneParams(base.params),
     })
 
   const share = async () => {
-    const sp = configToSearchParams(config)
+    const sp = writePenaltyParams(configToSearchParams(config), config.params)
     const url = `${window.location.origin}/agentops/playground?${sp.toString()}`
     try {
       await navigator.clipboard.writeText(url)
@@ -120,8 +133,45 @@ export function ConfigPanel({
         description: "Anyone with the link opens this exact configuration.",
       })
     } catch {
-      toast("Share link", { description: url })
+      toast("Clipboard unavailable", {
+        description: `Copy the link by hand: ${url}`,
+      })
     }
+  }
+
+  const saveAsVersion = () => {
+    const prompt = promptForAgent(agent.id, prompts)
+    if (!prompt) {
+      toast.error(`No prompt registered for ${agent.name}`, {
+        description: "Register one on the Prompts page first.",
+      })
+      return
+    }
+    const source =
+      findVersion(config.promptVersion, prompts)?.version ??
+      productionVersion(prompt) ??
+      prompt.versions[prompt.versions.length - 1]
+    const what = [
+      modelChanged ? modelDisplayName(config.modelId) : null,
+      ...paramDiff.map((d) => `${d.label.toLowerCase()} ${d.to}`),
+    ].filter(Boolean)
+    const version = createVersion({
+      promptId: prompt.id,
+      template: source.template,
+      modelId: config.modelId,
+      params: config.params,
+      changeNote: `Saved from Playground on ${source.id}${what.length ? `: ${what.join(", ")}` : " with the same parameters"}.`,
+    })
+    if (!version) return
+    onChange({ ...config, promptVersion: version.id })
+    toast.success(`Saved as ${version.id}`, {
+      description: `Draft v${version.number} of ${prompt.name}. It is now selected here and listed on the prompt's Versions tab.`,
+      action: {
+        label: "Open in registry",
+        onClick: () =>
+          router.push(`/agentops/prompts/${prompt.id}?version=${version.id}`),
+      },
+    })
   }
 
   return (
@@ -167,7 +217,7 @@ export function ConfigPanel({
             ))}
           </SelectContent>
         </Select>
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-2xs text-muted-foreground">
           {agent.version} · {agent.framework} ·{" "}
           <Link
             href={`/agentops/agents/${agent.id}`}
@@ -204,6 +254,9 @@ export function ConfigPanel({
             ))}
           </SelectContent>
         </Select>
+        <p className="text-2xs text-muted-foreground">
+          Versions from the Prompt Registry, newest first.
+        </p>
       </div>
 
       <div className="flex flex-col gap-1.5">
@@ -234,7 +287,7 @@ export function ConfigPanel({
                   <SelectItem key={m.id} value={m.openRouterId ?? m.id}>
                     <span className="flex w-full min-w-0 items-center gap-2">
                       <span className="truncate">{m.name}</span>
-                      <span className="ml-auto shrink-0 text-[10px] text-muted-foreground capitalize">
+                      <span className="ml-auto shrink-0 text-3xs text-muted-foreground capitalize">
                         {m.tier}
                       </span>
                     </span>
@@ -251,7 +304,7 @@ export function ConfigPanel({
       <ParamEditor
         value={config.params}
         onChange={(params) => onChange({ ...config, params })}
-        baseline={agent.params}
+        baseline={base.params}
         density="compact"
       />
 
@@ -259,8 +312,9 @@ export function ConfigPanel({
 
       <DiffVsDeployed
         agentName={agent.name}
-        promptVersion={agent.promptVersion}
-        modelId={agent.modelId}
+        baselineLabel={baselineLabel}
+        promptVersion={base.promptVersion}
+        modelId={base.modelId}
         config={config}
         paramDiff={paramDiff}
       />
@@ -272,20 +326,9 @@ export function ConfigPanel({
           onClick={reset}
           disabled={diffCount === 0}
         >
-          <RotateCcwIcon /> Reset to deployed
+          <RotateCcwIcon /> Reset to {baselineLabel}
         </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() =>
-            toast.success(
-              `Saved as ${nextDraftVersion(config.promptVersion)}`,
-              {
-                description: `Draft prompt version for ${agent.name} with these parameters.`,
-              }
-            )
-          }
-        >
+        <Button variant="outline" size="sm" onClick={saveAsVersion}>
           <SaveIcon /> Save as version
         </Button>
         <AlertDialog>
@@ -300,25 +343,27 @@ export function ConfigPanel({
                 Apply configuration to {agent.name}?
               </AlertDialogTitle>
               <AlertDialogDescription>
-                This updates the <strong>{agent.environment}</strong> deployment
-                ({agent.version}) in place. {diffCount}{" "}
+                Records this configuration as the agent&apos;s baseline for the
+                rest of this browser session: the diff, Reset and the share link
+                compare against it. {diffCount}{" "}
                 {diffCount === 1 ? "setting differs" : "settings differ"} from
-                what is deployed. Traffic is not re-split; the change is
-                recorded in the agent&apos;s activity.
+                what is {baselineLabel}. The deployed{" "}
+                <strong>{agent.environment}</strong> record ({agent.version}) is
+                not changed in this template.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <ul className="max-h-40 overflow-y-auto rounded-md border bg-muted/30 px-3 py-2 text-xs">
               {modelChanged && (
                 <DiffRow
                   label="Model"
-                  from={modelDisplayName(agent.modelId)}
+                  from={modelDisplayName(base.modelId)}
                   to={modelDisplayName(config.modelId)}
                 />
               )}
               {pvChanged && (
                 <DiffRow
                   label="Prompt"
-                  from={agent.promptVersion}
+                  from={base.promptVersion}
                   to={config.promptVersion}
                 />
               )}
@@ -329,13 +374,14 @@ export function ConfigPanel({
             <AlertDialogFooter>
               <AlertDialogCancel>Cancel</AlertDialogCancel>
               <AlertDialogAction
-                onClick={() =>
-                  toast.success(`Applied to ${agent.name}`, {
-                    description: `${agent.environment} · ${agent.version} now runs ${modelDisplayName(config.modelId)} with ${diffCount} changed ${diffCount === 1 ? "setting" : "settings"}.`,
+                onClick={() => {
+                  applyConfig(config)
+                  toast.success(`Applied to ${agent.name} for this session`, {
+                    description: `${diffCount} changed ${diffCount === 1 ? "setting" : "settings"} recorded as the new baseline. Reset now returns here; a reload returns to the deployed values.`,
                   })
-                }
+                }}
               >
-                <CheckIcon /> Apply to {agent.environment}
+                <CheckIcon /> Apply
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
@@ -346,11 +392,6 @@ export function ConfigPanel({
       </div>
     </div>
   )
-}
-
-function nextDraftVersion(pv: string) {
-  const n = Number(pv.replace(/\D/g, "")) || 0
-  return `p-${n + 1}-draft`
 }
 
 function ModelValue({ modelId }: { modelId: string }) {
@@ -377,7 +418,7 @@ export function ColumnBadge({
     <Badge
       variant="outline"
       className={cn(
-        "h-5 min-w-5 justify-center px-1.5 font-mono text-[11px] font-semibold",
+        "h-5 min-w-5 justify-center px-1.5 font-mono text-2xs font-semibold",
         label === "A"
           ? "border-chart-1/40 bg-chart-1/10 text-chart-1"
           : "border-chart-2/40 bg-chart-2/10 text-chart-2",
@@ -414,16 +455,19 @@ function DiffRow({
 
 export function DiffVsDeployed({
   agentName,
+  baselineLabel = "deployed",
   promptVersion,
   modelId,
   config,
   paramDiff,
 }: {
   agentName: string
+  /** "deployed", or "applied" once a configuration was applied this session. */
+  baselineLabel?: string
   promptVersion: string
   modelId: string
   config: PlaygroundConfig
-  paramDiff: ReturnType<typeof diffParams>
+  paramDiff: ReturnType<typeof diffAllParams>
 }) {
   const modelChanged = config.modelId !== modelId
   const pvChanged = config.promptVersion !== promptVersion
@@ -431,10 +475,10 @@ export function DiffVsDeployed({
   return (
     <div className="rounded-lg border bg-muted/30 px-3 py-2">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-medium">Diff vs deployed</span>
+        <span className="text-xs font-medium">Diff vs {baselineLabel}</span>
         <Badge
           variant={total ? "default" : "outline"}
-          className="h-5 px-1.5 text-[10px] tabular-nums"
+          className="h-5 px-1.5 text-3xs tabular-nums"
         >
           {total ? `${total} changed` : "in sync"}
         </Badge>
@@ -460,8 +504,12 @@ export function DiffVsDeployed({
           ))}
         </ul>
       ) : (
-        <p className="mt-1 text-[11px] text-muted-foreground">
-          Matches what {agentName} runs in production.
+        <p className="mt-1 text-2xs text-muted-foreground">
+          Matches what {agentName} runs
+          {baselineLabel === "applied"
+            ? " since you applied"
+            : " in production"}
+          .
         </p>
       )}
     </div>

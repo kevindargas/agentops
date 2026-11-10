@@ -3,16 +3,12 @@ import Link from "next/link"
 import {
   BotIcon,
   ClockIcon,
-  FlaskConicalIcon,
   GitForkIcon,
   LightbulbIcon,
-  PauseIcon,
   RocketIcon,
-  RouteIcon,
   SlidersHorizontalIcon,
   UserIcon,
   UsersIcon,
-  WrenchIcon,
 } from "lucide-react"
 
 import { MetaItem, RecordHeader } from "@/components/record/record-header"
@@ -21,17 +17,23 @@ import { RecordNotFound } from "@/components/record/record-not-found"
 import { RecordSection } from "@/components/record/record-section"
 import { RecordTabs } from "@/components/record/record-tabs"
 import { DetailList } from "@/components/shared/detail-list"
+import { MetricTile } from "@/components/shared/metric-tile"
 import { StatCard } from "@/components/shared/stat-card"
+import { StatGrid } from "@/components/shared/stat-grid"
 import { StateBadge } from "@/components/shared/status-badge"
 import { UserChip } from "@/components/shared/user-chip"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  AgentActions,
+  AgentHealthBadges,
+} from "@/features/agentops/agent-config/agent-actions"
 import { AgentConfigPanel } from "@/features/agentops/agent-config/agent-config-panel"
 import { AgentQualityCharts } from "@/features/agentops/agent-config/agent-quality-charts"
+import { AgentSloCard } from "@/features/agentops/agent-config/agent-slo-card"
 import { AgentGraph } from "@/features/agentops/agent-graph"
 import { ExperimentsTable } from "@/features/agentops/experiments"
 import { RecommendationsList } from "@/features/agentops/recommendations-list"
-import { fmtCost, fmtMs, fmtTokens } from "@/features/agentops/format"
 import { FrameworkBadge, ModelChip, ScoreBar } from "@/features/agentops/shared"
 import { TracesTable } from "@/features/agentops/traces-table"
 import {
@@ -40,10 +42,19 @@ import {
   experiments,
   getDeployedAgent,
   modelRecommendations,
+  openDriftSeverity,
   reviewItems,
-} from "@/lib/data"
+} from "@/lib/data/agentops"
 import { getPromptForAgent } from "@/lib/data/prompts"
-import { formatNumber, timeAgo } from "@/lib/format"
+import { daysAgo } from "@/lib/data/seed"
+import {
+  formatCost,
+  formatDate,
+  formatMs,
+  formatNumber,
+  formatTokens,
+  timeAgo,
+} from "@/lib/format"
 
 export async function generateMetadata({
   params,
@@ -54,12 +65,8 @@ export async function generateMetadata({
   return { title: getDeployedAgent(id)?.name ?? id }
 }
 
-const day = (i: number) =>
-  new Date(Date.UTC(2026, 10, 5 - (13 - i))).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
-  })
+/** Axis label for the i-th of 14 trailing days, anchored to the demo clock. */
+const day = (i: number) => formatDate(daysAgo(13 - i), { year: undefined })
 
 export default async function AgentPage({
   params,
@@ -81,6 +88,7 @@ export default async function AgentPage({
   const drift = driftSignals.filter(
     (d) => d.agentId === agent.id && d.state !== "Resolved"
   )
+  const openSeverity = openDriftSeverity(agent.id)
   const exps = experiments.filter((e) => e.agentId === agent.id)
   const recs = modelRecommendations.filter(
     (r) =>
@@ -91,9 +99,11 @@ export default async function AgentPage({
   ).length
   const m = agent.metrics
   const prompt = getPromptForAgent(agent.id)
+  const bounded = traces.filter((t) => t.boundHit).length
   const promptHref = prompt
     ? `/agentops/prompts/${prompt.id}`
-    : `/agentops/prompts?agent=${agent.id}`
+    : "/agentops/prompts"
+  const goldenSetHref = `/agentops/evals?tab=datasets&dataset=${agent.evalDataset}`
   const series = agent.qualityTrend.map((q, i) => ({
     name: day(i),
     quality: q,
@@ -110,12 +120,12 @@ export default async function AgentPage({
         description={agent.description}
         badges={
           <>
-            <StateBadge state={agent.health} />
+            <AgentHealthBadges agent={agent} />
             <FrameworkBadge framework={agent.framework} />
             <StateBadge state={agent.environment} size="sm" />
             <Badge
               variant="outline"
-              className="font-mono text-[11px] text-muted-foreground"
+              className="font-mono text-2xs text-muted-foreground"
             >
               {agent.version}
             </Badge>
@@ -138,94 +148,67 @@ export default async function AgentPage({
             <MetaItem
               label="Drift"
               icon={<RocketIcon />}
+              href={`/agentops/drift?agent=${agent.id}`}
               tone={
-                agent.driftScore >= 0.25
+                openSeverity === "Critical" || agent.driftScore >= 0.25
                   ? "danger"
-                  : agent.driftScore >= 0.1
+                  : openSeverity === "Warning" || agent.driftScore >= 0.1
                     ? "warning"
                     : "default"
               }
             >
               PSI {agent.driftScore.toFixed(2)}
+              {drift.length > 0 &&
+                ` · ${drift.length} open signal${drift.length === 1 ? "" : "s"}`}
             </MetaItem>
           </>
         }
-        actions={
-          <>
-            <Button
-              variant="outline"
-              render={<Link href={`/agentops/traces?agent=${agent.id}`} />}
-            >
-              <RouteIcon /> Traces
-            </Button>
-            <Button
-              variant="outline"
-              render={<Link href={`/agentops/playground?agent=${agent.id}`} />}
-            >
-              <SlidersHorizontalIcon /> Open in playground
-            </Button>
-            <Button variant={agent.health === "Paused" ? "default" : "outline"}>
-              <PauseIcon /> {agent.health === "Paused" ? "Resume" : "Pause"}
-            </Button>
-            <Button>
-              <RocketIcon /> Deploy new version
-            </Button>
-          </>
-        }
-        overflow={[
-          {
-            label: "Start experiment",
-            icon: <FlaskConicalIcon />,
-            href: "/agentops/experiments",
-          },
-          {
-            label: "Edit prompt",
-            icon: <WrenchIcon />,
-            href: promptHref,
-          },
-          {
-            label: "Export traces",
-            message:
-              "Export started — you will be notified when the file is ready",
-          },
-        ]}
+        actions={<AgentActions agent={agent} promptHref={promptHref} />}
       />
 
       <RecordLayout
         aside={
           <>
-            <RecordSection title="Evaluation" size="sm">
+            <RecordSection title="Evals" size="sm">
               <div className="grid grid-cols-2 gap-3">
-                <Kpi label="Quality" value={<ScoreBar value={m.quality} />} />
-                <Kpi
+                <MetricTile
+                  label="Quality"
+                  value={<ScoreBar value={m.quality} />}
+                />
+                <MetricTile
                   label="Thumbs-down"
-                  value={
-                    <span
-                      className={
-                        m.thumbsDownRate > 5 ? "text-danger-text" : undefined
-                      }
-                    >
-                      {m.thumbsDownRate.toFixed(1)}%
-                    </span>
+                  value={`${m.thumbsDownRate.toFixed(1)}%`}
+                  tone={m.thumbsDownRate > 5 ? "danger" : undefined}
+                />
+                <MetricTile label="Review rate" value={`${m.reviewRate}%`} />
+                <MetricTile
+                  label="Pending reviews"
+                  value={pending}
+                  hint={
+                    <Link href={`/agentops/reviews?agent=${agent.id}`}>
+                      Open queue
+                    </Link>
                   }
                 />
-                <Kpi label="Review rate" value={`${m.reviewRate}%`} />
-                <Kpi label="Pending reviews" value={pending} />
               </div>
               <p className="mt-3 text-xs text-muted-foreground">
                 Golden set{" "}
-                <code className="rounded-sm bg-muted px-1 font-mono text-[11px]">
+                <Link
+                  href={goldenSetHref}
+                  className="rounded-sm bg-muted px-1 font-mono text-2xs hover:underline"
+                >
                   {agent.evalDataset}
-                </code>{" "}
+                </Link>{" "}
                 · prompt{" "}
                 <Link
                   href={promptHref}
-                  className="rounded-sm bg-muted px-1 font-mono text-[11px] hover:underline"
+                  className="rounded-sm bg-muted px-1 font-mono text-2xs hover:underline"
                 >
                   {agent.promptVersion}
                 </Link>
               </p>
             </RecordSection>
+            <AgentSloCard agent={agent} />
             <RecordSection title="Configuration" size="sm">
               <DetailList
                 variant="rows"
@@ -245,7 +228,18 @@ export default async function AgentPage({
                         className="text-xs"
                       />
                     ) : (
-                      "—"
+                      <span className="text-muted-foreground">None</span>
+                    ),
+                  },
+                  {
+                    label: "Releases",
+                    value: (
+                      <Link
+                        href={`/agentops/deployments?agent=${agent.id}`}
+                        className="hover:underline"
+                      >
+                        Deployments for {agent.name}
+                      </Link>
                     ),
                   },
                   {
@@ -253,13 +247,17 @@ export default async function AgentPage({
                     value: (
                       <span className="flex flex-wrap gap-1">
                         {agent.tools.map((t) => (
-                          <code
+                          <Link
                             key={t}
-                            className="rounded-sm bg-muted px-1 py-0.5 font-mono text-[11px]"
+                            href={`/agentops/tools?tool=${t}`}
+                            className="rounded-sm bg-muted px-1 py-0.5 font-mono text-2xs hover:underline"
                           >
                             {t}
-                          </code>
+                          </Link>
                         ))}
+                        {agent.tools.length === 0 && (
+                          <span className="text-muted-foreground">None</span>
+                        )}
                       </span>
                     ),
                     wide: true,
@@ -276,7 +274,7 @@ export default async function AgentPage({
                   <Button
                     variant="ghost"
                     size="sm"
-                    render={<Link href="/agentops/drift" />}
+                    render={<Link href={`/agentops/drift?agent=${agent.id}`} />}
                   >
                     Board
                   </Button>
@@ -306,12 +304,12 @@ export default async function AgentPage({
                   {recs.map((r) => (
                     <li key={r.id} className="text-sm leading-snug">
                       <Link
-                        href="/agentops/recommendations"
+                        href={`/agentops/recommendations?open=${r.id}`}
                         className="hover:underline"
                       >
                         {r.title}
                       </Link>
-                      <span className="block text-[11px] text-muted-foreground">
+                      <span className="block text-2xs text-muted-foreground">
                         {Math.round(r.confidence * 100)}% confidence
                       </span>
                     </li>
@@ -322,33 +320,35 @@ export default async function AgentPage({
           </>
         }
       >
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatGrid columns={4}>
           <StatCard
-            size="sm"
             label="Requests · 24h"
             value={formatNumber(m.requests24h)}
-            hint={`${fmtTokens(m.tokens24h)} tokens`}
+            hint={`${formatTokens(m.tokens24h)} tokens`}
           />
           <StatCard
-            size="sm"
             label="Latency p95"
-            value={fmtMs(m.p95Ms)}
-            hint={`p50 ${fmtMs(m.p50Ms)}`}
+            value={formatMs(m.p95Ms)}
+            hint={`p50 ${formatMs(m.p50Ms)}`}
           />
           <StatCard
-            size="sm"
             label="Error rate"
             value={`${m.errorRate.toFixed(1)}%`}
             upIsGood={false}
-            hint={m.errorRate > 3 ? "Above 3% threshold" : "Within threshold"}
+            hint={
+              bounded
+                ? `${bounded} run${bounded === 1 ? "" : "s"} hit a run limit`
+                : m.errorRate > 3
+                  ? "Above 3% threshold"
+                  : "Within threshold"
+            }
           />
           <StatCard
-            size="sm"
             label="Cost · day"
-            value={fmtCost(m.costPerDay, 0)}
-            hint={`${fmtCost(m.requests24h ? m.costPerDay / m.requests24h : 0, 3)} per request`}
+            value={formatCost(m.costPerDay, 0)}
+            hint={`${formatCost(m.requests24h ? m.costPerDay / m.requests24h : 0, 3)} per request`}
           />
-        </div>
+        </StatGrid>
 
         <RecordSection
           title="Graph"
@@ -359,6 +359,7 @@ export default async function AgentPage({
         </RecordSection>
 
         <RecordTabs
+          defaultValue="traces"
           tabs={[
             {
               value: "traces",
@@ -395,16 +396,5 @@ export default async function AgentPage({
         />
       </RecordLayout>
     </>
-  )
-}
-
-function Kpi({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div className="rounded-lg border bg-muted/30 px-3 py-2">
-      <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-        {label}
-      </p>
-      <div className="mt-1 text-sm font-medium tabular-nums">{value}</div>
-    </div>
   )
 }

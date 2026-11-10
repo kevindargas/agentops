@@ -12,10 +12,32 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
+import { setQueryParam } from "@/hooks/use-query-param"
+import { DetailList } from "@/components/shared/detail-list"
 import { EmptyState } from "@/components/shared/empty-state"
+import { TableSkeleton } from "@/components/shared/skeletons"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { formatDateTime } from "@/lib/format"
 import { readShareHash } from "@/lib/readiness/codec"
-import { readinessActions } from "@/lib/readiness/store"
+import { maturityTargetLabel, systemTypeLabel } from "@/lib/readiness/labels"
+import {
+  BEFORE_IMPORT_LABEL,
+  readinessActions,
+  readinessStore,
+  useReadinessHydrated,
+} from "@/lib/readiness/store"
+import type { Assessment } from "@/lib/readiness/types"
 import { ControlSheet } from "./control-sheet"
 import { ControlsTab } from "./controls-tab"
 import { FrameworksTab } from "./frameworks-tab"
@@ -24,12 +46,7 @@ import { ResultsTab } from "./results-tab"
 import { SetupForm } from "./setup-form"
 import { ShareTab } from "./share-tab"
 import { ToolingTab } from "./tooling-tab"
-import {
-  readinessTabs,
-  setQueryParam,
-  useReadiness,
-  type ReadinessTab,
-} from "./shared"
+import { readinessTabs, useReadiness, type ReadinessTab } from "./shared"
 
 const tabMeta: Record<
   ReadinessTab,
@@ -56,6 +73,12 @@ const tabMeta: Record<
   share: { label: "Share", icon: <Share2Icon />, needsAssessment: false },
 }
 
+function stripShareHash() {
+  const url = new URL(window.location.href)
+  url.hash = ""
+  window.history.replaceState(null, "", url)
+}
+
 export function ReadinessView({
   initialTab,
   initialControlId,
@@ -63,7 +86,8 @@ export function ReadinessView({
   initialTab?: string
   initialControlId?: string
 }) {
-  const { assessment, controlSet } = useReadiness()
+  const hydrated = useReadinessHydrated()
+  const { assessment, controlSet, result, showNotApplicable } = useReadiness()
   const [tab, setTab] = React.useState<ReadinessTab>(
     readinessTabs.includes(initialTab as ReadinessTab)
       ? (initialTab as ReadinessTab)
@@ -87,18 +111,34 @@ export function ReadinessView({
     if (seenAssessmentId !== null || tab === "setup") setTab("controls")
   }
 
-  // Shared links carry the whole assessment in the URL fragment.
+  // Shared links carry the whole assessment in the URL fragment. The hash is
+  // only read after hydration; with no current assessment it loads straight
+  // away, otherwise the user confirms and the current one is snapshotted.
+  const shared = React.useMemo(
+    () => (hydrated ? readShareHash(window.location.hash) : null),
+    [hydrated]
+  )
+  const [sharedDecided, setSharedDecided] = React.useState(false)
+  const autoLoaded = React.useRef(false)
   React.useEffect(() => {
-    const shared = readShareHash(window.location.hash)
-    if (!shared) return
+    if (!shared || sharedDecided || autoLoaded.current) return
+    const current = readinessStore.get().assessment
+    // A different assessment is open: the dialog below asks first.
+    if (current && current.id !== shared.id) return
+    autoLoaded.current = true
     readinessActions.load(shared)
-    const url = new URL(window.location.href)
-    url.hash = ""
-    window.history.replaceState(null, "", url)
-    toast("Assessment loaded from link", {
-      description: `${shared.name} · ${Object.keys(shared.responses).length} answered controls`,
-    })
-  }, [])
+    stripShareHash()
+    toast(
+      current ? "Assessment updated from link" : "Assessment loaded from link",
+      {
+        description: `${shared.name} · ${Object.keys(shared.responses).length} answered controls`,
+      }
+    )
+  }, [shared, sharedDecided])
+  const pendingShared =
+    shared && !sharedDecided && assessment && assessment.id !== shared.id
+      ? shared
+      : null
 
   const effectiveTab: ReadinessTab =
     !assessment && tabMeta[tab].needsAssessment ? "setup" : tab
@@ -115,6 +155,20 @@ export function ReadinessView({
     setOpenId(null)
     setQueryParam("control", null)
   }
+
+  // Order used by the sheet's previous / next buttons: the controls as the
+  // Controls tab lists them, hiding not-applicable ones unless shown.
+  const navigationIds = React.useMemo(
+    () =>
+      (result?.controls ?? [])
+        .filter(
+          (e) => showNotApplicable || e.applicability !== "not-applicable"
+        )
+        .map((e) => e.control.id),
+    [result, showNotApplicable]
+  )
+
+  if (!hydrated) return <TableSkeleton />
 
   return (
     <>
@@ -175,8 +229,96 @@ export function ReadinessView({
         </TabsContent>
       </Tabs>
 
-      <ControlSheet controlId={openId} onClose={closeControl} />
+      <ControlSheet
+        controlId={openId}
+        onClose={closeControl}
+        onNavigate={openControl}
+        navigationIds={navigationIds}
+        onSetup={() => {
+          closeControl()
+          changeTab("setup")
+        }}
+      />
+
+      <SharedLinkDialog
+        shared={pendingShared}
+        current={assessment}
+        onCancel={() => {
+          setSharedDecided(true)
+          stripShareHash()
+        }}
+        onReplace={() => {
+          if (!pendingShared) return
+          readinessActions.replace(pendingShared, BEFORE_IMPORT_LABEL)
+          setSharedDecided(true)
+          stripShareHash()
+          toast("Assessment replaced from link", {
+            description: `${pendingShared.name} loaded; the previous assessment was saved as the snapshot "${BEFORE_IMPORT_LABEL}".`,
+          })
+        }}
+      />
     </>
+  )
+}
+
+function SharedLinkDialog({
+  shared,
+  current,
+  onCancel,
+  onReplace,
+}: {
+  shared: Assessment | null
+  current: Assessment | null
+  onCancel: () => void
+  onReplace: () => void
+}) {
+  return (
+    <AlertDialog open={shared !== null} onOpenChange={(o) => !o && onCancel()}>
+      <AlertDialogContent className="sm:max-w-lg">
+        <AlertDialogHeader>
+          <AlertDialogTitle>Replace the current assessment?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This link carries a full assessment. Loading it replaces{" "}
+            <span className="font-medium text-foreground">
+              {current?.name ?? "the current assessment"}
+            </span>
+            ; the current answers are saved first as the snapshot{" "}
+            <span className="font-medium text-foreground">
+              {BEFORE_IMPORT_LABEL}
+            </span>{" "}
+            so you can restore or compare them.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        {shared && (
+          <div className="rounded-lg border bg-muted/30 p-3">
+            <DetailList
+              dense
+              columns={2}
+              items={[
+                { label: "Name", value: shared.name },
+                { label: "System", value: shared.profile.name },
+                {
+                  label: "Type",
+                  value: systemTypeLabel[shared.profile.systemType],
+                },
+                { label: "Target", value: maturityTargetLabel[shared.target] },
+                {
+                  label: "Responses",
+                  value: Object.keys(shared.responses).length,
+                },
+                { label: "Updated", value: formatDateTime(shared.updatedAt) },
+              ]}
+            />
+          </div>
+        )}
+        <AlertDialogFooter>
+          <AlertDialogCancel>Keep current</AlertDialogCancel>
+          <AlertDialogAction onClick={onReplace}>
+            Snapshot and replace
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }
 
@@ -186,13 +328,9 @@ function NeedsSetup({ onSetup }: { onSetup: () => void }) {
       title="Describe your system first"
       description="The applicability filter and maturity target come from the system profile. It takes a minute."
       action={
-        <button
-          type="button"
-          onClick={onSetup}
-          className="text-sm font-medium text-brand underline-offset-4 hover:underline"
-        >
+        <Button variant="outline" size="sm" onClick={onSetup}>
           Go to Setup
-        </button>
+        </Button>
       }
     />
   )

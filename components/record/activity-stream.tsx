@@ -14,6 +14,9 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
+import { CountPill } from "@/components/shared/count-pill"
+import { EmptyState } from "@/components/shared/empty-state"
+import { toneClasses } from "@/components/shared/status-badge"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Kbd, KbdGroup } from "@/components/ui/kbd"
@@ -41,21 +44,21 @@ const typeMeta: Record<
   comment: {
     label: "Comment",
     icon: <MessageSquareIcon />,
-    chip: "border-info/30 bg-info/10 text-info",
+    chip: toneClasses.info.badge,
     card: "border-border bg-card",
     system: false,
   },
   work_note: {
     label: "Work note",
     icon: <LockIcon />,
-    chip: "border-warning/40 bg-warning/10 text-warning-text",
+    chip: toneClasses.warning.badge,
     card: "border-warning/30 bg-warning/5",
     system: false,
   },
   approval: {
     label: "Approval",
     icon: <ShieldCheckIcon />,
-    chip: "border-success/30 bg-success/10 text-success-text",
+    chip: toneClasses.success.badge,
     card: "border-success/30 bg-success/5",
     system: false,
   },
@@ -156,7 +159,7 @@ export function ActivityStream({
     setDraft("")
     toast.success(
       mode === "comment"
-        ? "Comment posted — customer notified"
+        ? "Comment posted and customer notified"
         : "Work note added"
     )
   }
@@ -193,7 +196,7 @@ export function ActivityStream({
                 <span
                   className={cn(
                     "hidden text-xs sm:inline",
-                    mode === "comment" ? "text-info" : "text-warning-text"
+                    mode === "comment" ? "text-info-text" : "text-warning-text"
                   )}
                 >
                   {mode === "comment"
@@ -208,8 +211,8 @@ export function ActivityStream({
               aria-label={mode === "comment" ? "New comment" : "New work note"}
               placeholder={
                 mode === "comment"
-                  ? "Write an update for the customer…"
-                  : "Add a work note for your team…"
+                  ? "Write an update for the customer"
+                  : "Add a work note for your team"
               }
               className="min-h-20 resize-none rounded-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
               onKeyDown={(e) => {
@@ -235,9 +238,7 @@ export function ActivityStream({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="flex items-center gap-2 text-sm font-semibold">
           {title}
-          <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground tabular-nums">
-            {items.length}
-          </span>
+          <CountPill count={items.length} />
         </h3>
         <Tabs value={filter} onValueChange={(v) => setFilter(v as Filter)}>
           <TabsList className="h-7">
@@ -264,16 +265,18 @@ export function ActivityStream({
       </div>
 
       {groups.length === 0 ? (
-        <p className="rounded-lg border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
-          Nothing here yet.
-        </p>
+        <EmptyState
+          size="sm"
+          title="No activity yet"
+          description="Comments, work notes and system events will appear here."
+        />
       ) : (
         <div className="relative flex flex-col gap-6 before:absolute before:inset-y-3 before:left-4 before:w-px before:bg-border">
           {groups.map((group) => (
             <section key={group.label} className="flex flex-col gap-4">
               <h4 className="relative z-10 flex items-center gap-3">
                 <span className="w-8 shrink-0" aria-hidden />
-                <span className="rounded-full border bg-background px-2 py-0.5 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+                <span className="rounded-full border bg-background px-2 py-0.5 text-3xs font-medium tracking-wide text-muted-foreground uppercase">
                   {group.label}
                 </span>
               </h4>

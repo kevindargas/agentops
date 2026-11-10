@@ -1,5 +1,5 @@
 /**
- * Prompt Registry — the system of record for every prompt the fleet runs.
+ * Prompt Registry: the system of record for every prompt the fleet runs.
  *
  * Every version is generated deterministically (seed 7301) so SSR and CSR
  * agree. Version ids are global (`p-41`), which lets agents and experiments in
@@ -39,7 +39,7 @@ export interface PromptVersion {
   authorId: string
   createdAt: string
   changeNote: string
-  /** Evaluator composite 0–100 on the prompt's golden set; null until run. */
+  /** Evaluator composite 0 to 100 on the prompt's golden set; null until run. */
   evalScore: number | null
   modelId: string
   params: ModelParams
@@ -58,7 +58,12 @@ export interface Prompt {
   ownerId: string
   createdAt: string
   updatedAt: string
-  /** Guardrail policies attached to the prompt (names only for now). */
+  /** Ids of the guardrail policies (`grd-...`) attached to the prompt. */
+  guardrailIds: string[]
+  /**
+   * Display names of the attached policies, in the same order as
+   * `guardrailIds`; they equal `Guardrail.name` in `lib/data/guardrails.ts`.
+   */
   guardrails: string[]
   /** Documentation for the `{{variables}}` the templates reference. */
   variables: Record<string, Omit<PromptVariable, "name">>
@@ -104,7 +109,7 @@ export function getPromptVariables(
   return extractVariables(version.template).map((name) => ({
     name,
     description: prompt.variables[name]?.description ?? "Undocumented",
-    example: prompt.variables[name]?.example ?? "—",
+    example: prompt.variables[name]?.example ?? "n/a",
     required: prompt.variables[name]?.required ?? true,
   }))
 }
@@ -135,7 +140,7 @@ interface VersionSpec {
   age: number
   /** Explicit eval score; omitted → null (not yet evaluated). */
   score?: number
-  /** Share of the agent's 24h traffic served by this version, 0–1. */
+  /** Share of the agent's 24h traffic served by this version, 0 to 1. */
   traffic?: number
   review?: PromptReviewState
   modelId?: string
@@ -151,7 +156,7 @@ interface PromptSpec {
   agentId: string
   type: PromptType
   ownerId: string
-  guardrails: string[]
+  guardrailIds: string[]
   variables: Record<string, Omit<PromptVariable, "name">>
   base: string[]
   versions: VersionSpec[]
@@ -181,6 +186,27 @@ function applyEdits(lines: string[], edits: Edit[] = []) {
 }
 
 const rng = createRng(7301)
+
+/**
+ * Names of the guardrail policies prompts can attach, keyed by policy id.
+ * Mirrors `lib/data/guardrails.ts` (which cannot be imported here without a
+ * cycle); `lib/data/integrity.test.ts` asserts the two stay in sync.
+ */
+export const promptGuardrailNames: Record<string, string> = {
+  "grd-pii-redaction": "PII detection & redaction",
+  "grd-prompt-injection": "Prompt injection & jailbreak detection",
+  "grd-topic-restriction": "Topic restriction",
+  "grd-toxicity": "Toxicity & harassment filter",
+  "grd-destructive-approval": "Destructive-action approval",
+  "grd-tool-allowlist": "Tool allowlist",
+  "grd-spend-cap": "Spend cap per run",
+  "grd-max-tool-calls": "Max tool calls per run",
+  "grd-hitl-confidence": "Human-in-the-loop below confidence",
+  "grd-rate-limit-user": "Rate limit per user",
+  "grd-citation-required": "Citation required",
+  "grd-region-pinning": "Region pinning",
+  "grd-schema-validation": "Structured output schema validation",
+}
 
 /** Cost multiplier by prompt type relative to the agent's per-request cost. */
 const costFactor: Record<PromptType, number> = {
@@ -235,7 +261,12 @@ function build(spec: PromptSpec): Prompt {
     agentId: spec.agentId,
     type: spec.type,
     ownerId: spec.ownerId,
-    guardrails: spec.guardrails,
+    guardrailIds: spec.guardrailIds,
+    guardrails: spec.guardrailIds.map((id) => {
+      const name = promptGuardrailNames[id]
+      if (!name) throw new Error(`prompt ${spec.id}: unknown guardrail ${id}`)
+      return name
+    }),
     variables: spec.variables,
     createdAt: versions[0].createdAt,
     updatedAt: versions[versions.length - 1].createdAt,
@@ -256,8 +287,8 @@ const specs: PromptSpec[] = [
       "Classifies inbound support conversations, pulls account context and drafts the first response for the service desk.",
     agentId: "agt-support-triage",
     type: "system",
-    ownerId: "u-003",
-    guardrails: ["PII redaction", "Prompt-injection filter", "Tone policy"],
+    ownerId: "u-002",
+    guardrailIds: ["grd-pii-redaction", "grd-prompt-injection", "grd-toxicity"],
     variables: {
       company: {
         description: "Tenant display name.",
@@ -406,7 +437,7 @@ const specs: PromptSpec[] = [
     agentId: "agt-support-triage",
     type: "user_template",
     ownerId: "u-004",
-    guardrails: ["Prompt-injection filter"],
+    guardrailIds: ["grd-prompt-injection"],
     variables: {
       message: {
         description: "Latest customer message, verbatim.",
@@ -469,7 +500,7 @@ const specs: PromptSpec[] = [
     agentId: "agt-support-triage",
     type: "tool_description",
     ownerId: "u-004",
-    guardrails: [],
+    guardrailIds: [],
     variables: {
       index: {
         description: "Vector index the tool is bound to.",
@@ -482,7 +513,7 @@ const specs: PromptSpec[] = [
       "Use this before answering any product or how-to question.",
       "",
       "Parameters:",
-      "- query (string): natural-language question, 3–30 words.",
+      "- query (string): natural-language question, 3-30 words.",
       "- top_k (integer, default 5): number of articles to return.",
     ],
     versions: [
@@ -525,8 +556,8 @@ const specs: PromptSpec[] = [
       "LLM-as-judge rubric that scores whether an answer is supported by the retrieved context.",
     agentId: "agt-support-triage",
     type: "evaluator_rubric",
-    ownerId: "u-003",
-    guardrails: [],
+    ownerId: "u-002",
+    guardrailIds: [],
     variables: {
       question: {
         description: "Original user question.",
@@ -551,10 +582,10 @@ const specs: PromptSpec[] = [
       "CONTEXT: {{context}}",
       "ANSWER: {{answer}}",
       "",
-      "Score 1–5:",
-      "5 — every claim is supported by the context.",
-      "3 — mostly supported, one unsupported detail.",
-      "1 — contradicts the context or invents facts.",
+      "Score 1-5:",
+      "5: every claim is supported by the context.",
+      "3: mostly supported, one unsupported detail.",
+      "1: contradicts the context or invents facts.",
       "",
       "Reply with the score only.",
     ],
@@ -563,7 +594,7 @@ const specs: PromptSpec[] = [
         n: 43,
         label: "archived",
         authorId: "u-003",
-        note: "Initial 1–5 rubric.",
+        note: "Initial 1-5 rubric.",
         age: 55,
         score: 80.5,
       },
@@ -581,12 +612,12 @@ const specs: PromptSpec[] = [
             with: "First list each claim and whether it is supported. Then reply with `SCORE: <n>` on the last line.",
           },
           {
-            add: ["4 — supported, minor paraphrase that changes no meaning."],
-            after: "5 — every claim",
+            add: ["4: supported, minor paraphrase that changes no meaning."],
+            after: "5: every claim",
           },
           {
-            add: ["2 — several unsupported claims."],
-            after: "3 — mostly supported",
+            add: ["2: several unsupported claims."],
+            after: "3: mostly supported",
           },
         ],
       },
@@ -601,7 +632,7 @@ const specs: PromptSpec[] = [
             add: [
               "A refusal when the CONTEXT clearly contains the answer scores 2.",
             ],
-            after: "1 — contradicts",
+            after: "1: contradicts",
           },
         ],
       },
@@ -615,8 +646,8 @@ const specs: PromptSpec[] = [
       "Resolves common IT requests end-to-end: password resets, access requests, software installs.",
     agentId: "agt-it-helpdesk",
     type: "system",
-    ownerId: "u-005",
-    guardrails: ["PII redaction", "Approval gate for access grants"],
+    ownerId: "u-020",
+    guardrailIds: ["grd-pii-redaction", "grd-destructive-approval"],
     variables: {
       employee: {
         description: "Requester profile from the HR directory.",
@@ -708,8 +739,8 @@ const specs: PromptSpec[] = [
       "User-turn template for the password reset intent, including the identity check question.",
     agentId: "agt-it-helpdesk",
     type: "user_template",
-    ownerId: "u-008",
-    guardrails: ["PII redaction"],
+    ownerId: "u-020",
+    guardrailIds: ["grd-pii-redaction", "grd-rate-limit-user"],
     variables: {
       employee_name: {
         description: "Requester's display name.",
@@ -766,7 +797,7 @@ const specs: PromptSpec[] = [
         edits: [
           {
             add: [
-              "If the last login is older than 90 days, do not reset — open a security review instead.",
+              "If the last login is older than 90 days, do not reset; open a security review instead.",
             ],
           },
         ],
@@ -781,8 +812,8 @@ const specs: PromptSpec[] = [
       "Tool schema description for opening an incident or request in the ITSM layer.",
     agentId: "agt-it-helpdesk",
     type: "tool_description",
-    ownerId: "u-005",
-    guardrails: [],
+    ownerId: "u-020",
+    guardrailIds: [],
     variables: {},
     base: [
       "Create a ticket in the service desk when the request cannot be resolved by a self-service action.",
@@ -790,7 +821,7 @@ const specs: PromptSpec[] = [
       "Parameters:",
       "- short_description (string): one line, max 120 characters.",
       "- category (enum): Access | Hardware | Software | Network | Other.",
-      "- priority (integer 1–5): use 3 unless the employee cannot work at all.",
+      "- priority (integer 1-5): use 3 unless the employee cannot work at all.",
     ],
     versions: [
       {
@@ -827,7 +858,11 @@ const specs: PromptSpec[] = [
     agentId: "agt-ops-analyst",
     type: "system",
     ownerId: "u-001",
-    guardrails: ["Read-only SQL", "Row limit 10k", "Semantic-layer allowlist"],
+    guardrailIds: [
+      "grd-tool-allowlist",
+      "grd-destructive-approval",
+      "grd-spend-cap",
+    ],
     variables: {
       semantic_entities: {
         description: "Semantic entities the agent may query, with their SQL.",
@@ -927,7 +962,7 @@ const specs: PromptSpec[] = [
     agentId: "agt-ops-analyst",
     type: "tool_description",
     ownerId: "u-010",
-    guardrails: ["Read-only SQL", "Row limit 10k"],
+    guardrailIds: ["grd-tool-allowlist", "grd-destructive-approval"],
     variables: {
       row_limit: {
         description: "Maximum rows returned to the model.",
@@ -960,7 +995,7 @@ const specs: PromptSpec[] = [
         edits: [
           {
             add: [
-              "Queries time out after 30 seconds — narrow the time window or add filters rather than retrying the same statement.",
+              "Queries time out after 30 seconds; narrow the time window or add filters rather than retrying the same statement.",
             ],
             after: "Execute a read-only",
           },
@@ -976,12 +1011,12 @@ const specs: PromptSpec[] = [
       "Rubric the Change Risk Advisor uses to score a change request from the CMDB blast radius and past outcomes.",
     agentId: "agt-change-risk",
     type: "evaluator_rubric",
-    ownerId: "u-007",
-    guardrails: ["Human approval for High / Very High"],
+    ownerId: "u-004",
+    guardrailIds: ["grd-hitl-confidence", "grd-schema-validation"],
     variables: {
       change: {
         description: "Change request summary and implementation plan.",
-        example: "CHG0003112 · Upgrade core switch firmware · 02:00–04:00",
+        example: "CHG0003112 · Upgrade core switch firmware · 02:00-04:00",
         required: true,
       },
       blast_radius: {
@@ -1077,8 +1112,12 @@ const specs: PromptSpec[] = [
       "Answers employee questions about leave, benefits and policy strictly from the HR knowledge base.",
     agentId: "agt-hr-answers",
     type: "system",
-    ownerId: "u-009",
-    guardrails: ["PII redaction", "Topic allowlist", "Escalation to HR case"],
+    ownerId: "u-007",
+    guardrailIds: [
+      "grd-pii-redaction",
+      "grd-topic-restriction",
+      "grd-hitl-confidence",
+    ],
     variables: {
       employee_country: {
         description: "Country whose policies apply.",
@@ -1087,7 +1126,7 @@ const specs: PromptSpec[] = [
       },
       policies: {
         description: "Retrieved policy sections.",
-        example: "Parental leave (DE) — 14 months shared…",
+        example: "Parental leave (DE): 14 months shared…",
         required: true,
       },
       leave_balance: {
@@ -1097,7 +1136,7 @@ const specs: PromptSpec[] = [
       },
     },
     base: [
-      "You are HR Answers. Answer the employee's question using only the policy text below for {{employee_country}}.",
+      "You are Policy Answers. Answer the employee's question using only the policy text below for {{employee_country}}.",
       "",
       "## Policies",
       "{{policies}}",
@@ -1178,7 +1217,7 @@ const specs: PromptSpec[] = [
         edits: [
           {
             replace: "If the policies do not cover the question",
-            with: "- If the policies do not cover the question, say exactly: “I can't find that in the policy — shall I open an HR case?”",
+            with: "- If the policies do not cover the question, say exactly: “I can't find that in the policy. Shall I open an HR case?”",
           },
         ],
       },
@@ -1192,8 +1231,12 @@ const specs: PromptSpec[] = [
       "Groups raw monitoring alerts into probable incidents and proposes a root-cause CI.",
     agentId: "agt-alert-correlator",
     type: "system",
-    ownerId: "u-011",
-    guardrails: ["No auto-remediation", "Rate limit 1 incident/min"],
+    ownerId: "u-018",
+    guardrailIds: [
+      "grd-destructive-approval",
+      "grd-max-tool-calls",
+      "grd-schema-validation",
+    ],
     variables: {
       alerts: {
         description: "Alert batch from the last correlation window.",
@@ -1220,7 +1263,7 @@ const specs: PromptSpec[] = [
       "Topology:",
       "{{topology}}",
       "",
-      "Group alerts that share a root cause. For each group, name the most likely root-cause CI and a confidence 0–1.",
+      "Group alerts that share a root cause. For each group, name the most likely root-cause CI and a confidence 0-1.",
     ],
     versions: [
       {
@@ -1277,7 +1320,7 @@ const specs: PromptSpec[] = [
     agentId: "agt-kb-curator",
     type: "system",
     ownerId: "u-002",
-    guardrails: ["PII redaction", "Draft-only publishing"],
+    guardrailIds: ["grd-pii-redaction", "grd-citation-required"],
     variables: {
       incident: {
         description: "Resolved incident with work notes and resolution.",
@@ -1338,7 +1381,7 @@ const specs: PromptSpec[] = [
         edits: [
           {
             add: [
-              "Save the result in Draft state for a human reviewer — never publish directly.",
+              "Save the result in Draft state for a human reviewer; never publish directly.",
             ],
           },
         ],
@@ -1353,11 +1396,11 @@ const specs: PromptSpec[] = [
       "Answers spend and cost-center questions through the finance semantic layer with strict row-level access rules.",
     agentId: "agt-finance-copilot",
     type: "system",
-    ownerId: "u-012",
-    guardrails: [
-      "Read-only SQL",
-      "Row-level access",
-      "Semantic-layer allowlist",
+    ownerId: "u-016",
+    guardrailIds: [
+      "grd-tool-allowlist",
+      "grd-region-pinning",
+      "grd-rate-limit-user",
     ],
     variables: {
       user_cost_centers: {

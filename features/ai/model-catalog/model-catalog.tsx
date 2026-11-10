@@ -2,15 +2,13 @@
 
 import * as React from "react"
 import Link from "next/link"
+import { cn } from "cn"
 import {
   ArrowUpRightIcon,
   CheckIcon,
-  GiftIcon,
-  ImagesIcon,
   LayersIcon,
   RefreshCwIcon,
   SparklesIcon,
-  WrenchIcon,
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -19,10 +17,17 @@ import { useAi } from "@/components/ai/ai-provider"
 import { DataTable, type FacetDef } from "@/components/data-table"
 import { CopyButton } from "@/components/shared/copy-button"
 import { EmptyState } from "@/components/shared/empty-state"
+import { Eyebrow } from "@/components/shared/eyebrow"
+import {
+  SheetBody,
+  SheetFooterActions,
+  sheetWidths,
+} from "@/components/shared/sheet-frame"
 import { StatCard } from "@/components/shared/stat-card"
+import { StatGrid } from "@/components/shared/stat-grid"
+import { StatusDot } from "@/components/shared/status-badge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Separator } from "@/components/ui/separator"
 import {
   Sheet,
   SheetContent,
@@ -65,12 +70,12 @@ const contextBands = [
   },
   {
     value: "medium",
-    label: "33K – 200K",
+    label: "33K to 200K",
     test: (n: number) => n > 32_768 && n <= 200_000,
   },
   {
     value: "large",
-    label: "201K – 1M",
+    label: "201K to 1M",
     test: (n: number) => n > 200_000 && n <= 1_048_576,
   },
   { value: "xl", label: "Over 1M", test: (n: number) => n > 1_048_576 },
@@ -223,32 +228,28 @@ export function ModelCatalog({ models, fetchedAt, error }: ModelCatalogProps) {
 
   return (
     <>
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <StatGrid columns={4}>
         <StatCard
           label="Models"
           value={formatNumber(models.length)}
-          icon={<LayersIcon />}
           hint={`Across ${stats.providers} providers`}
         />
         <StatCard
           label="Tool calling"
           value={formatNumber(stats.tools)}
-          icon={<WrenchIcon />}
           hint={`${formatPercent((stats.tools / models.length) * 100, 0)} of the catalog · ${stats.reasoning} expose reasoning`}
         />
         <StatCard
           label="Multimodal"
           value={formatNumber(stats.multimodal)}
-          icon={<ImagesIcon />}
           hint="Accept image, file, audio or video input"
         />
         <StatCard
           label="Free to use"
           value={formatNumber(stats.free)}
-          icon={<GiftIcon />}
           hint={`Median paid input price ${formatPrice(stats.median)} per 1M tokens`}
         />
-      </div>
+      </StatGrid>
 
       <DataTable
         columns={catalogColumns}
@@ -257,7 +258,7 @@ export function ModelCatalog({ models, fetchedAt, error }: ModelCatalogProps) {
         getSearchText={(r) =>
           `${r.name} ${r.id} ${r.providerLabel} ${r.description}`
         }
-        searchPlaceholder="Search models, vendors or capabilities…"
+        searchPlaceholder="Search models, vendors or capabilities"
         facets={facets}
         initialSorting={[{ id: "createdAt", desc: true }]}
         initialColumnVisibility={{ maxOutput: false, moderated: false }}
@@ -265,13 +266,11 @@ export function ModelCatalog({ models, fetchedAt, error }: ModelCatalogProps) {
         pageSizeOptions={[25, 50, 100]}
         onRowClick={setSelected}
         totalLabel="models"
+        caption="OpenRouter model catalog with context, pricing per million tokens, input modalities and capabilities"
         selectionLabel={(n) => (n === 1 ? "model" : "models")}
         toolbar={
           <span className="hidden items-center gap-1.5 text-xs text-muted-foreground lg:inline-flex">
-            <span className="relative flex size-2">
-              <span className="absolute inline-flex size-full animate-ping rounded-full bg-success/60" />
-              <span className="relative inline-flex size-2 rounded-full bg-success" />
-            </span>
+            <StatusDot tone="success" pulse label="Live" />
             Live from OpenRouter ·{" "}
             {formatDate(fetchedAt, {
               month: "short",
@@ -316,7 +315,7 @@ function ModelDetailSheet({
       },
     })
     toast.success(`${model.name} is now the Assist model`, {
-      description: "Pinned under “From model catalog” in the model picker.",
+      description: "Pinned under From model catalog in the model picker.",
       action: {
         label: "Open Assist",
         onClick: () => {
@@ -329,7 +328,9 @@ function ModelDetailSheet({
 
   return (
     <Sheet open={model !== null} onOpenChange={(o) => !o && onClose()}>
-      <SheetContent className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-xl">
+      <SheetContent
+        className={cn(sheetWidths.detail, "flex flex-col gap-0 p-0")}
+      >
         {model && (
           <>
             <SheetHeader className="gap-3 border-b px-6 py-5">
@@ -341,7 +342,7 @@ function ModelDetailSheet({
                   />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <p className="eyebrow">{model.providerLabel}</p>
+                  <Eyebrow>{model.providerLabel}</Eyebrow>
                   <SheetTitle className="truncate text-lg leading-tight">
                     {model.name}
                   </SheetTitle>
@@ -379,7 +380,7 @@ function ModelDetailSheet({
               </div>
             </SheetHeader>
 
-            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+            <SheetBody>
               <div className="flex flex-col gap-6">
                 <p className="text-sm leading-relaxed text-muted-foreground">
                   {model.description || "No description provided."}
@@ -393,10 +394,15 @@ function ModelDetailSheet({
                   <Fact
                     label="Max output"
                     value={
-                      model.maxOutput ? formatContext(model.maxOutput) : "—"
+                      model.maxOutput
+                        ? formatContext(model.maxOutput)
+                        : "Not reported"
                     }
                   />
-                  <Fact label="Tokenizer" value={model.tokenizer ?? "—"} />
+                  <Fact
+                    label="Tokenizer"
+                    value={model.tokenizer ?? "Not reported"}
+                  />
                   <Fact
                     label="Cutoff"
                     value={
@@ -405,7 +411,7 @@ function ModelDetailSheet({
                             month: "short",
                             year: "numeric",
                           })
-                        : "—"
+                        : "Not reported"
                     }
                   />
                 </dl>
@@ -414,6 +420,9 @@ function ModelDetailSheet({
                   <h3 className="text-sm font-semibold">Pricing</h3>
                   <div className="overflow-hidden rounded-lg border">
                     <table className="w-full text-sm">
+                      <caption className="sr-only">
+                        Pricing for {model.name}
+                      </caption>
                       <tbody className="divide-y">
                         <PriceRow
                           label="Input"
@@ -468,7 +477,7 @@ function ModelDetailSheet({
                     <h3 className="text-sm font-semibold">Capabilities</h3>
                     <CapabilityChips
                       capabilities={model.capabilities}
-                      dense={false}
+                      compact={false}
                     />
                   </div>
                 </section>
@@ -486,7 +495,7 @@ function ModelDetailSheet({
                       {model.supportedParameters.map((p) => (
                         <code
                           key={p}
-                          className="rounded-sm bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground"
+                          className="rounded-sm bg-muted px-1.5 py-0.5 font-mono text-2xs text-muted-foreground"
                         >
                           {p}
                         </code>
@@ -495,35 +504,38 @@ function ModelDetailSheet({
                   )}
                 </section>
               </div>
-            </div>
+            </SheetBody>
 
-            <Separator />
-            <div className="flex flex-wrap items-center justify-between gap-2 px-6 py-4">
-              <Button
-                variant="outline"
-                size="sm"
-                render={
-                  <a
-                    href={`https://openrouter.ai/${model.slug}`}
-                    target="_blank"
-                    rel="noreferrer"
-                  />
-                }
-              >
-                <ArrowUpRightIcon /> View on OpenRouter
-              </Button>
-              <Button size="sm" onClick={pin} disabled={active}>
-                {active ? (
-                  <>
-                    <CheckIcon /> Active in Assist
-                  </>
-                ) : (
-                  <>
-                    <SparklesIcon /> Use in AgentOps Assist
-                  </>
-                )}
-              </Button>
-            </div>
+            <SheetFooterActions
+              secondary={
+                <Button
+                  variant="outline"
+                  size="sm"
+                  render={
+                    <a
+                      href={`https://openrouter.ai/${model.slug}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    />
+                  }
+                >
+                  <ArrowUpRightIcon /> View on OpenRouter
+                </Button>
+              }
+              primary={
+                <Button size="sm" onClick={pin} disabled={active}>
+                  {active ? (
+                    <>
+                      <CheckIcon /> Active in Assist
+                    </>
+                  ) : (
+                    <>
+                      <SparklesIcon /> Use in AgentOps Assist
+                    </>
+                  )}
+                </Button>
+              }
+            />
           </>
         )}
       </SheetContent>
@@ -534,9 +546,7 @@ function ModelDetailSheet({
 function Fact({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg border bg-muted/30 px-3 py-2">
-      <dt className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-        {label}
-      </dt>
+      <Eyebrow as="span">{label}</Eyebrow>
       <dd
         className="mt-0.5 truncate text-sm font-medium tabular-nums"
         title={value}

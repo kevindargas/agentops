@@ -1,5 +1,5 @@
 /**
- * Schedules & triggers — when and why agents run on their own.
+ * Schedules & triggers: when and why agents run on their own.
  *
  * Includes a tiny cron parser (`describeCron`, `nextRun`, `occurrences`) so
  * next-run times and the weekly calendar are computed deterministically from
@@ -7,7 +7,10 @@
  * runs `run-…`.
  */
 
-import { agentTraces } from "./agentops"
+import { agentTraces, deployedAgents, driftSignals } from "./agentops"
+import { budgets } from "./costs"
+import { evalRuns } from "./evals"
+import { changeFreezeWindows, changes } from "./itsm"
 import { chance, createRng, int, NOW, pick, weighted } from "./seed"
 
 /* -------------------------------------------------------------------------- */
@@ -85,7 +88,7 @@ export interface Trigger {
   action: TriggerAction
   fired24h: number
   lastFired?: string
-  /** 0–100 */
+  /** 0 to 100 */
   failureRate: number
   status: TriggerStatus
   secret?: { kind: "HMAC-SHA256" | "Bearer token"; status: SecretStatus }
@@ -349,22 +352,18 @@ export const freezeWindows: FreezeWindow[] = [
     scope: "No production deploys · schedules touching Payments APIs skipped",
     reason: "Database failover rehearsal for the Payments platform.",
   },
-  {
-    id: "frz-003",
-    name: "Black Friday freeze",
-    start: "2026-11-26T00:00:00Z",
-    end: "2026-12-01T00:00:00Z",
-    scope: "No production deploys",
-    reason: "Peak retail traffic — emergency changes only.",
-  },
-  {
-    id: "frz-004",
-    name: "Quarter-end freeze",
-    start: "2026-12-28T00:00:00Z",
-    end: "2027-01-04T00:00:00Z",
-    scope: "No production deploys · finance agents read-only",
-    reason: "Financial close and reduced staffing.",
-  },
+  // Change freezes come from the change calendar's list (lib/data/itsm.ts).
+  ...changeFreezeWindows.map<FreezeWindow>((w) => ({
+    id: w.id,
+    name: w.name,
+    start: w.start,
+    end: w.end,
+    scope:
+      w.id === "frz-004"
+        ? "No production deploys · finance agents read-only"
+        : "No production deploys",
+    reason: w.reason,
+  })),
 ]
 
 export function freezeAt(iso: string) {
@@ -417,7 +416,7 @@ const scheduleSeeds: ScheduleSeed[] = [
     concurrency: "Replace",
     retry: { attempts: 1, backoff: "fixed", delaySec: 60 },
     budgetPerRunUsd: 1.5,
-    ownerId: "u-011",
+    ownerId: "u-018",
     parameters: { window: "PT1H", minSeverity: "Minor", autoClose: true },
     notifications: { slack: "#noc", pagerduty: "P-AGENTOPS-NOC" },
   },
@@ -451,7 +450,7 @@ const scheduleSeeds: ScheduleSeed[] = [
     concurrency: "Forbid",
     retry: { attempts: 1, backoff: "none", delaySec: 0 },
     budgetPerRunUsd: 25,
-    ownerId: "u-003",
+    ownerId: "u-002",
     parameters: { dataset: "support-golden-v7", threshold: 85, sample: 400 },
     notifications: { slack: "#triage-quality" },
   },
@@ -468,7 +467,7 @@ const scheduleSeeds: ScheduleSeed[] = [
     concurrency: "Allow",
     retry: { attempts: 2, backoff: "fixed", delaySec: 300 },
     budgetPerRunUsd: 2,
-    ownerId: "u-005",
+    ownerId: "u-020",
     parameters: { staleAfterDays: 3, maxNudges: 2, channel: "email" },
     notifications: { email: ["servicedesk@acme.io"] },
   },
@@ -485,7 +484,7 @@ const scheduleSeeds: ScheduleSeed[] = [
     concurrency: "Forbid",
     retry: { attempts: 2, backoff: "exponential", delaySec: 180 },
     budgetPerRunUsd: 8,
-    ownerId: "u-007",
+    ownerId: "u-004",
     parameters: { agenda: "next-cab", includeStandard: false },
     notifications: { slack: "#change-management", email: ["cab@acme.io"] },
   },
@@ -502,7 +501,7 @@ const scheduleSeeds: ScheduleSeed[] = [
     concurrency: "Forbid",
     retry: { attempts: 1, backoff: "none", delaySec: 0 },
     budgetPerRunUsd: 3,
-    ownerId: "u-009",
+    ownerId: "u-007",
     parameters: { sources: ["hr-policies", "benefits"], sample: 250 },
     notifications: { slack: "#hr-ai", email: ["people-ops@acme.io"] },
   },
@@ -514,12 +513,13 @@ const scheduleSeeds: ScheduleSeed[] = [
     agentId: "agt-finance-copilot",
     cron: "0 6 1 * *",
     timezone: "UTC",
-    enabled: true,
+    // The target agent is paused, so the digest must not fire.
+    enabled: false,
     avgDurationMs: 11 * MINUTE,
     concurrency: "Forbid",
     retry: { attempts: 3, backoff: "exponential", delaySec: 600 },
     budgetPerRunUsd: 6,
-    ownerId: "u-012",
+    ownerId: "u-016",
     parameters: { period: "P1M", entities: ["sem-spend", "sem-cost-center"] },
     notifications: { email: ["finance-leads@acme.io"] },
   },
@@ -536,7 +536,7 @@ const scheduleSeeds: ScheduleSeed[] = [
     concurrency: "Forbid",
     retry: { attempts: 0, backoff: "none", delaySec: 0 },
     budgetPerRunUsd: 0.4,
-    ownerId: "u-011",
+    ownerId: "u-018",
     parameters: { window: "PT15M", linkOnly: true },
     notifications: {},
   },
@@ -553,7 +553,7 @@ const scheduleSeeds: ScheduleSeed[] = [
     concurrency: "Replace",
     retry: { attempts: 1, backoff: "fixed", delaySec: 120 },
     budgetPerRunUsd: 1,
-    ownerId: "u-003",
+    ownerId: "u-002",
     parameters: { queues: ["web", "email"], draftReplies: true },
     notifications: { slack: "#service-desk" },
   },
@@ -570,7 +570,7 @@ const scheduleSeeds: ScheduleSeed[] = [
     concurrency: "Forbid",
     retry: { attempts: 1, backoff: "none", delaySec: 0 },
     budgetPerRunUsd: 18,
-    ownerId: "u-005",
+    ownerId: "u-020",
     parameters: { dataset: "helpdesk-golden-v4", sample: 120, dedupe: true },
     notifications: { slack: "#helpdesk-quality" },
   },
@@ -621,7 +621,7 @@ const scheduleSeeds: ScheduleSeed[] = [
     concurrency: "Forbid",
     retry: { attempts: 1, backoff: "none", delaySec: 0 },
     budgetPerRunUsd: 20,
-    ownerId: "u-005",
+    ownerId: "u-020",
     parameters: {
       dataset: "helpdesk-golden-v4",
       threshold: 85,
@@ -642,7 +642,7 @@ const scheduleSeeds: ScheduleSeed[] = [
     concurrency: "Allow",
     retry: { attempts: 0, backoff: "none", delaySec: 0 },
     budgetPerRunUsd: 3,
-    ownerId: "u-011",
+    ownerId: "u-018",
     parameters: { target: "shadow", window: "PT4H" },
     notifications: {},
   },
@@ -659,7 +659,7 @@ const scheduleSeeds: ScheduleSeed[] = [
     concurrency: "Forbid",
     retry: { attempts: 2, backoff: "fixed", delaySec: 600 },
     budgetPerRunUsd: 2,
-    ownerId: "u-009",
+    ownerId: "u-007",
     parameters: { region: "APAC", source: "workday" },
     notifications: { email: ["people-ops-apac@acme.io"] },
   },
@@ -676,7 +676,7 @@ const scheduleSeeds: ScheduleSeed[] = [
     concurrency: "Forbid",
     retry: { attempts: 1, backoff: "fixed", delaySec: 300 },
     budgetPerRunUsd: 4,
-    ownerId: "u-012",
+    ownerId: "u-016",
     parameters: { zThreshold: 3, vendors: "all" },
     notifications: { slack: "#finance-ops" },
   },
@@ -686,7 +686,7 @@ const failureMessages = [
   "Budget exceeded: run reached the per-run cap before finishing",
   "Tool timeout: search_knowledge did not respond within 30s",
   "Upstream 429 from the model provider after 3 retries",
-  "Eval gate below threshold (82.1 < 85) — regression flagged",
+  "Eval gate below threshold (82.1 < 85): regression flagged",
   "Semantic layer query failed: entity sem-vendor is deprecated",
   "Output schema validation failed on 14 of 220 items",
 ]
@@ -757,8 +757,8 @@ export const schedules: Schedule[] = scheduleSeeds.map((s) => {
           ? pick(rng, failureMessages)
           : status === "Skipped"
             ? frozen
-              ? `Skipped — inside ${frozen.name} window`
-              : `Skipped — previous run still active (${s.concurrency})`
+              ? `Skipped: inside ${frozen.name} window`
+              : `Skipped: previous run still active (${s.concurrency})`
             : undefined,
     }
     if (s.enabled || i < recent.length - 2) runs_.push(run)
@@ -777,6 +777,68 @@ export function getSchedule(id: string) {
 
 type TriggerSeed = Omit<Trigger, "deliveries" | "lastFired">
 
+/* ---- sample payloads built from real records ------------------------------ */
+
+function criticalDriftPayload() {
+  const s =
+    driftSignals.find(
+      (d) =>
+        d.severity === "Critical" &&
+        d.state === "Open" &&
+        deployedAgents.find((a) => a.id === d.agentId)?.team === "Service Desk"
+    ) ?? driftSignals[0]
+  return {
+    signal: s.id,
+    agent: s.agentId,
+    kind: s.kind,
+    severity: s.severity,
+    metric: s.metric,
+    baseline: s.baseline,
+    current: s.current,
+  }
+}
+
+function budgetOverrunPayload(agentId: string, budgetId: string) {
+  const agent = deployedAgents.find((a) => a.id === agentId)
+  const budget = budgets.find((b) => b.id === budgetId)
+  return {
+    agent: agentId,
+    budget: budgetId,
+    cost: { today: agent?.metrics.costPerDay ?? 0 },
+    limit: { daily: budget?.limit ?? 0 },
+  }
+}
+
+function evalFailurePayload(agentId: string) {
+  const run =
+    evalRuns.find((r) => r.agentId === agentId && r.status === "Failed") ??
+    evalRuns.find((r) => r.agentId === agentId)
+  return {
+    eval: {
+      runId: run?.id ?? null,
+      dataset: run?.datasetId ?? null,
+      score: run?.composite ?? null,
+    },
+    gate: { threshold: 85 },
+  }
+}
+
+function highRiskChangePayload() {
+  const c =
+    changes.find(
+      (x) =>
+        x.state === "Assess" && (x.risk === "High" || x.risk === "Very High")
+    ) ??
+    changes.find((x) => x.risk === "High" || x.risk === "Very High") ??
+    changes[0]
+  return {
+    event: "change.updated",
+    number: c.number,
+    state: c.state,
+    risk: c.risk,
+  }
+}
+
 const triggerSeeds: TriggerSeed[] = [
   {
     id: "trg-001",
@@ -790,7 +852,7 @@ const triggerSeeds: TriggerSeed[] = [
     failureRate: 0,
     status: "Active",
     secret: { kind: "HMAC-SHA256", status: "Valid" },
-    ownerId: "u-007",
+    ownerId: "u-004",
     samplePayload: {
       action: "opened",
       repository: "agentops/prompts",
@@ -813,7 +875,7 @@ const triggerSeeds: TriggerSeed[] = [
     failureRate: 1.4,
     status: "Active",
     secret: { kind: "Bearer token", status: "Valid" },
-    ownerId: "u-005",
+    ownerId: "u-020",
     samplePayload: {
       channel: "#it-help",
       user: "U04KX…",
@@ -832,7 +894,7 @@ const triggerSeeds: TriggerSeed[] = [
     fired24h: 318,
     failureRate: 0.6,
     status: "Active",
-    ownerId: "u-003",
+    ownerId: "u-002",
     samplePayload: {
       from: "jane.doe@customer.example",
       to: "support@acme.io",
@@ -853,11 +915,12 @@ const triggerSeeds: TriggerSeed[] = [
     fired24h: 57,
     failureRate: 3.5,
     status: "Active",
-    ownerId: "u-011",
+    ownerId: "u-018",
     samplePayload: {
       queue: "alerts-critical",
       severity: "Critical",
-      ci: "ci-payments-api",
+      ci: "ci-004",
+      ciName: "Payments API",
       metric: "http_5xx_rate",
       value: 4.8,
     },
@@ -873,7 +936,7 @@ const triggerSeeds: TriggerSeed[] = [
     fired24h: 2,
     failureRate: 0,
     status: "Active",
-    ownerId: "u-003",
+    ownerId: "u-002",
     samplePayload: {
       event: "incident.created",
       number: "INC0010078",
@@ -891,15 +954,8 @@ const triggerSeeds: TriggerSeed[] = [
     fired24h: 1,
     failureRate: 0,
     status: "Active",
-    ownerId: "u-003",
-    samplePayload: {
-      signal: "drf-014",
-      kind: "quality",
-      severity: "Critical",
-      metric: "grounded score",
-      baseline: 0.91,
-      current: 0.84,
-    },
+    ownerId: "u-002",
+    samplePayload: criticalDriftPayload(),
   },
   {
     id: "trg-007",
@@ -912,11 +968,7 @@ const triggerSeeds: TriggerSeed[] = [
     failureRate: 0,
     status: "Active",
     ownerId: "u-001",
-    samplePayload: {
-      agent: "agt-it-helpdesk",
-      cost: { today: 212.4 },
-      budget: { daily: 170 },
-    },
+    samplePayload: budgetOverrunPayload("agt-ops-analyst", "bud-004"),
   },
   {
     id: "trg-008",
@@ -929,10 +981,7 @@ const triggerSeeds: TriggerSeed[] = [
     failureRate: 41.7,
     status: "Error",
     ownerId: "u-002",
-    samplePayload: {
-      eval: { runId: "ev-07105", dataset: "kb-golden-v2", score: 83.6 },
-      gate: { threshold: 85 },
-    },
+    samplePayload: evalFailurePayload("agt-kb-curator"),
   },
   {
     id: "trg-009",
@@ -950,7 +999,7 @@ const triggerSeeds: TriggerSeed[] = [
     samplePayload: {
       ref: "refs/heads/main",
       after: "9f3c1e2",
-      paths: ["prompts/kb-curator/p-16.md"],
+      paths: ["prompts/kb-curator/p-15.md"],
       pusher: "aokafor",
     },
   },
@@ -965,7 +1014,7 @@ const triggerSeeds: TriggerSeed[] = [
     fired24h: 0,
     failureRate: 0,
     status: "Paused",
-    ownerId: "u-009",
+    ownerId: "u-007",
     samplePayload: {
       topic: "hr.policy.updated",
       policy: "parental-leave",
@@ -985,7 +1034,7 @@ const triggerSeeds: TriggerSeed[] = [
     failureRate: 11.1,
     status: "Active",
     secret: { kind: "HMAC-SHA256", status: "Missing" },
-    ownerId: "u-011",
+    ownerId: "u-018",
     samplePayload: {
       event: { event_type: "incident.triggered", id: "Q1ABCD" },
       urgency: "high",
@@ -1004,13 +1053,8 @@ const triggerSeeds: TriggerSeed[] = [
     fired24h: 5,
     failureRate: 0,
     status: "Active",
-    ownerId: "u-007",
-    samplePayload: {
-      event: "change.updated",
-      number: "CHG0030091",
-      state: "Assess",
-      risk: "High",
-    },
+    ownerId: "u-004",
+    samplePayload: highRiskChangePayload(),
   },
   {
     id: "trg-013",
@@ -1024,7 +1068,7 @@ const triggerSeeds: TriggerSeed[] = [
     failureRate: 0,
     status: "Paused",
     secret: { kind: "Bearer token", status: "Valid" },
-    ownerId: "u-012",
+    ownerId: "u-016",
     samplePayload: {
       channel: "#finance-ops",
       text: "@finance-copilot what did we spend on AWS in October?",
@@ -1032,7 +1076,7 @@ const triggerSeeds: TriggerSeed[] = [
   },
 ]
 
-export const triggers: Trigger[] = triggerSeeds.map((t) => {
+const triggers_: Trigger[] = triggerSeeds.map((t) => {
   const n = t.status === "Paused" ? int(rng, 2, 4) : int(rng, 7, 12)
   const spanHours = t.status === "Paused" ? 24 * 9 : 24
   const deliveries: TriggerDelivery[] = Array.from({ length: n }, (_, i) => {
@@ -1105,6 +1149,16 @@ runs_.push({
 export const scheduledRuns: ScheduledRun[] = runs_
   .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
   .slice(0, 100)
+
+const keptRuns = new Set(scheduledRuns.map((r) => r.id))
+
+/** Triggers with deliveries that only link to runs still in `scheduledRuns`. */
+export const triggers: Trigger[] = triggers_.map((t) => ({
+  ...t,
+  deliveries: t.deliveries.map((d) =>
+    d.runId && !keptRuns.has(d.runId) ? { ...d, runId: undefined } : d
+  ),
+}))
 
 export const runStatuses: RunStatus[] = [
   "Succeeded",

@@ -10,6 +10,7 @@ import {
   BookMarkedIcon,
   BookOpenIcon,
   BotIcon,
+  CircleDotIcon,
   CornerDownLeftIcon,
   GitBranchIcon,
   LaptopIcon,
@@ -27,7 +28,9 @@ import {
 import { useTheme } from "next-themes"
 
 import { useAi } from "@/components/ai/ai-provider"
+import { CountPill } from "@/components/shared/count-pill"
 import { PriorityBadge, StateBadge } from "@/components/shared/status-badge"
+import { withThemeTransition } from "@/components/theme-provider"
 import { Button } from "@/components/ui/button"
 import {
   Command,
@@ -42,21 +45,15 @@ import {
 } from "@/components/ui/command"
 import { Kbd, KbdGroup } from "@/components/ui/kbd"
 import { useSidebar } from "@/components/ui/sidebar"
-import { goToShortcuts, navigation, quickCreateItems } from "@/config/nav"
-import { siteConfig } from "@/config/site"
 import {
-  agentTraces,
-  changes,
-  deployedAgents,
-  incidents,
-  knowledgeArticles,
-  prompts,
-  promptTypeLabel,
-  releases,
-  requests,
-  semanticEntities,
-} from "@/lib/data"
+  goToShortcuts,
+  navigation,
+  quickCreateItems,
+  type NavCounts,
+} from "@/config/nav"
+import { siteConfig } from "@/config/site"
 import { openQuickCreate } from "./quick-create"
+import type { SearchEntry, SearchKind } from "./search-index"
 
 const OPEN_EVENT = "agentops:command-menu"
 /** How long after pressing G the second key of a chord is accepted. */
@@ -66,17 +63,46 @@ export function openCommandMenu() {
   window.dispatchEvent(new Event(OPEN_EVENT))
 }
 
-/** True when a bare keystroke should be left alone: typing, or inside an open popup. */
-function isTypingTarget(target: EventTarget | null) {
+/**
+ * Keyboard contract for single-key shortcuts (C, D, G-then-letter).
+ *
+ * The global handler in `CommandMenu` ignores a keydown when:
+ * - `event.defaultPrevented` is true. Page-level handlers (the review queue's
+ *   A / C / S keys, a table's "/" focus) claim a key by calling
+ *   `event.preventDefault()`; they do not need to stop propagation.
+ * - a modifier is held (Meta, Ctrl, Alt) or the key is a repeat.
+ * - the target is an input, textarea, select or contenteditable element.
+ * - focus is inside a dialog, sheet, menu, listbox, combobox, the command
+ *   palette itself or the assistant panel.
+ *
+ * Cmd/Ctrl K and Cmd/Ctrl , are handled before those checks because they are
+ * modifier chords and must work while typing.
+ */
+export function shouldIgnoreShortcut(event: KeyboardEvent) {
+  if (event.defaultPrevented || event.repeat) return true
+  if (event.metaKey || event.ctrlKey || event.altKey) return true
+  return isScopedTarget(event.target)
+}
+
+const SCOPED_SELECTOR = [
+  '[role="dialog"]',
+  '[role="alertdialog"]',
+  '[role="menu"]',
+  '[role="listbox"]',
+  '[role="combobox"]',
+  "[data-slot=sheet-content]",
+  "[data-slot=dialog-content]",
+  "[cmdk-root]",
+  '[aria-label="AgentOps Assist"]',
+].join(", ")
+
+/** True when a bare keystroke should be left alone: typing, or inside a scoped surface. */
+function isScopedTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return false
   if (target.isContentEditable) return true
   const tag = target.tagName
   if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true
-  return Boolean(
-    target.closest(
-      '[role="dialog"], [role="menu"], [role="listbox"], [role="combobox"]'
-    )
-  )
+  return target.closest(SCOPED_SELECTOR) !== null
 }
 
 function Keys({ keys }: { keys: readonly string[] }) {
@@ -103,14 +129,14 @@ export function CommandMenuTrigger({ className }: { className?: string }) {
     >
       <SearchIcon className="size-3.5 opacity-70" />
       <span className="hidden truncate lg:inline">
-        Search records, people, actions…
+        Search records, people, actions
       </span>
       <span className="lg:hidden">Search</span>
       <KbdGroup className="ml-auto hidden xl:flex">
         {siteConfig.shortcuts.commandMenu.map((k) => (
           <Kbd
             key={k}
-            className="h-4.5 min-w-4.5 bg-background/80 text-[10px] shadow-xs ring-1 ring-border/60 dark:bg-muted"
+            className="h-4.5 min-w-4.5 bg-background/80 text-3xs shadow-xs ring-1 ring-border/60 dark:bg-muted"
           >
             {k}
           </Kbd>
@@ -120,120 +146,49 @@ export function CommandMenuTrigger({ className }: { className?: string }) {
   )
 }
 
-interface Hit {
-  kind: string
-  number: string
-  title: string
-  href: string
-  icon: LucideIcon
-  meta: React.ReactNode
+const kindIcons: Record<SearchKind, LucideIcon> = {
+  Incident: AlertTriangleIcon,
+  Problem: CircleDotIcon,
+  Change: GitBranchIcon,
+  Request: PackageIcon,
+  Article: BookOpenIcon,
+  Agent: BotIcon,
+  "Semantic layer": BookMarkedIcon,
+  Prompt: ScrollTextIcon,
+  Release: RocketIcon,
+  Trace: RouteIcon,
 }
 
-function searchRecords(q: string): Hit[] {
-  const hits: Hit[] = []
-  const match = (...parts: string[]) =>
-    parts.join(" ").toLowerCase().includes(q)
-  for (const i of incidents)
-    if (match(i.number, i.shortDescription))
-      hits.push({
-        kind: "Incident",
-        number: i.number,
-        title: i.shortDescription,
-        href: `/itsm/incidents/${i.number}`,
-        icon: AlertTriangleIcon,
-        meta: <PriorityBadge priority={i.priority} short />,
-      })
-  for (const c of changes)
-    if (match(c.number, c.shortDescription))
-      hits.push({
-        kind: "Change",
-        number: c.number,
-        title: c.shortDescription,
-        href: `/itsm/changes/${c.number}`,
-        icon: GitBranchIcon,
-        meta: <StateBadge state={c.state} />,
-      })
-  for (const r of requests)
-    if (match(r.number))
-      hits.push({
-        kind: "Request",
-        number: r.number,
-        title: `${r.items.length} item(s)`,
-        href: `/itsm/requests/${r.number}`,
-        icon: PackageIcon,
-        meta: <StateBadge state={r.state} />,
-      })
-  for (const k of knowledgeArticles)
-    if (match(k.number, k.title))
-      hits.push({
-        kind: "Article",
-        number: k.number,
-        title: k.title,
-        href: `/itsm/knowledge/${k.number}`,
-        icon: BookOpenIcon,
-        meta: <StateBadge state={k.state} />,
-      })
-  for (const a of deployedAgents)
-    if (match(a.id, a.name, a.team, a.framework, a.modelId))
-      hits.push({
-        kind: "Agent",
-        number: a.version,
-        title: a.name,
-        href: `/agentops/agents/${a.id}`,
-        icon: BotIcon,
-        meta: <StateBadge state={a.health} />,
-      })
-  for (const s of semanticEntities)
-    if (match(s.name, s.kind, s.domain, ...s.synonyms))
-      hits.push({
-        kind: "Semantic layer",
-        number: s.kind,
-        title: s.name,
-        href: `/agentops/semantic-layer?entity=${s.id}`,
-        icon: BookMarkedIcon,
-        meta: <StateBadge state={s.status} />,
-      })
-  for (const p of prompts)
-    if (match(p.id, p.slug, p.name, p.type))
-      hits.push({
-        kind: "Prompt",
-        number: p.slug,
-        title: p.name,
-        href: `/agentops/prompts/${p.id}`,
-        icon: ScrollTextIcon,
-        meta: (
-          <span className="text-xs text-muted-foreground">
-            {promptTypeLabel[p.type]}
-          </span>
-        ),
-      })
-  for (const r of releases)
-    if (match(r.id, r.version, r.summary, r.agentId))
-      hits.push({
-        kind: "Release",
-        number: r.id,
-        title: `${r.version} · ${r.summary}`,
-        href: `/agentops/deployments/${r.id}`,
-        icon: RocketIcon,
-        meta: <StateBadge state={r.stage} size="sm" />,
-      })
-  if (q.startsWith("tr_"))
-    for (const t of agentTraces)
-      if (t.id.startsWith(q))
-        hits.push({
-          kind: "Trace",
-          number: t.id,
-          title: t.userQuery,
-          href: `/agentops/traces/${t.id}`,
-          icon: RouteIcon,
-          meta: <StateBadge state={t.status} />,
-        })
-  return hits.slice(0, 12)
+function HitMeta({ hit }: { hit: SearchEntry }) {
+  if (hit.priority) return <PriorityBadge priority={hit.priority} short />
+  if (hit.state) return <StateBadge state={hit.state} size="sm" />
+  if (hit.meta)
+    return <span className="text-xs text-muted-foreground">{hit.meta}</span>
+  return null
 }
 
-export function CommandMenu() {
+function searchRecords(index: SearchEntry[], q: string): SearchEntry[] {
+  const hits: SearchEntry[] = []
+  for (const entry of index) {
+    if (entry.text.includes(q)) {
+      hits.push(entry)
+      if (hits.length >= 12) break
+    }
+  }
+  return hits
+}
+
+export function CommandMenu({
+  searchIndex = [],
+  navCounts,
+}: {
+  /** Built on the server by `buildSearchIndex()`; empty disables record search. */
+  searchIndex?: SearchEntry[]
+  /** Live badge counts from `getNavCounts()`. */
+  navCounts?: NavCounts
+}) {
   const router = useRouter()
-  const { setTheme } = useTheme()
+  const { setTheme, resolvedTheme } = useTheme()
   const { toggleSidebar } = useSidebar()
   const { toggle: toggleAssistant } = useAi()
   const [open, setOpen] = React.useState(false)
@@ -244,12 +199,17 @@ export function CommandMenu() {
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey
-      if (mod && (e.key === "k" || e.key === "K")) {
+      if (mod && !e.altKey && (e.key === "k" || e.key === "K")) {
         e.preventDefault()
         setOpen((o) => !o)
         return
       }
-      if (open || mod || e.altKey || isTypingTarget(e.target)) return
+      if (mod && !e.altKey && e.key === ",") {
+        e.preventDefault()
+        router.push("/settings")
+        return
+      }
+      if (open || shouldIgnoreShortcut(e)) return
 
       const key = e.key.toLowerCase()
       const started = pendingChord.current
@@ -269,6 +229,13 @@ export function CommandMenu() {
       if (key === siteConfig.shortcuts.quickCreate[0].toLowerCase()) {
         e.preventDefault()
         openQuickCreate()
+        return
+      }
+      if (key === siteConfig.shortcuts.darkMode[0].toLowerCase()) {
+        e.preventDefault()
+        withThemeTransition(() =>
+          setTheme(resolvedTheme === "dark" ? "light" : "dark")
+        )
       }
     }
     const onOpen = () => setOpen(true)
@@ -278,7 +245,7 @@ export function CommandMenu() {
       document.removeEventListener("keydown", onKey)
       window.removeEventListener(OPEN_EVENT, onOpen)
     }
-  }, [open, router])
+  }, [open, router, resolvedTheme, setTheme])
 
   const handleOpenChange = (next: boolean) => {
     setOpen(next)
@@ -298,8 +265,8 @@ export function CommandMenu() {
 
   const q = query.trim().toLowerCase()
   const records = React.useMemo(
-    () => (q.length < 2 ? [] : searchRecords(q)),
-    [q]
+    () => (q.length < 2 ? [] : searchRecords(searchIndex, q)),
+    [q, searchIndex]
   )
 
   return (
@@ -312,14 +279,16 @@ export function CommandMenu() {
     >
       <Command loop>
         <CommandInput
-          placeholder="Search records, pages and actions…"
+          placeholder="Search records, pages and actions"
           value={query}
           onValueChange={setQuery}
         />
         <CommandList className="max-h-96">
           <CommandEmpty>
             <div className="flex flex-col items-center gap-1 py-2">
-              <span className="text-sm">No results for “{query}”</span>
+              <span className="text-sm">
+                No results for &quot;{query}&quot;
+              </span>
               <span className="text-xs text-muted-foreground">
                 Try a record number such as INC0010042, or a page name.
               </span>
@@ -328,25 +297,28 @@ export function CommandMenu() {
 
           {records.length > 0 && (
             <CommandGroup heading="Records">
-              {records.map((r) => (
-                <CommandItem
-                  key={r.href}
-                  value={`${r.kind} ${r.number} ${r.title}`}
-                  onSelect={() => go(r.href)}
-                >
-                  <r.icon className="text-muted-foreground" />
-                  <span className="w-24 shrink-0 font-mono text-xs text-muted-foreground tabular-nums">
-                    {r.number}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate">{r.title}</span>
-                  <CommandShortcut className="flex items-center gap-2 tracking-normal">
-                    <span className="hidden text-[11px] sm:inline">
-                      {r.kind}
+              {records.map((r) => {
+                const Icon = kindIcons[r.kind]
+                return (
+                  <CommandItem
+                    key={r.href}
+                    value={`${r.kind} ${r.number} ${r.title}`}
+                    onSelect={() => go(r.href)}
+                  >
+                    <Icon className="text-muted-foreground" />
+                    <span className="w-24 shrink-0 truncate font-mono text-xs text-muted-foreground tabular-nums">
+                      {r.number}
                     </span>
-                    {r.meta}
-                  </CommandShortcut>
-                </CommandItem>
-              ))}
+                    <span className="min-w-0 flex-1 truncate">{r.title}</span>
+                    <CommandShortcut className="flex items-center gap-2 tracking-normal">
+                      <span className="hidden text-2xs sm:inline">
+                        {r.kind}
+                      </span>
+                      <HitMeta hit={r} />
+                    </CommandShortcut>
+                  </CommandItem>
+                )
+              })}
             </CommandGroup>
           )}
 
@@ -376,7 +348,7 @@ export function CommandMenu() {
               </CommandShortcut>
             </CommandItem>
             <CommandItem
-              value="toggle assistant kevin assist ai chat"
+              value="toggle assistant agentops assist ai chat"
               onSelect={() => run(toggleAssistant)}
             >
               <SparklesIcon className="text-brand" />
@@ -391,34 +363,40 @@ export function CommandMenu() {
 
           {navigation.map((group) => (
             <CommandGroup key={group.label} heading={group.label}>
-              {group.items.map((item) => (
-                <CommandItem
-                  key={item.href}
-                  value={[
-                    group.label,
-                    item.title,
-                    ...(item.keywords ?? []),
-                  ].join(" ")}
-                  onSelect={() => go(item.href)}
-                >
-                  {item.icon ? (
-                    <item.icon className="text-muted-foreground" />
-                  ) : (
-                    <ArrowRightIcon />
-                  )}
-                  <span className="shrink-0">{item.title}</span>
-                  {item.description && (
-                    <span className="hidden min-w-0 flex-1 truncate text-xs text-muted-foreground sm:inline">
-                      {item.description}
-                    </span>
-                  )}
-                  {item.shortcut && (
-                    <CommandShortcut className="tracking-normal">
-                      <Keys keys={item.shortcut.split(" ")} />
-                    </CommandShortcut>
-                  )}
-                </CommandItem>
-              ))}
+              {group.items.map((item) => {
+                const count = item.badge ? navCounts?.[item.badge] : undefined
+                return (
+                  <CommandItem
+                    key={item.href}
+                    value={[
+                      group.label,
+                      item.title,
+                      ...(item.keywords ?? []),
+                    ].join(" ")}
+                    onSelect={() => go(item.href)}
+                  >
+                    {item.icon ? (
+                      <item.icon className="text-muted-foreground" />
+                    ) : (
+                      <ArrowRightIcon />
+                    )}
+                    <span className="shrink-0">{item.title}</span>
+                    {count !== undefined && count > 0 && (
+                      <CountPill count={count} />
+                    )}
+                    {item.description && (
+                      <span className="hidden min-w-0 flex-1 truncate text-xs text-muted-foreground sm:inline">
+                        {item.description}
+                      </span>
+                    )}
+                    {item.shortcut && (
+                      <CommandShortcut className="tracking-normal">
+                        <Keys keys={item.shortcut.split(" ")} />
+                      </CommandShortcut>
+                    )}
+                  </CommandItem>
+                )
+              })}
             </CommandGroup>
           ))}
 
@@ -438,6 +416,9 @@ export function CommandMenu() {
             >
               <MoonIcon className="text-muted-foreground" />
               <span>Dark theme</span>
+              <CommandShortcut className="tracking-normal">
+                <Keys keys={siteConfig.shortcuts.darkMode} />
+              </CommandShortcut>
             </CommandItem>
             <CommandItem
               value="theme system auto"
@@ -449,7 +430,7 @@ export function CommandMenu() {
           </CommandGroup>
         </CommandList>
 
-        <div className="flex items-center justify-between gap-4 border-t border-border/60 px-3 py-2 text-[11px] text-muted-foreground">
+        <div className="flex items-center justify-between gap-4 border-t border-border/60 px-3 py-2 text-2xs text-muted-foreground">
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1">
               <Kbd>↑</Kbd>

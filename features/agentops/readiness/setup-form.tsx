@@ -5,6 +5,7 @@ import { cn } from "cn"
 import { FlaskConicalIcon, RocketIcon, SparklesIcon } from "lucide-react"
 import { toast } from "sonner"
 
+import { MetricTile } from "@/components/shared/metric-tile"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
@@ -442,7 +443,7 @@ function ImpactPanel({
         </p>
       </div>
 
-      <dl className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-2 gap-2">
         <ImpactStat label="Apply in full" value={impact.applies} />
         <ImpactStat label="Down-weighted" value={impact.reduced} />
         <ImpactStat label="Hidden" value={impact.hidden} muted />
@@ -456,10 +457,10 @@ function ImpactPanel({
           }
           accent
         />
-      </dl>
+      </div>
 
       <div className="flex flex-col gap-1.5">
-        <span className="text-[11px] font-medium text-muted-foreground">
+        <span className="text-2xs font-medium text-muted-foreground">
           Required per domain
         </span>
         <ul className="divide-y divide-border/70 rounded-lg border">
@@ -486,7 +487,7 @@ function ImpactPanel({
 
       <p className="text-xs leading-relaxed text-muted-foreground">
         {systemTypeLabel[profile.systemType]},{" "}
-        {autonomyLabel[profile.autonomy].split(" — ")[0].toLowerCase()},{" "}
+        {autonomyLabel[profile.autonomy].split(": ")[0].toLowerCase()},{" "}
         {sensitivityLabel[profile.dataSensitivity].toLowerCase()} data for{" "}
         {exposureLabel[profile.exposure].toLowerCase()}
         {profile.regulatory.length > 0
@@ -512,26 +513,13 @@ function ImpactStat({
   accent?: boolean
 }) {
   return (
-    <div
-      className={cn(
-        "flex flex-col rounded-lg border p-2.5",
-        accent && "border-brand/30 bg-brand/5"
-      )}
-    >
-      <dt className="text-[11px] leading-tight font-medium text-muted-foreground">
-        {label}
-      </dt>
-      <dd
-        className={cn(
-          "mt-1 text-xl font-semibold tabular-nums",
-          muted && "text-muted-foreground",
-          accent && "text-brand"
-        )}
-      >
-        {value}
-      </dd>
-      {hint && <dd className="text-[11px] text-muted-foreground">{hint}</dd>}
-    </div>
+    <MetricTile
+      label={label}
+      value={accent ? <span className="text-brand">{value}</span> : value}
+      hint={hint}
+      tone={muted ? "muted" : undefined}
+      className={cn(accent && "border-brand/30 bg-brand/5")}
+    />
   )
 }
 
@@ -592,7 +580,7 @@ function OptionCard({
           {hint}
         </span>
         {meta && (
-          <span className="mt-1 font-mono text-[11px] font-normal text-muted-foreground tabular-nums">
+          <span className="mt-1 font-mono text-2xs font-normal text-muted-foreground tabular-nums">
             {meta}
           </span>
         )}

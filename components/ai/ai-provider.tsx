@@ -9,6 +9,8 @@ import {
   agents as seedAgents,
   models,
   proposals as seedProposals,
+  toolCatalog,
+  toolCategoryFor,
   type AgentActivity,
   type AgentProposal,
   type AiAgent,
@@ -17,12 +19,13 @@ import {
 import {
   contextFromPathname,
   planResponse,
+  redactPii,
   type AssistantContext,
   type Source,
   type SuggestedAction,
 } from "@/lib/ai/assistant"
 import { templatePrompt, type AgentTemplate } from "@/lib/ai/templates"
-import { hoursAgo } from "@/lib/data/seed"
+import { hoursAgo, NOW } from "@/lib/data/seed"
 import { createStore } from "@/lib/store"
 
 export type ChatStatus = "ready" | "submitted" | "streaming" | "error"
@@ -50,6 +53,7 @@ export interface ChatMessage {
   id: string
   role: "user" | "assistant"
   parts: MessagePart[]
+  /** Anchored to the fixed demo clock so relative times stay consistent. */
   createdAt: number
 }
 
@@ -133,6 +137,8 @@ interface AiContextValue {
   proposals: AgentProposal[]
   decide: (id: string, decision: "approve" | "reject") => void
   activity: AgentActivity[]
+  /** Actions taken by enabled agents in the last 24 hours, against `dailyActionBudget`. */
+  actionsToday: number
 }
 
 const AiContext = React.createContext<AiContextValue | null>(null)
@@ -140,6 +146,9 @@ const AiContext = React.createContext<AiContextValue | null>(null)
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 let idCounter = 0
 const nextId = () => `m${Date.now().toString(36)}${(idCounter++).toString(36)}`
+/** Monotonic timestamps anchored to the demo clock, never wall-clock. */
+let clockOffset = 0
+const stamp = () => NOW.getTime() + ++clockOffset
 
 export function AiProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
@@ -155,8 +164,12 @@ export function AiProvider({ children }: { children: React.ReactNode }) {
   const abortRef = React.useRef<{ cancelled: boolean } | null>(null)
 
   const context = React.useMemo(() => contextFromPathname(pathname), [pathname])
+  const actionsToday = React.useMemo(
+    () => agents.filter((a) => a.enabled).reduce((n, a) => n + a.actions24h, 0),
+    [agents]
+  )
 
-  // ⌘J / Ctrl+J toggles the assistant.
+  // Cmd+J / Ctrl+J toggles the assistant.
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.key === "j" || e.key === "J") && (e.metaKey || e.ctrlKey)) {
@@ -194,8 +207,17 @@ export function AiProvider({ children }: { children: React.ReactNode }) {
 
   const ask = React.useCallback(
     async (prompt: string) => {
-      const text = prompt.trim()
-      if (!text) return
+      const raw = prompt.trim()
+      if (!raw) return
+      // Guardrail: strip personal data before the prompt reaches the engine.
+      const redaction = settings.piiRedaction
+        ? redactPii(raw)
+        : { text: raw, redacted: 0 }
+      const text = redaction.text
+      if (redaction.redacted > 0)
+        toast("Personal data redacted", {
+          description: `${redaction.redacted} ${redaction.redacted === 1 ? "value" : "values"} replaced before the prompt was processed (Redact personal data is on).`,
+        })
       uiStore.set({ open: true, tab: "chat" })
       const run = planResponse(text, context)
       const token = { cancelled: false }
@@ -207,13 +229,13 @@ export function AiProvider({ children }: { children: React.ReactNode }) {
           id: nextId(),
           role: "user",
           parts: [{ type: "text", text, streaming: false }],
-          createdAt: Date.now(),
+          createdAt: stamp(),
         },
         {
           id: assistantId,
           role: "assistant",
           parts: [],
-          createdAt: Date.now(),
+          createdAt: stamp(),
         },
       ])
       setStatus("submitted")
@@ -250,22 +272,36 @@ export function AiProvider({ children }: { children: React.ReactNode }) {
             )
           )
         } else if (step.kind === "tool") {
+          // Guardrail: tool categories unchecked under "Allowed tools" are skipped.
+          const category = toolCategoryFor(step.name)
+          const allowed = settings.allowedTools.includes(category)
+          const categoryLabel =
+            toolCatalog.find((t) => t.id === category)?.label ?? category
           patchAssistant(assistantId, (parts) => [
             ...parts,
             {
               type: "tool",
               name: step.name,
-              title: step.title,
+              title: allowed ? step.title : `${step.title} (skipped)`,
               input: step.input,
               state: "input-available",
             },
           ])
-          await sleep(step.durationMs)
+          await sleep(allowed ? step.durationMs : 120)
           if (token.cancelled) return
           patchAssistant(assistantId, (parts) =>
             parts.map((p, idx) =>
               idx === parts.length - 1 && p.type === "tool"
-                ? { ...p, output: step.output, state: "output-available" }
+                ? {
+                    ...p,
+                    output: allowed
+                      ? step.output
+                      : {
+                          skipped: true,
+                          reason: `"${categoryLabel}" is not in the allowed tools on Workflow Automations. The answer below relies on the remaining steps.`,
+                        },
+                    state: "output-available",
+                  }
                 : p
             )
           )
@@ -316,7 +352,13 @@ export function AiProvider({ children }: { children: React.ReactNode }) {
       }
       setStatus("ready")
     },
-    [context, patchAssistant, settings.showReasoning]
+    [
+      context,
+      patchAssistant,
+      settings.showReasoning,
+      settings.piiRedaction,
+      settings.allowedTools,
+    ]
   )
 
   const clear = React.useCallback(() => {
@@ -345,10 +387,12 @@ export function AiProvider({ children }: { children: React.ReactNode }) {
 
   const applyAction = React.useCallback(
     (messageId: string, action: SuggestedAction) => {
+      const budgetSpent = actionsToday >= settings.dailyActionBudget
       const needsApproval =
         action.requiresApproval ||
-        (settings.requireApprovalForHighRisk && action.risk === "high")
-      const recordNumber = context.recordNumber ?? "—"
+        (settings.requireApprovalForHighRisk && action.risk === "high") ||
+        budgetSpent
+      const recordNumber = context.recordNumber ?? "none"
       if (needsApproval) {
         setProposals((prev) => [
           {
@@ -357,7 +401,9 @@ export function AiProvider({ children }: { children: React.ReactNode }) {
             recordNumber,
             recordHref: context.pathname,
             action: action.label,
-            rationale: `Requested from AgentOps Assist: ${action.description}`,
+            rationale: budgetSpent
+              ? `Requested from AgentOps Assist after the daily action budget (${settings.dailyActionBudget}) was spent: ${action.description}`
+              : `Requested from AgentOps Assist: ${action.description}`,
             confidence: 0.9,
             created: hoursAgo(0),
             impact:
@@ -369,9 +415,12 @@ export function AiProvider({ children }: { children: React.ReactNode }) {
           },
           ...prev,
         ])
-        toast("Queued for approval", {
-          description: `${action.label} on ${recordNumber}`,
-        })
+        toast(
+          budgetSpent && !action.requiresApproval
+            ? "Daily action budget spent; queued for approval"
+            : "Queued for approval",
+          { description: `${action.label} on ${recordNumber}` }
+        )
         patchAssistant(messageId, (parts) =>
           parts.map((p) =>
             p.type === "actions"
@@ -394,7 +443,7 @@ export function AiProvider({ children }: { children: React.ReactNode }) {
           ...prev,
         ])
         toast.success(action.label, {
-          description: `Applied to ${recordNumber}`,
+          description: `Recorded in the Workflow Automations activity list for ${recordNumber}. The record itself is sample data and does not change.`,
         })
         patchAssistant(messageId, (parts) =>
           parts.map((p) =>
@@ -405,7 +454,13 @@ export function AiProvider({ children }: { children: React.ReactNode }) {
         )
       }
     },
-    [context, patchAssistant, settings.requireApprovalForHighRisk]
+    [
+      actionsToday,
+      context,
+      patchAssistant,
+      settings.dailyActionBudget,
+      settings.requireApprovalForHighRisk,
+    ]
   )
 
   const updateAgent = React.useCallback(
@@ -449,8 +504,13 @@ export function AiProvider({ children }: { children: React.ReactNode }) {
         ...prev,
       ])
       if (decision === "approve")
-        toast.success("Approved", { description: p.action })
-      else toast("Rejected", { description: p.action })
+        toast.success("Approved", {
+          description: `${p.action}. Moved to the activity list.`,
+        })
+      else
+        toast("Rejected", {
+          description: `${p.action}. Moved to the activity list.`,
+        })
     },
     [proposals]
   )
@@ -480,6 +540,7 @@ export function AiProvider({ children }: { children: React.ReactNode }) {
       proposals,
       decide,
       activity,
+      actionsToday,
     }),
     [
       ui.open,
@@ -500,6 +561,7 @@ export function AiProvider({ children }: { children: React.ReactNode }) {
       proposals,
       decide,
       activity,
+      actionsToday,
     ]
   )
 

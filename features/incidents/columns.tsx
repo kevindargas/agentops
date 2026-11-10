@@ -1,10 +1,21 @@
 "use client"
 
+import * as React from "react"
 import Link from "next/link"
 import { createColumnHelper } from "@tanstack/react-table"
 import { MoreHorizontalIcon, StarIcon } from "lucide-react"
 import { toast } from "sonner"
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -31,9 +42,133 @@ import {
 } from "@/components/shared/status-badge"
 import { GroupChip, UserChip } from "@/components/shared/user-chip"
 import { getCi } from "@/lib/data/cmdb"
+import { NOW } from "@/lib/data/seed"
+import { currentUser } from "@/lib/data/users"
 import type { Incident } from "@/lib/types"
+import { incidentsStore } from "./incidents-store"
 
 const col = createColumnHelper<DataTableFeatures, Incident>()
+
+const closed = new Set<Incident["state"]>(["Resolved", "Closed", "Canceled"])
+
+/** Mutations shared by the row menu and the bulk bar; every toast reflects them. */
+export function assignIncidentToMe(numbers: string[]) {
+  const now = NOW.toISOString()
+  for (const n of numbers)
+    incidentsStore.patch(n, { assignedToId: currentUser.id, updated: now })
+}
+
+export function resolveIncidents(numbers: string[]) {
+  const now = NOW.toISOString()
+  for (const n of numbers)
+    incidentsStore.patch(n, (i) =>
+      closed.has(i.state)
+        ? i
+        : {
+            ...i,
+            state: "Resolved",
+            resolved: now,
+            updated: now,
+            slaBreached: i.slaBreached || new Date(i.slaDue) < NOW,
+          }
+    )
+}
+
+export function cancelIncident(number: string) {
+  const now = NOW.toISOString()
+  incidentsStore.patch(number, { state: "Canceled", updated: now })
+}
+
+function IncidentRowActions({ incident }: { incident: Incident }) {
+  const [confirmCancel, setConfirmCancel] = React.useState(false)
+  const done = closed.has(incident.state)
+
+  async function copyNumber() {
+    try {
+      await navigator.clipboard.writeText(incident.number)
+      toast(`Copied ${incident.number}`)
+    } catch {
+      toast.error("Clipboard is not available in this context")
+    }
+  }
+
+  return (
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label={`Actions for ${incident.number}`}
+              className="text-muted-foreground opacity-0 transition-opacity group-hover/row:opacity-100 focus-visible:opacity-100 data-popup-open:opacity-100 pointer-coarse:opacity-100"
+            />
+          }
+        >
+          <MoreHorizontalIcon />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-44">
+          <DropdownMenuItem
+            render={<Link href={`/itsm/incidents/${incident.number}`} />}
+          >
+            Open
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={done || incident.assignedToId === currentUser.id}
+            onClick={() => {
+              assignIncidentToMe([incident.number])
+              toast.success(`${incident.number} assigned to you`)
+            }}
+          >
+            Assign to me
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={copyNumber}>Copy number</DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            disabled={done}
+            onClick={() => {
+              resolveIncidents([incident.number])
+              toast.success(`${incident.number} resolved`)
+            }}
+          >
+            Resolve
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            variant="destructive"
+            disabled={done}
+            onClick={() => setConfirmCancel(true)}
+          >
+            Cancel
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <AlertDialog open={confirmCancel} onOpenChange={setConfirmCancel}>
+        <AlertDialogContent size="sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancel {incident.number}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Canceled incidents are excluded from resolution metrics and cannot
+              be reopened.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep incident</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                cancelIncident(incident.number)
+                setConfirmCancel(false)
+                toast(`${incident.number} canceled`)
+              }}
+            >
+              Cancel incident
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  )
+}
 
 export const incidentColumns = col.columns([
   selectColumn<Incident>(),
@@ -71,7 +206,11 @@ export const incidentColumns = col.columns([
   }),
   col.accessor("priority", {
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Priority" />
+      <DataTableColumnHeader
+        column={column}
+        title="Priority"
+        hint="Impact times urgency. P1 is critical, P5 is planning."
+      />
     ),
     cell: ({ getValue }) => <PriorityBadge priority={getValue()} />,
     meta: { width: "w-32", label: "Priority", skeleton: "w-20 rounded-full" },
@@ -106,7 +245,7 @@ export const incidentColumns = col.columns([
   }),
   col.accessor("ciId", {
     id: "ci",
-    header: "Configuration item",
+    header: "Affected service",
     cell: ({ getValue }) => {
       const ci = getCi(getValue())
       return ci ? (
@@ -118,11 +257,17 @@ export const incidentColumns = col.columns([
       )
     },
     enableSorting: false,
-    meta: { label: "Configuration item", skeleton: "w-28" },
+    meta: { label: "Affected service", skeleton: "w-28" },
   }),
   col.accessor("slaDue", {
     id: "sla",
-    header: "SLA",
+    header: ({ column }) => (
+      <DataTableColumnHeader
+        column={column}
+        title="SLA"
+        hint="Time left until the resolution target for this priority"
+      />
+    ),
     cell: ({ row }) => (
       <SlaIndicator
         due={row.original.slaDue}
@@ -155,56 +300,7 @@ export const incidentColumns = col.columns([
   }),
   col.display({
     id: "actions",
-    cell: ({ row }) => (
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          render={
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              aria-label={`Actions for ${row.original.number}`}
-              className="text-muted-foreground opacity-0 transition-opacity group-hover/row:opacity-100 focus-visible:opacity-100 data-popup-open:opacity-100 pointer-coarse:opacity-100"
-            />
-          }
-        >
-          <MoreHorizontalIcon />
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-44">
-          <DropdownMenuItem
-            render={<Link href={`/itsm/incidents/${row.original.number}`} />}
-          >
-            Open
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            onClick={() =>
-              toast.success(`${row.original.number} assigned to you`)
-            }
-          >
-            Assign to me
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            onClick={() => {
-              void navigator.clipboard?.writeText(row.original.number)
-              toast(`Copied ${row.original.number}`)
-            }}
-          >
-            Copy number
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            onClick={() => toast.success(`${row.original.number} resolved`)}
-          >
-            Resolve
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            variant="destructive"
-            onClick={() => toast(`${row.original.number} canceled`)}
-          >
-            Cancel
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    ),
+    cell: ({ row }) => <IncidentRowActions incident={row.original} />,
     enableSorting: false,
     enableHiding: false,
     meta: actionsColumnMeta,

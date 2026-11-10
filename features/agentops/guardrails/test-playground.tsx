@@ -23,7 +23,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { deployedAgents } from "@/lib/data"
+import { deployedAgents } from "@/lib/data/agentops"
 import {
   evaluateGuardrails,
   guardrailAppliesTo,
@@ -173,7 +173,7 @@ export function TestPlayground({
           </Button>
           {stale && (
             <span className="ml-auto text-xs text-muted-foreground">
-              Input changed — run again.
+              Input changed. Run again.
             </span>
           )}
         </div>
@@ -266,7 +266,7 @@ export function TestPlayground({
                         <Badge
                           key={`${m}-${i}`}
                           variant="outline"
-                          className="h-5 max-w-full px-1.5 font-mono text-[11px] text-muted-foreground"
+                          className="h-5 max-w-full px-1.5 font-mono text-2xs text-muted-foreground"
                         >
                           <span className="truncate">{m}</span>
                         </Badge>

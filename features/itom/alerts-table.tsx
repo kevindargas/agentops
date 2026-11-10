@@ -1,9 +1,20 @@
 "use client"
 
+import * as React from "react"
 import { createColumnHelper, type Row } from "@tanstack/react-table"
 import { BellOffIcon, CheckIcon, LinkIcon } from "lucide-react"
 import { toast } from "sonner"
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import {
   DataTable,
@@ -19,8 +30,14 @@ import {
 import { RecordLink } from "@/components/shared/record-link"
 import { SeverityBadge, StateBadge } from "@/components/shared/status-badge"
 import { alertSeverities } from "@/lib/constants"
-import { alerts } from "@/lib/data"
 import type { Alert } from "@/lib/types"
+import { ALERT_PARAM, AlertSheet, useAlertParam } from "./alert-sheet"
+import {
+  acknowledgeAlerts,
+  alertsStore,
+  closeAlerts,
+  promoteAlerts,
+} from "./alerts-store"
 
 const col = createColumnHelper<DataTableFeatures, Alert>()
 
@@ -43,7 +60,9 @@ const columns = col.columns([
   }),
   col.accessor("number", {
     header: "Alert",
-    cell: ({ getValue }) => <RecordLink number={getValue()} />,
+    cell: ({ getValue }) => (
+      <RecordLink number={getValue()} href={`?${ALERT_PARAM}=${getValue()}`} />
+    ),
     enableSorting: false,
     meta: { width: "w-32", skeleton: "w-24" },
   }),
@@ -61,16 +80,14 @@ const columns = col.columns([
   }),
   col.accessor("node", {
     header: "Node",
-    cell: ({ getValue }) => {
-      return (
-        <span
-          className="block max-w-48 truncate font-mono text-xs"
-          title={getValue()}
-        >
-          {getValue()}
-        </span>
-      )
-    },
+    cell: ({ getValue }) => (
+      <span
+        className="block max-w-48 truncate font-mono text-xs"
+        title={getValue()}
+      >
+        {getValue()}
+      </span>
+    ),
     enableSorting: false,
     meta: { width: "w-44", skeleton: "w-32" },
   }),
@@ -88,7 +105,14 @@ const columns = col.columns([
     meta: { width: "w-28", label: "State", skeleton: "w-16 rounded-full" },
   }),
   col.accessor("acknowledged", {
-    header: "Ack",
+    header: ({ column }) => (
+      <DataTableColumnHeader
+        column={column}
+        title="Ack"
+        align="center"
+        hint="Acknowledged by an operator"
+      />
+    ),
     cell: ({ getValue }) =>
       getValue() ? (
         <span
@@ -128,7 +152,11 @@ const columns = col.columns([
   }),
   col.accessor("count", {
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Count" />
+      <DataTableColumnHeader
+        column={column}
+        title="Count"
+        hint="Monitoring events de-duplicated into this alert"
+      />
     ),
     cell: ({ getValue }) => <NumericCell value={getValue()} />,
     meta: { width: "w-20", numeric: true, label: "Count", skeleton: "w-8" },
@@ -142,96 +170,149 @@ const columns = col.columns([
   }),
 ])
 
-const facets: FacetDef<Alert>[] = [
-  {
-    id: "severity",
-    title: "Severity",
-    options: alertSeverities.map((s) => ({ label: s, value: s })),
-    getValue: (r) => r.severity,
-  },
-  {
-    id: "state",
-    title: "State",
-    options: alertStates.map((s) => ({ label: s, value: s })),
-    getValue: (r) => r.state,
-  },
-  {
-    id: "source",
-    title: "Source",
-    options: Array.from(new Set(alerts.map((a) => a.source)))
-      .sort()
-      .map((s) => ({ label: s, value: s })),
-    getValue: (r) => r.source,
-  },
-  {
-    id: "ack",
-    title: "Acknowledged",
-    options: [
-      { label: "Acknowledged", value: "yes" },
-      { label: "Unacknowledged", value: "no" },
-    ],
-    getValue: (r) => (r.acknowledged ? "yes" : "no"),
-  },
-]
+const facetSources = (list: Alert[]) =>
+  Array.from(new Set(list.map((a) => a.source)))
+    .sort()
+    .map((s) => ({ label: s, value: s }))
 
+const plural = (n: number) => `${n} alert${n === 1 ? "" : "s"}`
+
+/** Alerts list. Rows open the detail sheet (`?alert=`); bulk actions mutate the shared store. */
 export function AlertsTable() {
+  const list = alertsStore.use()
+  const [, setAlertParam] = useAlertParam()
+  const [pendingClose, setPendingClose] = React.useState<{
+    numbers: string[]
+    clear: () => void
+  } | null>(null)
+
+  const facets = React.useMemo<FacetDef<Alert>[]>(
+    () => [
+      {
+        id: "severity",
+        title: "Severity",
+        options: alertSeverities.map((s) => ({ label: s, value: s })),
+        getValue: (r) => r.severity,
+      },
+      {
+        id: "state",
+        title: "State",
+        options: alertStates.map((s) => ({ label: s, value: s })),
+        getValue: (r) => r.state,
+      },
+      {
+        id: "source",
+        title: "Source",
+        options: facetSources(list),
+        getValue: (r) => r.source,
+      },
+      {
+        id: "ack",
+        title: "Acknowledged",
+        options: [
+          { label: "Acknowledged", value: "yes" },
+          { label: "Unacknowledged", value: "no" },
+        ],
+        getValue: (r) => (r.acknowledged ? "yes" : "no"),
+      },
+    ],
+    [list]
+  )
+
+  function confirmClose() {
+    if (!pendingClose) return
+    closeAlerts(pendingClose.numbers)
+    pendingClose.clear()
+    toast(`${plural(pendingClose.numbers.length)} closed`)
+    setPendingClose(null)
+  }
+
   return (
-    <DataTable
-      columns={columns}
-      data={alerts}
-      getRowId={(r) => r.number}
-      getSearchText={(r) =>
-        `${r.number} ${r.description} ${r.node} ${r.source} ${r.metric}`
-      }
-      searchPlaceholder="Search alerts…"
-      facets={facets}
-      initialFacets={{ state: ["Open", "Reopen", "Flapping"] }}
-      initialSorting={[{ id: "severity", desc: false }]}
-      density="compact"
-      totalLabel="alerts"
-      emptyTitle="No active alerts"
-      emptyMessage="Everything is quiet. Alerts from monitoring sources will appear here."
-      selectionLabel={(n) => (n === 1 ? "alert" : "alerts")}
-      bulkActions={(rows, clear) => (
-        <>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              toast.success(
-                `${rows.length} alert${rows.length === 1 ? "" : "s"} acknowledged`
-              )
-              clear()
-            }}
-          >
-            <CheckIcon /> Acknowledge
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              toast.success(
-                `Incident created from ${rows.length} alert${rows.length === 1 ? "" : "s"}`
-              )
-              clear()
-            }}
-          >
-            <LinkIcon /> Create incident
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              toast(
-                `${rows.length} alert${rows.length === 1 ? "" : "s"} closed`
-              )
-              clear()
-            }}
-          >
-            <BellOffIcon /> Close
-          </Button>
-        </>
-      )}
-    />
+    <>
+      <DataTable
+        columns={columns}
+        data={list}
+        getRowId={(r) => r.number}
+        getSearchText={(r) =>
+          `${r.number} ${r.description} ${r.node} ${r.source} ${r.metric}`
+        }
+        searchPlaceholder="Search alerts…"
+        facets={facets}
+        initialFacets={{ state: ["Open", "Reopen", "Flapping"] }}
+        initialSorting={[{ id: "severity", desc: false }]}
+        density="compact"
+        totalLabel="alerts"
+        caption="Alerts"
+        onRowClick={(r) => setAlertParam(r.number)}
+        emptyTitle="No active alerts"
+        emptyMessage="Everything is quiet. Alerts from monitoring sources will appear here."
+        selectionLabel={(n) => (n === 1 ? "alert" : "alerts")}
+        bulkActions={(rows, clear) => {
+          const numbers = rows.map((r) => r.original.number)
+          return (
+            <>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  acknowledgeAlerts(numbers)
+                  toast.success(`${plural(numbers.length)} acknowledged`)
+                  clear()
+                }}
+              >
+                <CheckIcon /> Acknowledge
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  const incident = promoteAlerts(numbers)
+                  toast.success(
+                    `${incident} linked to ${plural(numbers.length)}`,
+                    {
+                      description:
+                        "The incident number is recorded on the alerts in this session.",
+                    }
+                  )
+                  clear()
+                }}
+              >
+                <LinkIcon /> Create incident
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setPendingClose({ numbers, clear })}
+              >
+                <BellOffIcon /> Close
+              </Button>
+            </>
+          )
+        }}
+      />
+      <AlertSheet />
+      <AlertDialog
+        open={Boolean(pendingClose)}
+        onOpenChange={(o) => !o && setPendingClose(null)}
+      >
+        <AlertDialogContent size="sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Close {pendingClose ? plural(pendingClose.numbers.length) : ""}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Closed alerts leave the open list. New events on the same node and
+              metric will reopen them.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" onClick={confirmClose}>
+              Close alerts
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   )
 }

@@ -7,9 +7,9 @@ import { ChartContainer, type ChartConfig } from "@/components/ui/chart"
 import { gradientId } from "./chart-primitives"
 
 /**
- * 12–30 point trend for stat tiles. 1.5px line, soft gradient wash, end-dot
+ * 12 to 30 point trend for stat tiles. 1.5px line, soft gradient wash, end-dot
  * with a surface ring, optional baseline (e.g. an SLO target). No axes, no
- * tooltip — the tile's value and delta carry the numbers.
+ * tooltip; the tile's value and delta carry the numbers.
  */
 export function Sparkline({
   data,

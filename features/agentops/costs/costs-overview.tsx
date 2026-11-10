@@ -2,15 +2,6 @@
 
 import * as React from "react"
 import Link from "next/link"
-import {
-  CalendarRangeIcon,
-  CoinsIcon,
-  DatabaseZapIcon,
-  ReceiptIcon,
-  TrendingUpIcon,
-  WalletIcon,
-} from "lucide-react"
-
 import { AvailabilityBar } from "@/components/charts/availability-bar"
 import { ChartCard } from "@/components/charts/chart-card"
 import { DonutChart } from "@/components/charts/donut-chart"
@@ -18,20 +9,29 @@ import { IncidentTrendChart } from "@/components/charts/incident-trend-chart"
 import { Sparkline } from "@/components/charts/sparkline"
 import { StackedBarChart } from "@/components/charts/stacked-bar-chart"
 import { StatCard } from "@/components/shared/stat-card"
+import { StatGrid } from "@/components/shared/stat-grid"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { deployedAgents } from "@/lib/data"
+import { deployedAgents } from "@/lib/data/agentops"
 import {
-  budgets,
+  budgetsAtRiskCount,
   costByAgent,
+  costByAgentWindowDays,
   costDaily,
+  costToday,
   forecastMonthEnd,
   monthlyBudgetTotal,
   monthToDateSpend,
 } from "@/lib/data/costs"
 import { getProvider } from "@/lib/data/providers"
-import { formatCurrency, formatDelta, formatNumber } from "@/lib/format"
-import { fmtTokens, modelDisplayName } from "../shared"
+import {
+  formatCurrency,
+  formatDelta,
+  formatNumber,
+  formatTokens,
+  modelDisplayName,
+} from "@/lib/format"
 import { fmtUsd, periodPace } from "./shared"
+import { budgetStore } from "./store"
 
 const palette = [
   "var(--chart-1)",
@@ -46,7 +46,7 @@ const sum = (
   k: (d: (typeof costDaily)[number]) => number
 ) => rows.reduce((s, d) => s + k(d), 0)
 
-/** Top-4 keys by total plus an "Other" bucket so the stack stays ≤ 5 series. */
+/** Top-4 keys by total plus an "Other" bucket so the stack stays at 5 series or fewer. */
 function stackSeries(
   pick: (d: (typeof costDaily)[number]) => Record<string, number>,
   label: (key: string) => string
@@ -79,8 +79,9 @@ function stackSeries(
 
 export function CostsOverview() {
   const [stackBy, setStackBy] = React.useState<"agent" | "provider">("agent")
+  const budgets = budgetStore.use()
 
-  const today = costDaily[costDaily.length - 1]
+  const today = costToday
   const yesterday = costDaily[costDaily.length - 2]
   const last7 = costDaily.slice(-7)
   const prev7 = costDaily.slice(-14, -7)
@@ -136,19 +137,17 @@ export function CostsOverview() {
     }))
 
   const exceeded = budgets.filter((b) => b.status === "Exceeded").length
-  const atRisk = budgets.filter((b) => b.status === "At risk").length
+  const atRisk = budgetsAtRiskCount(budgets) - exceeded
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
+      <StatGrid columns={6}>
         <StatCard
-          size="sm"
           label="Spend today"
           value={fmtUsd(today.cost)}
           delta={((today.cost - yesterday.cost) / yesterday.cost) * 100}
           upIsGood={false}
           deltaLabel="vs yesterday (partial day)"
-          icon={<CoinsIcon />}
           sparkline={
             <Sparkline
               data={costDaily.slice(-14).map((d) => d.cost)}
@@ -157,11 +156,9 @@ export function CostsOverview() {
           }
         />
         <StatCard
-          size="sm"
           label="Month to date"
           value={formatCurrency(monthToDateSpend)}
           unit={`/ ${formatCurrency(monthlyBudgetTotal, true)}`}
-          icon={<WalletIcon />}
           hint={`${Math.round(mtdPct)}% of team budgets · ${Math.round(pace)}% of month elapsed`}
         >
           <AvailabilityBar
@@ -173,13 +170,11 @@ export function CostsOverview() {
           />
         </StatCard>
         <StatCard
-          size="sm"
           label="Forecast · end of month"
           value={formatCurrency(forecast)}
           delta={((forecast - monthlyBudgetTotal) / monthlyBudgetTotal) * 100}
           upIsGood={false}
           deltaLabel="vs team budgets"
-          icon={<CalendarRangeIcon />}
           hint={
             exceeded + atRisk > 0
               ? `${exceeded} budget${exceeded === 1 ? "" : "s"} exceeded · ${atRisk} at risk`
@@ -187,31 +182,26 @@ export function CostsOverview() {
           }
         />
         <StatCard
-          size="sm"
           label="Cost / 1K requests"
           value={fmtUsd(per1kNow)}
           delta={per1kDelta}
           upIsGood={false}
           deltaLabel="vs prior week"
-          icon={<ReceiptIcon />}
           hint={`${formatNumber(
             sum(last7, (d) => d.requests),
             true
-          )} requests · 7d`}
+          )} requests · ${costByAgentWindowDays}d`}
         />
         <StatCard
-          size="sm"
           label="Cached-token savings"
           value={cachedPct.toFixed(1)}
           unit="%"
           delta={cachedPct - cachedPrevPct}
           deltaUnit="pt"
           deltaLabel="vs prior week"
-          icon={<DatabaseZapIcon />}
-          hint={`${formatCurrency(saved7)} saved this week · ${fmtTokens(sum(last7, (d) => d.tokensCached))} cache reads`}
+          hint={`${formatCurrency(saved7)} saved this week · ${formatTokens(sum(last7, (d) => d.tokensCached))} cache reads`}
         />
         <StatCard
-          size="sm"
           label="Top mover · week over week"
           value={
             mover ? (
@@ -222,20 +212,19 @@ export function CostsOverview() {
                 {moverAgent?.name ?? mover.agentId}
               </Link>
             ) : (
-              "—"
+              <span className="text-muted-foreground">No data</span>
             )
           }
           delta={mover?.deltaPct}
           upIsGood={false}
           deltaLabel="vs prior week"
-          icon={<TrendingUpIcon />}
           hint={
             mover
               ? `${fmtUsd(mover.cost)} this week · ${formatDelta(mover.deltaPct, "%", 1)}`
               : undefined
           }
         />
-      </div>
+      </StatGrid>
 
       <div className="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
         <ChartCard
@@ -267,11 +256,11 @@ export function CostsOverview() {
         </ChartCard>
         <ChartCard
           title="Spend by model"
-          description="Last 7 days across production agents"
+          description={`Last ${costByAgentWindowDays} days across production agents`}
         >
           <DonutChart
             data={donut}
-            centerLabel="7 days"
+            centerLabel={`${costByAgentWindowDays} days`}
             legend="bottom"
             height={180}
             valueFormatter={(v) => formatCurrency(v)}
@@ -297,7 +286,7 @@ export function CostsOverview() {
               { key: "cached", label: "Cache reads", color: "var(--chart-3)" },
             ]}
             height={220}
-            valueFormatter={fmtTokens}
+            valueFormatter={formatTokens}
           />
         </ChartCard>
         <ChartCard

@@ -1,9 +1,11 @@
 import Link from "next/link"
 import { cn } from "cn"
-import { ChevronLeftIcon, PencilIcon } from "lucide-react"
+import { ChevronLeftIcon } from "lucide-react"
 
+import { toneClasses } from "@/components/shared/status-badge"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
+import { EditableTitle } from "./editable-title"
 import { RecordCopyButton } from "./record-copy-button"
 import {
   RecordOverflowMenu,
@@ -14,7 +16,7 @@ import {
  * Header for every record form. Renders two siblings so the toolbar can stick
  * for the full page height (sticky is constrained by its parent's box):
  *   1. a sticky toolbar with number, badges, primary/secondary actions and overflow
- *   2. the title block with an inline-edit affordance and key meta chips
+ *   2. the title block (optionally renamable inline) and key meta chips
  */
 export function RecordHeader({
   number,
@@ -26,14 +28,14 @@ export function RecordHeader({
   backHref,
   backLabel,
   description,
-  editable = true,
+  editable = false,
   sticky = true,
   className,
 }: {
   number: string
   title: string
   badges?: React.ReactNode
-  /** Key meta chips (assignee, group, opened, SLA…) — use `<MetaItem />`. */
+  /** Key meta chips (assignee, group, opened, SLA): use `<MetaItem />`. */
   meta?: React.ReactNode
   /** Primary and secondary actions rendered in the toolbar. */
   actions?: React.ReactNode
@@ -44,7 +46,11 @@ export function RecordHeader({
   backLabel?: string
   /** Optional subtitle under the title. */
   description?: React.ReactNode
-  /** Show the hover pencil affordance on the title (visual only). */
+  /**
+   * Allow renaming the title inline (local state plus a toast; see
+   * `EditableTitle`). Off by default so records without a rename flow do not
+   * show a dead pencil.
+   */
   editable?: boolean
   /** Pin the toolbar under the site header while scrolling. */
   sticky?: boolean
@@ -109,22 +115,13 @@ export function RecordHeader({
         data-slot="record-title"
         className={cn("-mt-2 flex flex-col gap-3", className)}
       >
-        <div className="group/title flex min-w-0 items-start gap-1">
+        {editable ? (
+          <EditableTitle title={title} />
+        ) : (
           <h1 className="font-heading text-xl font-semibold tracking-tight text-balance md:text-2xl">
             {title}
           </h1>
-          {editable && (
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              aria-label="Edit title"
-              title="Edit title"
-              className="mt-1 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/title:opacity-100 focus-visible:opacity-100"
-            >
-              <PencilIcon />
-            </Button>
-          )}
-        </div>
+        )}
         {description && (
           <p className="max-w-3xl text-sm text-muted-foreground">
             {description}
@@ -138,14 +135,21 @@ export function RecordHeader({
   )
 }
 
-export type MetaTone = "default" | "info" | "success" | "warning" | "danger"
+export type MetaTone =
+  "default" | "info" | "success" | "warning" | "danger" | "progress" | "muted"
 
-const metaTone: Record<MetaTone, string> = {
-  default: "border-border bg-card",
-  info: "border-info/30 bg-info/10",
-  success: "border-success/30 bg-success/10",
-  warning: "border-warning/40 bg-warning/10",
-  danger: "border-destructive/30 bg-destructive/10 text-destructive",
+/** Chip tints come from `toneClasses` so MetaItem matches StateBadge exactly. */
+const metaTone: Record<MetaTone, { chip: string; value: string }> = {
+  default: { chip: "border-border bg-card", value: "text-foreground" },
+  info: { chip: toneClasses.info.badge, value: toneClasses.info.text },
+  success: { chip: toneClasses.success.badge, value: toneClasses.success.text },
+  warning: { chip: toneClasses.warning.badge, value: toneClasses.warning.text },
+  danger: { chip: toneClasses.danger.badge, value: toneClasses.danger.text },
+  progress: {
+    chip: toneClasses.progress.badge,
+    value: toneClasses.progress.text,
+  },
+  muted: { chip: toneClasses.muted.badge, value: "text-foreground" },
 }
 
 /** A compact label/value chip for the header meta row. */
@@ -167,7 +171,7 @@ export function MetaItem({
   const classes = cn(
     "inline-flex min-h-7 max-w-full items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs leading-none",
     "[&_[data-slot=avatar]]:size-4 [&_[data-slot=avatar]]:text-[8px] [&_span.text-sm]:text-xs",
-    metaTone[tone],
+    metaTone[tone].chip,
     href && "transition-colors hover:bg-muted",
     className
   )
@@ -180,10 +184,7 @@ export function MetaItem({
       )}
       <span className="shrink-0 text-muted-foreground">{label}</span>
       <span
-        className={cn(
-          "min-w-0 truncate font-medium",
-          tone === "danger" ? "text-destructive" : "text-foreground"
-        )}
+        className={cn("min-w-0 truncate font-medium", metaTone[tone].value)}
       >
         {children}
       </span>

@@ -1,11 +1,12 @@
 /**
- * Tools & MCP Servers registry — every capability an agent can call, who may
+ * Tools & MCP Servers registry: every capability an agent can call, who may
  * call it, how risky it is and how it is performing. Deterministic mock data
  * anchored to NOW (see seed.ts) so SSR and CSR agree.
  */
 
+import type { ConnectionStatus } from "@/lib/types"
 import { deployedAgents } from "./agentops"
-import { createRng, hoursAgo, int, pick } from "./seed"
+import { createRng, daysAgo, daysFromNow, hoursAgo, int, pick } from "./seed"
 
 /* ------------------------------------------------------------------------ */
 /* Types                                                                     */
@@ -46,8 +47,27 @@ export interface ToolError {
   message: string
 }
 
+/** Where a tool's output can end up; each sink is a distinct blast radius. */
+export type ToolOutputSink =
+  | "renders_html"
+  | "executes_code"
+  | "fetches_url"
+  | "sends_message"
+  | "writes_record"
+  | "none"
+
+export interface ToolIdentity {
+  /** `service` runs as the platform; `delegated` acts as the requesting user. */
+  mode: "service" | "delegated"
+  /** Token audience (hostname / API) for delegated grants. */
+  audience?: string
+  scopes: string[]
+  /** Lifetime of the minted token in minutes. */
+  tokenTtlMin: number
+}
+
 export interface Tool {
-  /** Unique snake_case name — this is what the model calls. */
+  /** Unique snake_case name; this is what the model calls. */
   name: string
   description: string
   source: ToolSource
@@ -58,7 +78,7 @@ export interface Tool {
   /** Agents allowlisted to call the tool (derived from fleet config + extras). */
   agentIds: string[]
   calls24h: number
-  /** Percent, 0–100. */
+  /** Percent, 0 to 100. */
   errorRate: number
   p95Ms: number
   /** 14 daily call totals, oldest first. */
@@ -74,11 +94,21 @@ export interface Tool {
   /** Set on deprecated tools that have a successor. */
   replacedBy?: string
   tags: string[]
+  /** Calling twice with the same arguments has no further effect. */
+  idempotent: boolean
+  /** The tool can validate / preview a call without applying it. */
+  supportsDryRun: boolean
+  /** Cap per call for tools that move money or commit amounts. */
+  maxTransactionUsd?: number
+  /** Tool that undoes this one (may be itself, e.g. a reverse transition). */
+  compensatingToolId?: string
+  outputSinks: ToolOutputSink[]
+  identity: ToolIdentity
 }
 
 export type McpTransport = "stdio" | "streamable-http" | "sse"
 export type McpAuth = "OAuth 2.1" | "API key" | "none" | "mTLS"
-export type McpStatus = "Connected" | "Degraded" | "Disconnected"
+export type McpStatus = ConnectionStatus
 
 export interface McpServer {
   id: string
@@ -96,12 +126,33 @@ export interface McpServer {
   prompts: number
   lastHealthCheck: string
   avgLatencyMs: number
-  /** Percent, 0–100. */
+  /** Percent, 0 to 100. */
   uptime30d: number
   agentIds: string[]
   ownerId: string
   /** Operator note shown when the server is not fully healthy. */
   note?: string
+  /** sha256 prefix of the advertised tool/resource definitions. */
+  definitionDigest: string
+  /** When the digest last changed. */
+  lastDefinitionChange: string
+  /** Last time an operator signed off the definitions; unset = never. */
+  reviewedAt?: string
+  reviewerId?: string
+  /** Server package / manifest signature verified against the publisher key. */
+  signatureVerified: boolean
+  /** Hostnames the server process may reach; empty = no network egress declared. */
+  egressAllowlist: string[]
+  /** Vendor end-of-life for the running version or transport. */
+  eolDate?: string
+  vulnerabilities: McpVulnerabilities
+}
+
+export interface McpVulnerabilities {
+  critical: number
+  high: number
+  medium: number
+  scannedAt: string
 }
 
 export type PermissionDecision = "allow" | "approval" | "deny"
@@ -149,14 +200,14 @@ const errorTemplates: Record<ToolSourceKind, string[]> = {
     "JSON-RPC -32603: upstream returned 502 Bad Gateway",
     "Tool call timed out after {t}ms waiting for server response",
     "JSON-RPC -32602: missing required argument `{arg}`",
-    "Rate limit exceeded (429) — retry after 12s",
+    "Rate limit exceeded (429): retry after 12s",
     "Session expired: OAuth token refresh failed (invalid_grant)",
     "Schema validation failed: `{arg}` must be a string, got null",
   ],
   builtin: [
     "Vector index shard 3 unavailable, served partial results",
     "Query exceeded 2,000 token budget and was truncated",
-    "Embedding service returned 503 — fallback to lexical search",
+    "Embedding service returned 503: fallback to lexical search",
     "Argument `{arg}` failed validation: empty string",
   ],
   http: [
@@ -164,7 +215,7 @@ const errorTemplates: Record<ToolSourceKind, string[]> = {
     "HTTP 401: API key rotated, credential needs refresh",
     "HTTP 422: `{arg}` rejected by upstream validation",
     "Connection reset by peer (ECONNRESET)",
-    "HTTP 429 rate limited — quota resets at top of hour",
+    "HTTP 429 rate limited: quota resets at top of hour",
   ],
   code: [
     "Sandbox killed: memory limit 512 MB exceeded",
@@ -182,8 +233,6 @@ interface ToolSeed {
   approval: ToolApproval
   status?: ToolStatus
   ownerId: string
-  /** Agents allowlisted beyond those whose deployed config lists the tool. */
-  extraAgentIds?: string[]
   schema: ToolInputSchema
   output: string
   rateLimit?: string
@@ -195,13 +244,89 @@ interface ToolSeed {
   volume: number
   errorRate?: number
   p95Ms?: number
+  /** Overrides for the risk-derived side-effect / identity defaults. */
+  safety?: Partial<Omit<ToolSafety, "identity">> & {
+    identity?: Partial<ToolIdentity>
+  }
+}
+
+type ToolSafety = Pick<
+  Tool,
+  | "idempotent"
+  | "supportsDryRun"
+  | "maxTransactionUsd"
+  | "compensatingToolId"
+  | "outputSinks"
+  | "identity"
+>
+
+/** Remote MCP hosts tokens are minted for (stdio servers have no audience). */
+const serverHosts: Record<string, string> = {
+  "mcp-servicedesk": "servicedesk.internal",
+  "mcp-semantic-layer": "semantic.internal",
+  "mcp-github": "api.githubcopilot.com",
+  "mcp-slack": "mcp.slack.com",
+  "mcp-pagerduty": "mcp.pagerduty.com",
+  "mcp-salesforce": "mcp.salesforce.com",
+}
+
+/** Token audience derived from where the tool actually executes. */
+function audienceFor(source: ToolSource) {
+  if (source.kind === "mcp") return serverHosts[source.serverId ?? ""]
+  if (source.kind === "http")
+    return `${(source.label ?? "api")
+      .toLowerCase()
+      .replace(/\s+api$/, "")
+      .replace(/\s+/g, "-")}.api`
+  return undefined
+}
+
+/**
+ * Side-effect and identity defaults follow the risk level: reads run as the
+ * platform service account and are idempotent; writes act on behalf of the
+ * requesting user with short-lived tokens; destructive calls add a dry run.
+ */
+function safetyFor(seed: ToolSeed): ToolSafety {
+  const [verb, ...rest] = seed.name.split("_")
+  const resource = rest.join("_") || verb
+  const base: ToolSafety =
+    seed.risk === "Read"
+      ? {
+          idempotent: true,
+          supportsDryRun: false,
+          outputSinks: ["none"],
+          identity: {
+            mode: "service",
+            scopes: [`${resource}:read`],
+            tokenTtlMin: 60,
+          },
+        }
+      : {
+          idempotent: false,
+          supportsDryRun: seed.risk === "Destructive",
+          outputSinks: ["writes_record"],
+          identity: {
+            mode: "delegated",
+            audience: audienceFor(seed.source),
+            scopes: [`${resource}:write`],
+            tokenTtlMin: seed.risk === "Destructive" ? 5 : 15,
+          },
+        }
+  const o = seed.safety ?? {}
+  return {
+    ...base,
+    ...o,
+    identity: { ...base.identity, ...(o.identity ?? {}) },
+  }
 }
 
 function buildTool(seed: ToolSeed): Tool {
   const configured = deployedAgents
     .filter((a) => a.tools.includes(seed.name))
     .map((a) => a.id)
-  const agentIds = [...new Set([...configured, ...(seed.extraAgentIds ?? [])])]
+  // The allowlist is exactly the agents whose `tools` include this tool, so
+  // the tool sheet and the agent record can never disagree.
+  const agentIds = configured
   const status = seed.status ?? "Active"
   const dead = status === "Disabled" || seed.approval === "Blocked"
   const base = dead
@@ -259,6 +384,7 @@ function buildTool(seed: ToolSeed): Tool {
     recentErrors,
     replacedBy: seed.replacedBy,
     tags: seed.tags ?? [],
+    ...safetyFor(seed),
   }
 }
 
@@ -287,10 +413,13 @@ const toolSeeds: ToolSeed[] = [
       ["query"]
     ),
     output:
-      "Array of passages with `article_id`, `title`, `score` (0–1), `excerpt` and `url`. Empty array when nothing clears the relevance floor.",
+      "Array of passages with `article_id`, `title`, `score` (0-1), `excerpt` and `url`. Empty array when nothing clears the relevance floor.",
     rateLimit: "600 / min",
     timeoutMs: 8_000,
     tags: ["retrieval", "rag"],
+    safety: {
+      identity: { scopes: ["kb:read", "tickets:read"] },
+    },
     volume: 9_800,
     errorRate: 0.3,
     p95Ms: 420,
@@ -315,6 +444,9 @@ const toolSeeds: ToolSeed[] = [
     rateLimit: "240 / min",
     timeoutMs: 10_000,
     tags: ["crm"],
+    safety: {
+      identity: { scopes: ["accounts:read", "cases:read"] },
+    },
     volume: 3_900,
     errorRate: 1.1,
     p95Ms: 860,
@@ -334,7 +466,7 @@ const toolSeeds: ToolSeed[] = [
         category: p("string", "Service category.", {
           enum: ["hardware", "software", "access", "network", "hr", "other"],
         }),
-        urgency: p("integer", "1 (high) – 3 (low).", { default: 3 }),
+        urgency: p("integer", "1 (high) to 3 (low).", { default: 3 }),
         requester_id: p("string", "User id of the person affected."),
       },
       ["short_description", "category", "requester_id"]
@@ -344,6 +476,10 @@ const toolSeeds: ToolSeed[] = [
     timeoutMs: 15_000,
     retries: 1,
     tags: ["itsm"],
+    safety: {
+      idempotent: true,
+      identity: { scopes: ["tickets:write"] },
+    },
     volume: 1_900,
     errorRate: 0.9,
     p95Ms: 1_240,
@@ -399,6 +535,10 @@ const toolSeeds: ToolSeed[] = [
     timeoutMs: 30_000,
     retries: 1,
     tags: ["analytics", "sql"],
+    safety: {
+      supportsDryRun: true,
+      identity: { scopes: ["warehouse:select"] },
+    },
     volume: 4_100,
     errorRate: 2.8,
     p95Ms: 3_600,
@@ -427,6 +567,10 @@ const toolSeeds: ToolSeed[] = [
     rateLimit: "60 / min",
     timeoutMs: 12_000,
     tags: ["visualisation"],
+    safety: {
+      outputSinks: ["executes_code"],
+      identity: { scopes: ["sandbox:render"], tokenTtlMin: 10 },
+    },
     volume: 1_300,
     errorRate: 0.7,
     p95Ms: 1_900,
@@ -458,7 +602,6 @@ const toolSeeds: ToolSeed[] = [
     risk: "Read",
     approval: "Auto",
     ownerId: "u-003",
-    extraAgentIds: ["agt-change-risk", "agt-alert-correlator"],
     schema: schema(
       {
         query: p("string", "Service or CI name fragment."),
@@ -562,7 +705,6 @@ const toolSeeds: ToolSeed[] = [
     risk: "Read",
     approval: "Auto",
     ownerId: "u-009",
-    extraAgentIds: ["agt-support-triage", "agt-kb-curator"],
     schema: schema(
       {
         text: p("string", "Text to redact."),
@@ -577,6 +719,9 @@ const toolSeeds: ToolSeed[] = [
     timeoutMs: 4_000,
     retries: 0,
     tags: ["guardrail", "privacy"],
+    safety: {
+      identity: { scopes: ["pii:detect"] },
+    },
     volume: 3_100,
     errorRate: 0.1,
     p95Ms: 160,
@@ -584,7 +729,7 @@ const toolSeeds: ToolSeed[] = [
   {
     name: "open_hr_case",
     description:
-      "Open an HR case. Deprecated — use create_ticket with category `hr`, which routes through the same queue with SLAs.",
+      "Open an HR case. Deprecated: use create_ticket with category `hr`, which routes through the same queue with SLAs.",
     source: mcp("mcp-servicedesk"),
     risk: "Write",
     approval: "Require approval",
@@ -606,6 +751,9 @@ const toolSeeds: ToolSeed[] = [
     timeoutMs: 15_000,
     retries: 1,
     tags: ["hr", "alias"],
+    safety: {
+      identity: { scopes: ["hr_cases:write"] },
+    },
     volume: 260,
     errorRate: 1.9,
     p95Ms: 1_480,
@@ -633,6 +781,9 @@ const toolSeeds: ToolSeed[] = [
     rateLimit: "300 / min",
     timeoutMs: 6_000,
     tags: ["itom"],
+    safety: {
+      identity: { scopes: ["alerts:read"] },
+    },
     volume: 6_200,
     errorRate: 0.8,
     p95Ms: 520,
@@ -648,7 +799,7 @@ const toolSeeds: ToolSeed[] = [
     schema: schema(
       {
         short_description: p("string", "Summary."),
-        priority: p("integer", "1–5."),
+        priority: p("integer", "1-5."),
         ci_ids: p("array", "Affected CIs.", { items: { type: "string" } }),
         alert_group_id: p("string", "Correlation group to link."),
       },
@@ -659,6 +810,10 @@ const toolSeeds: ToolSeed[] = [
     timeoutMs: 15_000,
     retries: 1,
     tags: ["itsm", "incident"],
+    safety: {
+      idempotent: true,
+      identity: { scopes: ["incidents:write", "alerts:link"] },
+    },
     volume: 310,
     errorRate: 1.3,
     p95Ms: 1_380,
@@ -712,6 +867,9 @@ const toolSeeds: ToolSeed[] = [
     timeoutMs: 15_000,
     retries: 1,
     tags: ["knowledge"],
+    safety: {
+      identity: { scopes: ["kb:draft"] },
+    },
     volume: 140,
     errorRate: 0.7,
     p95Ms: 1_210,
@@ -737,6 +895,13 @@ const toolSeeds: ToolSeed[] = [
     timeoutMs: 10_000,
     retries: 0,
     tags: ["identity"],
+    safety: {
+      outputSinks: ["writes_record", "sends_message"],
+      identity: {
+        scopes: ["identity:password.reset"],
+        tokenTtlMin: 5,
+      },
+    },
     volume: 820,
     errorRate: 2.4,
     p95Ms: 1_860,
@@ -762,6 +927,10 @@ const toolSeeds: ToolSeed[] = [
     rateLimit: "60 / min",
     timeoutMs: 10_000,
     tags: ["identity"],
+    safety: {
+      idempotent: true,
+      identity: { scopes: ["identity:access.request"] },
+    },
     volume: 640,
     errorRate: 0.9,
     p95Ms: 1_040,
@@ -787,7 +956,7 @@ const toolSeeds: ToolSeed[] = [
         }),
         summary: p("string", "Two-sentence summary for the human."),
         queue: p("string", "Target queue.", { default: "service-desk" }),
-        urgency: p("integer", "1 (high) – 3 (low).", { default: 2 }),
+        urgency: p("integer", "1 (high) to 3 (low).", { default: 2 }),
       },
       ["reason", "summary"]
     ),
@@ -796,6 +965,16 @@ const toolSeeds: ToolSeed[] = [
     timeoutMs: 5_000,
     retries: 0,
     tags: ["escalation", "guardrail"],
+    safety: {
+      idempotent: true,
+      outputSinks: ["sends_message"],
+      identity: {
+        mode: "service",
+        audience: undefined,
+        scopes: ["queue:enqueue"],
+        tokenTtlMin: 60,
+      },
+    },
     volume: 460,
     errorRate: 0.2,
     p95Ms: 240,
@@ -808,7 +987,6 @@ const toolSeeds: ToolSeed[] = [
     risk: "Write",
     approval: "Require approval",
     ownerId: "u-001",
-    extraAgentIds: ["agt-alert-correlator", "agt-support-triage"],
     schema: schema(
       {
         channel: p("string", "Channel id or #name."),
@@ -822,6 +1000,10 @@ const toolSeeds: ToolSeed[] = [
     timeoutMs: 8_000,
     retries: 1,
     tags: ["notifications"],
+    safety: {
+      outputSinks: ["sends_message"],
+      identity: { scopes: ["chat:write", "channels:read"] },
+    },
     volume: 430,
     errorRate: 1.6,
     p95Ms: 720,
@@ -834,7 +1016,6 @@ const toolSeeds: ToolSeed[] = [
     risk: "Read",
     approval: "Auto",
     ownerId: "u-006",
-    extraAgentIds: ["agt-finance-copilot", "agt-ops-analyst"],
     schema: schema(
       {
         query_name: p("string", "Saved query id, e.g. `arr_by_segment`."),
@@ -846,6 +1027,10 @@ const toolSeeds: ToolSeed[] = [
     rateLimit: "240 / min",
     timeoutMs: 20_000,
     tags: ["analytics", "sql"],
+    safety: {
+      supportsDryRun: true,
+      identity: { scopes: ["warehouse:select"] },
+    },
     volume: 1_900,
     errorRate: 1.4,
     p95Ms: 2_300,
@@ -858,7 +1043,6 @@ const toolSeeds: ToolSeed[] = [
     risk: "Read",
     approval: "Auto",
     ownerId: "u-010",
-    extraAgentIds: ["agt-kb-curator"],
     schema: schema(
       {
         url: p("string", "Absolute https URL.", { format: "uri" }),
@@ -870,6 +1054,10 @@ const toolSeeds: ToolSeed[] = [
     rateLimit: "120 / min",
     timeoutMs: 15_000,
     tags: ["web"],
+    safety: {
+      outputSinks: ["fetches_url", "renders_html"],
+      identity: { scopes: ["egress:public"] },
+    },
     volume: 560,
     errorRate: 4.2,
     p95Ms: 4_100,
@@ -882,7 +1070,6 @@ const toolSeeds: ToolSeed[] = [
     risk: "Read",
     approval: "Auto",
     ownerId: "u-010",
-    extraAgentIds: ["agt-kb-curator"],
     schema: schema(
       {
         url: p("string", "Absolute https URL.", { format: "uri" }),
@@ -897,6 +1084,10 @@ const toolSeeds: ToolSeed[] = [
     rateLimit: "30 / min",
     timeoutMs: 20_000,
     tags: ["web"],
+    safety: {
+      outputSinks: ["fetches_url", "renders_html"],
+      identity: { scopes: ["egress:public"] },
+    },
     volume: 90,
     errorRate: 3.8,
     p95Ms: 6_200,
@@ -909,7 +1100,6 @@ const toolSeeds: ToolSeed[] = [
     risk: "Write",
     approval: "Require approval",
     ownerId: "u-010",
-    extraAgentIds: ["agt-ops-analyst"],
     schema: schema(
       {
         code: p("string", "Python 3.12 source."),
@@ -926,6 +1116,15 @@ const toolSeeds: ToolSeed[] = [
     timeoutMs: 60_000,
     retries: 0,
     tags: ["sandbox"],
+    safety: {
+      outputSinks: ["executes_code"],
+      identity: {
+        mode: "service",
+        audience: undefined,
+        scopes: ["sandbox:execute"],
+        tokenTtlMin: 10,
+      },
+    },
     volume: 380,
     errorRate: 5.1,
     p95Ms: 8_400,
@@ -937,7 +1136,6 @@ const toolSeeds: ToolSeed[] = [
     risk: "Write",
     approval: "Auto",
     ownerId: "u-010",
-    extraAgentIds: ["agt-ops-analyst", "agt-kb-curator"],
     schema: schema(
       {
         path: p("string", "Relative path inside /workspace."),
@@ -950,6 +1148,15 @@ const toolSeeds: ToolSeed[] = [
     rateLimit: "300 / min",
     timeoutMs: 5_000,
     tags: ["sandbox", "files"],
+    safety: {
+      idempotent: true,
+      identity: {
+        mode: "service",
+        audience: undefined,
+        scopes: ["workspace:write"],
+        tokenTtlMin: 10,
+      },
+    },
     volume: 740,
     errorRate: 0.5,
     p95Ms: 90,
@@ -961,7 +1168,6 @@ const toolSeeds: ToolSeed[] = [
     risk: "Read",
     approval: "Auto",
     ownerId: "u-010",
-    extraAgentIds: ["agt-ops-analyst", "agt-kb-curator"],
     schema: schema({ path: p("string", "Relative path inside /workspace.") }, [
       "path",
     ]),
@@ -969,6 +1175,9 @@ const toolSeeds: ToolSeed[] = [
     rateLimit: "600 / min",
     timeoutMs: 5_000,
     tags: ["sandbox", "files"],
+    safety: {
+      identity: { scopes: ["workspace:read"], tokenTtlMin: 10 },
+    },
     volume: 1_050,
     errorRate: 0.3,
     p95Ms: 60,
@@ -981,7 +1190,6 @@ const toolSeeds: ToolSeed[] = [
     risk: "Write",
     approval: "Require approval",
     ownerId: "u-014",
-    extraAgentIds: ["agt-change-risk"],
     schema: schema(
       {
         repo: p("string", "`owner/name`."),
@@ -998,6 +1206,10 @@ const toolSeeds: ToolSeed[] = [
     timeoutMs: 15_000,
     retries: 1,
     tags: ["scm"],
+    safety: {
+      supportsDryRun: true,
+      identity: { scopes: ["repo:write", "pull_requests:write"] },
+    },
     volume: 48,
     errorRate: 2.1,
     p95Ms: 1_650,
@@ -1009,7 +1221,6 @@ const toolSeeds: ToolSeed[] = [
     risk: "Read",
     approval: "Auto",
     ownerId: "u-014",
-    extraAgentIds: ["agt-change-risk"],
     schema: schema(
       {
         query: p("string", "GitHub code search syntax."),
@@ -1021,6 +1232,9 @@ const toolSeeds: ToolSeed[] = [
     rateLimit: "30 / min",
     timeoutMs: 10_000,
     tags: ["scm"],
+    safety: {
+      identity: { scopes: ["repo:read"] },
+    },
     volume: 310,
     errorRate: 1.2,
     p95Ms: 980,
@@ -1046,6 +1260,11 @@ const toolSeeds: ToolSeed[] = [
     timeoutMs: 10_000,
     retries: 1,
     tags: ["engineering"],
+    safety: {
+      idempotent: true,
+      compensatingToolId: "jira_transition",
+      identity: { scopes: ["jira:issues.transition"] },
+    },
     volume: 60,
     errorRate: 1.0,
     p95Ms: 1_120,
@@ -1053,12 +1272,11 @@ const toolSeeds: ToolSeed[] = [
   {
     name: "pagerduty_page",
     description:
-      "Page the on-call engineer for a service. Wakes people up — always behind approval.",
+      "Page the on-call engineer for a service. Wakes people up; always behind approval.",
     source: mcp("mcp-pagerduty"),
     risk: "Destructive",
     approval: "Require approval",
     ownerId: "u-005",
-    extraAgentIds: ["agt-alert-correlator"],
     schema: schema(
       {
         service_id: p("string", "PagerDuty service id."),
@@ -1075,6 +1293,12 @@ const toolSeeds: ToolSeed[] = [
     timeoutMs: 10_000,
     retries: 0,
     tags: ["on-call"],
+    safety: {
+      idempotent: true,
+      supportsDryRun: false,
+      outputSinks: ["sends_message", "writes_record"],
+      identity: { scopes: ["incidents:write"] },
+    },
     volume: 22,
     errorRate: 0.9,
     p95Ms: 940,
@@ -1086,7 +1310,6 @@ const toolSeeds: ToolSeed[] = [
     risk: "Read",
     approval: "Auto",
     ownerId: "u-005",
-    extraAgentIds: ["agt-alert-correlator", "agt-it-helpdesk"],
     schema: schema({ service_id: p("string", "PagerDuty service id.") }, [
       "service_id",
     ]),
@@ -1094,6 +1317,9 @@ const toolSeeds: ToolSeed[] = [
     rateLimit: "120 / min",
     timeoutMs: 6_000,
     tags: ["on-call"],
+    safety: {
+      identity: { scopes: ["schedules:read", "oncalls:read"] },
+    },
     volume: 410,
     errorRate: 0.6,
     p95Ms: 610,
@@ -1106,7 +1332,6 @@ const toolSeeds: ToolSeed[] = [
     risk: "Write",
     approval: "Require approval",
     ownerId: "u-012",
-    extraAgentIds: ["agt-it-helpdesk"],
     schema: schema(
       {
         title: p("string", "Event title."),
@@ -1123,6 +1348,10 @@ const toolSeeds: ToolSeed[] = [
     timeoutMs: 8_000,
     retries: 1,
     tags: ["workspace"],
+    safety: {
+      outputSinks: ["writes_record", "sends_message"],
+      identity: { scopes: ["calendar.events"] },
+    },
     volume: 70,
     errorRate: 0.8,
     p95Ms: 890,
@@ -1135,7 +1364,6 @@ const toolSeeds: ToolSeed[] = [
     risk: "Write",
     approval: "Require approval",
     ownerId: "u-002",
-    extraAgentIds: ["agt-support-triage", "agt-hr-answers"],
     schema: schema(
       {
         to: p("array", "Recipients.", { items: { type: "string" } }),
@@ -1150,6 +1378,10 @@ const toolSeeds: ToolSeed[] = [
     timeoutMs: 8_000,
     retries: 1,
     tags: ["notifications"],
+    safety: {
+      outputSinks: ["sends_message"],
+      identity: { scopes: ["mail.send"], tokenTtlMin: 10 },
+    },
     volume: 520,
     errorRate: 0.7,
     p95Ms: 760,
@@ -1162,7 +1394,6 @@ const toolSeeds: ToolSeed[] = [
     risk: "Destructive",
     approval: "Require approval",
     ownerId: "u-002",
-    extraAgentIds: ["agt-kb-curator"],
     schema: schema(
       {
         kb_number: p("string", "Draft article number."),
@@ -1178,6 +1409,11 @@ const toolSeeds: ToolSeed[] = [
     timeoutMs: 15_000,
     retries: 0,
     tags: ["knowledge"],
+    safety: {
+      idempotent: true,
+      compensatingToolId: "create_article",
+      identity: { scopes: ["kb:publish"] },
+    },
     volume: 18,
     errorRate: 0.4,
     p95Ms: 1_320,
@@ -1189,7 +1425,6 @@ const toolSeeds: ToolSeed[] = [
     risk: "Write",
     approval: "Require approval",
     ownerId: "u-013",
-    extraAgentIds: ["agt-finance-copilot"],
     schema: schema(
       {
         opportunity_id: p("string", "Opportunity id."),
@@ -1204,6 +1439,12 @@ const toolSeeds: ToolSeed[] = [
     timeoutMs: 10_000,
     retries: 1,
     tags: ["crm"],
+    safety: {
+      idempotent: true,
+      maxTransactionUsd: 50_000,
+      compensatingToolId: "salesforce_update_opportunity",
+      identity: { scopes: ["api", "refresh_token"] },
+    },
     volume: 36,
     errorRate: 1.8,
     p95Ms: 1_240,
@@ -1228,6 +1469,10 @@ const toolSeeds: ToolSeed[] = [
     timeoutMs: 30_000,
     retries: 0,
     tags: ["analytics", "sql"],
+    safety: {
+      idempotent: true,
+      identity: { scopes: ["warehouse:delete"] },
+    },
     volume: 0,
   },
   {
@@ -1251,11 +1496,24 @@ const toolSeeds: ToolSeed[] = [
     timeoutMs: 30_000,
     retries: 0,
     tags: ["sandbox"],
+    safety: {
+      supportsDryRun: false,
+      outputSinks: ["executes_code"],
+      identity: {
+        mode: "service",
+        audience: undefined,
+        scopes: ["sandbox:shell"],
+        tokenTtlMin: 5,
+      },
+    },
     volume: 0,
   },
 ]
 
 export const tools: Tool[] = toolSeeds.map(buildTool)
+
+/** How often the gateway polls MCP servers for health, in seconds. */
+export const mcpPollIntervalSec = 30
 
 const toolByName = new Map(tools.map((t) => [t.name, t]))
 
@@ -1289,18 +1547,73 @@ interface ServerSeed {
   uptime30d: number
   ownerId: string
   note?: string
+  /** Days since the advertised definitions last changed. */
+  definitionChangedDaysAgo: number
+  /** Days since an operator reviewed them; omit for never reviewed. */
+  reviewedDaysAgo?: number
+  reviewerId?: string
+  signatureVerified: boolean
+  egressAllowlist: string[]
+  /** Days until the running version / transport is end-of-life. */
+  eolInDays?: number
+  vulns: [critical: number, high: number, medium: number]
+  scannedHoursAgo: number
+}
+
+/** 12-hex-char digest that is stable for a given id + version (FNV-1a). */
+function definitionDigest(input: string) {
+  let h1 = 0x811c9dc5
+  let h2 = 0x01000193
+  for (let i = 0; i < input.length; i++) {
+    h1 = Math.imul(h1 ^ input.charCodeAt(i), 0x01000193) >>> 0
+    h2 = Math.imul(h2 ^ input.charCodeAt(i), 0x811c9dc5) >>> 0
+  }
+  return (
+    h1.toString(16).padStart(8, "0") + h2.toString(16).padStart(8, "0")
+  ).slice(0, 12)
 }
 
 function buildServer(seed: ServerSeed): McpServer {
   const own = tools.filter((t) => t.source.serverId === seed.id)
-  const { lastHealthCheckHoursAgo, ...rest } = seed
+  const {
+    lastHealthCheckHoursAgo,
+    definitionChangedDaysAgo,
+    reviewedDaysAgo,
+    eolInDays,
+    vulns,
+    scannedHoursAgo,
+    ...rest
+  } = seed
   return {
     ...rest,
     protocolVersion: seed.protocolVersion ?? "2025-06-18",
     toolNames: own.map((t) => t.name),
     agentIds: [...new Set(own.flatMap((t) => t.agentIds))],
     lastHealthCheck: hoursAgo(lastHealthCheckHoursAgo),
+    definitionDigest: definitionDigest(`${seed.id}@${seed.version}`),
+    lastDefinitionChange: daysAgo(definitionChangedDaysAgo),
+    reviewedAt:
+      reviewedDaysAgo === undefined ? undefined : daysAgo(reviewedDaysAgo),
+    eolDate: eolInDays === undefined ? undefined : daysFromNow(eolInDays),
+    vulnerabilities: {
+      critical: vulns[0],
+      high: vulns[1],
+      medium: vulns[2],
+      scannedAt: hoursAgo(scannedHoursAgo),
+    },
   }
+}
+
+/** True when the definitions changed after the last operator review. */
+export function serverNeedsReview(s: McpServer) {
+  return !s.reviewedAt || s.lastDefinitionChange > s.reviewedAt
+}
+
+/** Code execution or HTML rendering only count as contained inside the sandbox. */
+export function toolIsSandboxed(t: Tool) {
+  return (
+    t.source.kind === "code" || t.source.serverId === "mcp-filesystem-sandbox"
+  )
 }
 
 const serverSeeds: ServerSeed[] = [
@@ -1320,6 +1633,13 @@ const serverSeeds: ServerSeed[] = [
     avgLatencyMs: 340,
     uptime30d: 99.97,
     ownerId: "u-003",
+    definitionChangedDaysAgo: 21,
+    reviewedDaysAgo: 20,
+    reviewerId: "u-003",
+    signatureVerified: true,
+    egressAllowlist: ["servicedesk.internal"],
+    vulns: [0, 0, 1],
+    scannedHoursAgo: 6,
   },
   {
     id: "mcp-semantic-layer",
@@ -1337,6 +1657,13 @@ const serverSeeds: ServerSeed[] = [
     avgLatencyMs: 120,
     uptime30d: 99.99,
     ownerId: "u-011",
+    definitionChangedDaysAgo: 9,
+    reviewedDaysAgo: 8,
+    reviewerId: "u-011",
+    signatureVerified: true,
+    egressAllowlist: ["semantic.internal"],
+    vulns: [0, 0, 0],
+    scannedHoursAgo: 6,
   },
   {
     id: "mcp-postgres-warehouse",
@@ -1354,6 +1681,13 @@ const serverSeeds: ServerSeed[] = [
     avgLatencyMs: 1_480,
     uptime30d: 99.4,
     ownerId: "u-006",
+    definitionChangedDaysAgo: 2,
+    reviewedDaysAgo: 14,
+    reviewerId: "u-006",
+    signatureVerified: true,
+    egressAllowlist: ["warehouse-replica.internal"],
+    vulns: [0, 1, 3],
+    scannedHoursAgo: 12,
     note: "p95 has doubled since the replica fell 40s behind primary. Statement timeouts are being retried once.",
   },
   {
@@ -1372,6 +1706,13 @@ const serverSeeds: ServerSeed[] = [
     avgLatencyMs: 24,
     uptime30d: 100,
     ownerId: "u-010",
+    definitionChangedDaysAgo: 40,
+    reviewedDaysAgo: 38,
+    reviewerId: "u-010",
+    signatureVerified: true,
+    egressAllowlist: [],
+    vulns: [0, 0, 0],
+    scannedHoursAgo: 6,
   },
   {
     id: "mcp-github",
@@ -1388,6 +1729,13 @@ const serverSeeds: ServerSeed[] = [
     avgLatencyMs: 410,
     uptime30d: 99.9,
     ownerId: "u-014",
+    definitionChangedDaysAgo: 5,
+    reviewedDaysAgo: 4,
+    reviewerId: "u-014",
+    signatureVerified: true,
+    egressAllowlist: ["api.githubcopilot.com", "api.github.com"],
+    vulns: [0, 0, 2],
+    scannedHoursAgo: 6,
   },
   {
     id: "mcp-slack",
@@ -1404,6 +1752,13 @@ const serverSeeds: ServerSeed[] = [
     avgLatencyMs: 290,
     uptime30d: 99.95,
     ownerId: "u-001",
+    definitionChangedDaysAgo: 1,
+    reviewedDaysAgo: 30,
+    reviewerId: "u-001",
+    signatureVerified: true,
+    egressAllowlist: ["mcp.slack.com", "slack.com", "files.slack.com"],
+    vulns: [0, 0, 0],
+    scannedHoursAgo: 6,
   },
   {
     id: "mcp-pagerduty",
@@ -1421,6 +1776,14 @@ const serverSeeds: ServerSeed[] = [
     avgLatencyMs: 380,
     uptime30d: 99.8,
     ownerId: "u-005",
+    definitionChangedDaysAgo: 60,
+    reviewedDaysAgo: 55,
+    reviewerId: "u-005",
+    signatureVerified: true,
+    egressAllowlist: ["mcp.pagerduty.com", "api.pagerduty.com"],
+    eolInDays: 75,
+    vulns: [0, 1, 1],
+    scannedHoursAgo: 6,
     note: "Still on the legacy SSE transport; vendor migration to streamable HTTP is scheduled for Q1.",
   },
   {
@@ -1439,6 +1802,13 @@ const serverSeeds: ServerSeed[] = [
     avgLatencyMs: 2_900,
     uptime30d: 97.1,
     ownerId: "u-010",
+    definitionChangedDaysAgo: 3,
+    reviewedDaysAgo: 2,
+    reviewerId: "u-010",
+    signatureVerified: false,
+    egressAllowlist: [],
+    vulns: [1, 2, 4],
+    scannedHoursAgo: 20,
     note: "Process exited with code 137 (OOM) three times in the last hour. Supervisor backoff is at 15 minutes.",
   },
   {
@@ -1456,6 +1826,13 @@ const serverSeeds: ServerSeed[] = [
     avgLatencyMs: 620,
     uptime30d: 99.7,
     ownerId: "u-013",
+    definitionChangedDaysAgo: 12,
+    reviewedDaysAgo: 11,
+    reviewerId: "u-013",
+    signatureVerified: true,
+    egressAllowlist: ["mcp.salesforce.com", "login.salesforce.com"],
+    vulns: [0, 0, 1],
+    scannedHoursAgo: 6,
   },
 ]
 

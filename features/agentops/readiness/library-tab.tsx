@@ -22,6 +22,7 @@ import {
   TwoLineCell,
   type DataTableFeatures,
 } from "@/components/data-table"
+import { CountPill } from "@/components/shared/count-pill"
 import { EmptyState } from "@/components/shared/empty-state"
 import { StateBadge } from "@/components/shared/status-badge"
 import { UserChip } from "@/components/shared/user-chip"
@@ -40,7 +41,7 @@ import {
 } from "@/components/ui/input-group"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { NOW } from "@/lib/data/seed"
+import { clock, NOW } from "@/lib/data/seed"
 import { formatDate } from "@/lib/format"
 import { cadenceLabel } from "@/lib/readiness/labels"
 import { failureModes, glossary } from "@/lib/readiness/library"
@@ -72,10 +73,10 @@ function dueState(review: NonNullable<ControlEval["review"]>): DueState {
 
 function markReviewed(controlId: string) {
   readinessActions.respond(controlId, {
-    lastReviewed: new Date().toISOString(),
+    lastReviewed: clock().toISOString(),
   })
   toast("Review recorded", {
-    description: `${controlId} marked as reviewed today.`,
+    description: `${controlId} last reviewed set to ${formatDate(clock().toISOString())}.`,
   })
 }
 
@@ -203,7 +204,7 @@ function FailureModes({
                 {covered} of {failureModes.length}
               </span>{" "}
               <span className="text-muted-foreground">
-                patterns fully covered — every applicable mapped control is in
+                patterns fully covered: every applicable mapped control is in
                 place or verified.
               </span>
             </>
@@ -245,6 +246,17 @@ function FailureModes({
           size="sm"
           icon={<ShieldAlertIcon />}
           title="No patterns in this domain"
+          description="Failure modes are filed under the domain of the control that catches them first; try another domain or show all."
+          action={
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setDomain("all")}
+            >
+              Show all domains
+            </Button>
+          }
         />
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -304,7 +316,11 @@ const reviewColumns = reviewCol.columns([
   reviewCol.accessor((e) => e.control.cadence?.every ?? "", {
     id: "every",
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Every" />
+      <DataTableColumnHeader
+        column={column}
+        title="Every"
+        hint="Review interval from the control's cadence"
+      />
     ),
     cell: ({ row }) => {
       const c = row.original.control.cadence
@@ -332,7 +348,11 @@ const reviewColumns = reviewCol.columns([
   reviewCol.accessor((e) => e.review?.dueAt ?? "", {
     id: "due",
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Due" />
+      <DataTableColumnHeader
+        column={column}
+        title="Due"
+        hint="Last reviewed plus the interval; due now when never reviewed. Due soon within 14 days"
+      />
     ),
     cell: ({ row }) => {
       const r = row.original.review
@@ -391,7 +411,7 @@ const standingReminders: { title: string; ids: string[]; hint: string }[] = [
   {
     title: "Judge recalibration",
     ids: ["QUA-03"],
-    hint: "Re-measure judge–human agreement before trusting automated scores.",
+    hint: "Re-measure judge-human agreement before trusting automated scores.",
   },
   {
     title: "Model deprecation check",
@@ -471,6 +491,7 @@ function ReviewCadence({ result }: { result: AssessmentResult | null }) {
         initialSorting={[{ id: "due", desc: false }]}
         pageSize={25}
         totalLabel="recurring reviews"
+        caption="Recurring reviews with due dates"
         emptyIcon={<CalendarClockIcon />}
         emptyTitle="Nothing to review yet"
         emptyMessage="Reviews appear once a control with a cadence is at least partially in place."
@@ -512,7 +533,7 @@ function Glossary() {
           size="sm"
           icon={<BookOpenIcon />}
           title="No matching terms"
-          description="Try a different word — definitions are searched too."
+          description="Try a different word: definitions are searched too."
         />
       ) : (
         <dl className="grid gap-x-8 gap-y-4 md:grid-cols-2">
@@ -568,23 +589,17 @@ export function LibraryTab({
       <TabsList variant="line">
         <TabsTrigger value="failures">
           <ShieldAlertIcon data-icon="inline-start" /> Failure modes
-          <span className="text-xs text-muted-foreground tabular-nums">
-            {failureModes.length}
-          </span>
+          <CountPill count={failureModes.length} label="failure modes" />
         </TabsTrigger>
         <TabsTrigger value="reviews">
           <CalendarClockIcon data-icon="inline-start" /> Review cadence
           {result && result.reviews.length > 0 && (
-            <span className="text-xs text-muted-foreground tabular-nums">
-              {result.reviews.length}
-            </span>
+            <CountPill count={result.reviews.length} label="reviews" />
           )}
         </TabsTrigger>
         <TabsTrigger value="glossary">
           <BookOpenIcon data-icon="inline-start" /> Glossary
-          <span className="text-xs text-muted-foreground tabular-nums">
-            {glossary.length}
-          </span>
+          <CountPill count={glossary.length} label="terms" />
         </TabsTrigger>
       </TabsList>
       <TabsContent value="failures">

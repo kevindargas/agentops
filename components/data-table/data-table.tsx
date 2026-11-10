@@ -15,17 +15,10 @@ import {
   type SortingState,
 } from "@tanstack/react-table"
 import { cn } from "cn"
-import { FilterXIcon, InboxIcon, SearchIcon, XIcon } from "lucide-react"
+import { FilterXIcon, SearchIcon, XIcon } from "lucide-react"
 
+import { EmptyState } from "@/components/shared/empty-state"
 import { Button } from "@/components/ui/button"
-import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty"
 import {
   InputGroup,
   InputGroupAddon,
@@ -68,6 +61,8 @@ export interface DataTableProps<TData extends RowData> {
   /** Text used by the search box. Return the concatenated searchable text. */
   getSearchText?: (row: TData) => string
   searchPlaceholder?: string
+  /** Seeds the toolbar search box, e.g. from a `?q=` query param. */
+  initialSearch?: string
   facets?: FacetDef<TData>[]
   initialFacets?: Record<string, string[]>
   initialSorting?: SortingState
@@ -93,6 +88,8 @@ export interface DataTableProps<TData extends RowData> {
   emptyAction?: React.ReactNode
   /** Noun used in the pagination footer, e.g. "incidents". */
   totalLabel?: string
+  /** Accessible table caption (visually hidden). Defaults to `totalLabel`. */
+  caption?: string
   className?: string
   /** Row density. `compact` tightens vertical padding. */
   density?: DataTableDensity
@@ -126,6 +123,7 @@ export function DataTable<TData extends RowData>({
   getRowId,
   getSearchText,
   searchPlaceholder = "Search…",
+  initialSearch = "",
   facets = [],
   initialFacets,
   initialSorting = [],
@@ -141,6 +139,7 @@ export function DataTable<TData extends RowData>({
   emptyIcon,
   emptyAction,
   totalLabel,
+  caption,
   className,
   density,
   dense = false,
@@ -155,7 +154,7 @@ export function DataTable<TData extends RowData>({
   const compact = density === "compact" || (density === undefined && dense)
   const searchRef = React.useRef<HTMLInputElement>(null)
 
-  const [search, setSearch] = React.useState("")
+  const [search, setSearch] = React.useState(initialSearch)
   const [facetState, setFacetState] = React.useState<
     Record<string, Set<string>>
   >(() => {
@@ -357,6 +356,9 @@ export function DataTable<TData extends RowData>({
         )}
       >
         <table data-slot="table" className="w-full caption-bottom text-sm">
+          {(caption ?? totalLabel) && (
+            <caption className="sr-only">{caption ?? totalLabel}</caption>
+          )}
           <TableHeader
             className={cn(
               "bg-muted/40 [&_tr]:border-b-0",
@@ -496,27 +498,27 @@ export function DataTable<TData extends RowData>({
                   colSpan={visibleColumns.length}
                   className="p-0 whitespace-normal"
                 >
-                  <Empty className="border-0 py-14">
-                    <EmptyHeader>
-                      <EmptyMedia variant="icon">
-                        {emptyIcon ??
-                          (isFiltered ? <FilterXIcon /> : <InboxIcon />)}
-                      </EmptyMedia>
-                      <EmptyTitle className="text-sm">
-                        {emptyTitle ??
-                          (isFiltered
-                            ? "No matching results"
-                            : `No ${totalLabel ?? "records"} yet`)}
-                      </EmptyTitle>
-                      <EmptyDescription className="text-xs">
-                        {emptyMessage ??
-                          (isFiltered
-                            ? "Try adjusting your search or clearing some filters."
-                            : "Records will appear here once they are created.")}
-                      </EmptyDescription>
-                    </EmptyHeader>
-                    {isFiltered ? (
-                      <EmptyContent>
+                  <EmptyState
+                    size="sm"
+                    bare
+                    className="py-12"
+                    icon={
+                      emptyIcon ?? (isFiltered ? <FilterXIcon /> : undefined)
+                    }
+                    title={
+                      emptyTitle ??
+                      (isFiltered
+                        ? "No matching results"
+                        : `No ${totalLabel ?? "records"} yet`)
+                    }
+                    description={
+                      emptyMessage ??
+                      (isFiltered
+                        ? "Try adjusting your search or clearing some filters."
+                        : "Records will appear here once they are created.")
+                    }
+                    action={
+                      isFiltered ? (
                         <Button
                           variant="outline"
                           size="sm"
@@ -524,11 +526,11 @@ export function DataTable<TData extends RowData>({
                         >
                           <FilterXIcon /> Clear filters
                         </Button>
-                      </EmptyContent>
-                    ) : emptyAction ? (
-                      <EmptyContent>{emptyAction}</EmptyContent>
-                    ) : null}
-                  </Empty>
+                      ) : (
+                        emptyAction
+                      )
+                    }
+                  />
                 </TableCell>
               </TableRow>
             )}
@@ -555,7 +557,7 @@ export function DataTable<TData extends RowData>({
           >
             <div className="pointer-events-auto flex max-w-[calc(100vw-2rem)] animate-in items-center gap-1.5 rounded-xl border bg-popover/95 p-1.5 pl-3 text-sm text-popover-foreground shadow-lg ring-1 ring-foreground/5 backdrop-blur fade-in-0 slide-in-from-bottom-2 supports-backdrop-filter:bg-popover/85">
               <span className="flex items-center gap-2 pr-2 font-medium whitespace-nowrap tabular-nums">
-                <span className="inline-flex size-5 items-center justify-center rounded-md bg-brand text-[11px] font-semibold text-brand-foreground">
+                <span className="inline-flex size-5 items-center justify-center rounded-md bg-brand text-2xs font-semibold text-brand-foreground">
                   {selectedCount}
                 </span>
                 {selectionLabel ? selectionLabel(selectedCount) : "selected"}

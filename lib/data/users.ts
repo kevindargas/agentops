@@ -3,8 +3,8 @@ import type { Group, User } from "@/lib/types"
 export const users: User[] = [
   {
     id: "u-001",
-    name: "Kevin Gandomcar",
-    email: "kevin.gandomcar@agentops.dev",
+    name: "Kevin Dargas",
+    email: "kevin.dargas@agentops.dev",
     title: "Platform Owner",
     department: "IT",
     location: "San Francisco",
@@ -175,7 +175,7 @@ export const users: User[] = [
     id: "u-022",
     name: "Liam O'Connor",
     email: "liam.oconnor@agentops.dev",
-    title: "New Hire — Data Analyst",
+    title: "New Hire: Data Analyst",
     department: "Analytics",
     location: "Dublin",
   },
@@ -183,7 +183,7 @@ export const users: User[] = [
     id: "u-023",
     name: "Ava Thompson",
     email: "ava.thompson@agentops.dev",
-    title: "New Hire — Account Executive",
+    title: "New Hire: Account Executive",
     department: "Sales",
     location: "New York",
   },
@@ -336,3 +336,19 @@ export function initials(name: string) {
 }
 
 export const currentUser = users[0]
+
+/** Platform roles a user can hold; the admin Users page counts these. */
+export const roles = [
+  "admin",
+  "itil",
+  "approver",
+  "agent_operator",
+  "prompt_editor",
+  "finance_viewer",
+  "readonly",
+] as const
+
+export type Role = (typeof roles)[number]
+
+/** Sample e-mail domain shared by every seeded user. */
+export const SAMPLE_EMAIL_DOMAIN = "agentops.dev"

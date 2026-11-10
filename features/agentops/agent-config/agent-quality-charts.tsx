@@ -1,6 +1,7 @@
 "use client"
 
 import { ChartCard } from "@/components/charts/chart-card"
+import { CHART_HEIGHT } from "@/components/charts/chart-primitives"
 import { IncidentTrendChart } from "@/components/charts/incident-trend-chart"
 import { formatNumber } from "@/lib/format"
 
@@ -27,7 +28,7 @@ export function AgentQualityCharts({ series }: { series: QualityPoint[] }) {
           series={[
             { key: "quality", label: "Quality", color: "var(--chart-1)" },
           ]}
-          height={200}
+          height={CHART_HEIGHT.sm}
           showLegend={false}
           valueFormatter={(v) => v.toFixed(1)}
         />
@@ -38,7 +39,7 @@ export function AgentQualityCharts({ series }: { series: QualityPoint[] }) {
           series={[
             { key: "requests", label: "Requests", color: "var(--chart-5)" },
           ]}
-          height={200}
+          height={CHART_HEIGHT.sm}
           showLegend={false}
           valueFormatter={(v) => formatNumber(v)}
         />

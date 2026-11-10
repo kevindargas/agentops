@@ -1,5 +1,3 @@
-"use client"
-
 import { cn } from "cn"
 import {
   BotIcon,
@@ -21,11 +19,12 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { deployedAgents, getDeployedAgent } from "@/lib/data"
+import { deployedAgents, getDeployedAgent } from "@/lib/data/agentops"
 import type {
   Guardrail,
   GuardrailCategory,
   GuardrailEngine,
+  GuardrailFailMode,
   GuardrailMode,
   GuardrailStatus,
   ViolationAction,
@@ -33,10 +32,10 @@ import type {
 import { ModelChip } from "../shared"
 
 /* ------------------------------------------------------------------------ */
-/* Tones — new state strings; see stateTone in components/shared/status-badge */
+/* Tones for strings that stateTone does not cover                           */
 /* ------------------------------------------------------------------------ */
 
-export const modeTone: Record<GuardrailMode, Tone> = {
+const modeTone: Record<GuardrailMode, Tone> = {
   Block: "danger",
   Flag: "warning",
   Redact: "info",
@@ -50,7 +49,7 @@ export const actionTone: Record<ViolationAction, Tone> = {
   "Approval requested": "progress",
 }
 
-export const statusTone: Record<GuardrailStatus, Tone> = {
+const statusTone: Record<GuardrailStatus, Tone> = {
   Active: "success",
   Disabled: "muted",
   Draft: "muted",
@@ -75,6 +74,47 @@ export function ActionBadge({
 }) {
   return <StateBadge state={action} tone={actionTone[action]} size={size} />
 }
+
+export const failModeMeta: Record<
+  GuardrailFailMode,
+  { label: string; tone: Tone; hint: string }
+> = {
+  fail_closed: {
+    label: "Fail closed",
+    tone: "success",
+    hint: "If the engine errors or times out the turn is rejected.",
+  },
+  fail_open: {
+    label: "Fail open",
+    tone: "warning",
+    hint: "If the engine errors or times out the turn passes unguarded.",
+  },
+}
+
+export function FailModeBadge({
+  failMode,
+  size,
+  className,
+}: {
+  failMode: GuardrailFailMode
+  size?: "sm" | "default"
+  className?: string
+}) {
+  const meta = failModeMeta[failMode]
+  return (
+    <span title={meta.hint} className="inline-flex">
+      <StateBadge
+        state={meta.label}
+        tone={meta.tone}
+        size={size}
+        className={className}
+      />
+    </span>
+  )
+}
+
+/** Share of red-team cases that got through; above 5% is a finding. */
+export const bypassAlertThreshold = 0.05
 
 export function PolicyStatusBadge({
   status,
@@ -140,7 +180,7 @@ export function CategoryBadge({
 /* Engine                                                                    */
 /* ------------------------------------------------------------------------ */
 
-export const engineLabel: Record<GuardrailEngine, string> = {
+const engineLabel: Record<GuardrailEngine, string> = {
   regex: "Regex",
   classifier: "Classifier",
   "llm-judge": "LLM judge",
@@ -167,7 +207,7 @@ export function EngineCell({
   if (policy.modelId)
     return (
       <span className={cn("flex min-w-0 flex-col gap-0.5", className)}>
-        <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+        <span className="inline-flex items-center gap-1 text-2xs text-muted-foreground">
           <Icon className="size-3" /> {engineLabel[policy.engine]}
         </span>
         <ModelChip modelId={policy.modelId} className="text-xs" />
@@ -232,3 +272,8 @@ export function ScopeCell({
 }
 
 export const fmtPct = (n: number, digits = 0) => `${(n * 100).toFixed(digits)}%`
+
+/** Violations tab deep link, filtered to one policy. */
+export function violationsHref(policyId: string) {
+  return `/agentops/guardrails?tab=violations&byPolicy=${policyId}`
+}

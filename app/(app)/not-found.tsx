@@ -2,6 +2,7 @@ import Link from "next/link"
 import { ArrowLeftIcon, CompassIcon } from "lucide-react"
 
 import { CommandMenuTrigger } from "@/components/layout/command-menu"
+import { Eyebrow } from "@/components/shared/eyebrow"
 import { Button } from "@/components/ui/button"
 import {
   Empty,
@@ -24,9 +25,7 @@ export default function NotFound() {
         >
           <CompassIcon />
         </EmptyMedia>
-        <p className="font-mono text-[11px] font-medium tracking-widest text-muted-foreground uppercase">
-          Error 404
-        </p>
+        <Eyebrow mono>Error 404</Eyebrow>
         <EmptyTitle className="text-base">Page not found</EmptyTitle>
         <EmptyDescription>
           The page you are looking for does not exist, was moved, or you do not

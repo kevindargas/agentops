@@ -1,10 +1,9 @@
-"use client"
-
 import { cn } from "cn"
 import { ArrowDownRightIcon, ArrowUpRightIcon, MinusIcon } from "lucide-react"
 
 import { StateBadge, type Tone } from "@/components/shared/status-badge"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import {
   Tooltip,
   TooltipContent,
@@ -17,16 +16,15 @@ import {
 } from "@/lib/data/evals"
 import { formatEvalScore } from "./format"
 
-export { fmtCost, fmtDuration, fmtMs, formatEvalScore } from "./format"
+export { formatEvalScore } from "./format"
 
 /* ------------------------------------------------------------------------ */
-/* Tones for strings not yet in stateTone                                    */
+/* Tones                                                                     */
 /* ------------------------------------------------------------------------ */
 
 /**
- * Eval-specific states. `Passed`, `Queued`, `Pass`, `Fail`, `Regression`,
- * `Improvement` and `Same` are not in `stateTone` yet, so we pass an explicit
- * tone; once added to status-badge.tsx these overrides become redundant.
+ * Eval-specific states. `stateTone` covers most of these already; the
+ * explicit map keeps the eval pages stable if the shared map changes.
  */
 export const evalTone: Record<string, Tone> = {
   Passed: "success",
@@ -112,7 +110,7 @@ export function PromptChip({
     <Badge
       variant="outline"
       className={cn(
-        "h-5 px-1.5 font-mono text-[11px] font-medium text-muted-foreground",
+        "h-5 px-1.5 font-mono text-2xs font-medium text-muted-foreground",
         className
       )}
       title={`Prompt version ${version}`}
@@ -132,7 +130,7 @@ export function DatasetChip({
   return (
     <code
       className={cn(
-        "rounded-sm bg-muted px-1 py-0.5 font-mono text-[11px] whitespace-nowrap",
+        "rounded-sm bg-muted px-1 py-0.5 font-mono text-2xs whitespace-nowrap",
         className
       )}
     >
@@ -156,6 +154,7 @@ const toneCell: Record<Tone, string> = {
   neutral: "bg-muted text-foreground",
   info: "bg-info/10 text-info-text",
   progress: "bg-brand/10 text-brand",
+  brand: "bg-brand/10 text-brand",
   muted: "bg-muted text-muted-foreground",
 }
 
@@ -176,11 +175,11 @@ export function ScoreCell({
     return (
       <span
         className={cn(
-          "inline-flex h-6 min-w-10 items-center justify-center rounded-md bg-muted px-1.5 font-mono text-[11px] text-muted-foreground/60",
+          "inline-flex h-6 min-w-10 items-center justify-center rounded-md bg-muted px-1.5 font-mono text-2xs text-muted-foreground/60",
           className
         )}
       >
-        —
+        n/a
       </span>
     )
   const tone = scoreToneFor(value)
@@ -190,7 +189,7 @@ export function ScoreCell({
         render={
           <span
             className={cn(
-              "inline-flex h-6 min-w-10 items-center justify-center gap-1 rounded-md px-1.5 font-mono text-[11px] font-medium tabular-nums",
+              "inline-flex h-6 min-w-10 items-center justify-center gap-1 rounded-md px-1.5 font-mono text-2xs font-medium tabular-nums",
               toneCell[tone],
               className
             )}
@@ -235,7 +234,7 @@ export function DeltaValue({
   upIsGood?: boolean
 }) {
   if (value === null || value === undefined)
-    return <span className="text-muted-foreground/60">—</span>
+    return <span className="text-muted-foreground/60">n/a</span>
   if (value === 0)
     return (
       <span
@@ -276,7 +275,7 @@ export function CasesBar({
   className?: string
 }) {
   const total = passed + failed
-  if (!total) return <span className="text-muted-foreground/60">—</span>
+  if (!total) return <span className="text-muted-foreground/60">n/a</span>
   return (
     <span className={cn("inline-flex flex-col gap-1", className)}>
       <span className="font-mono text-xs tabular-nums">
@@ -297,5 +296,37 @@ export function CasesBar({
         />
       </span>
     </span>
+  )
+}
+
+/* ------------------------------------------------------------------------ */
+/* Demo affordances                                                          */
+/* ------------------------------------------------------------------------ */
+
+/**
+ * A disabled button with a tooltip saying why. Used where the template has no
+ * backend to act on (new run, re-run, new dataset) instead of a toast that
+ * would claim something happened.
+ */
+export function NotInDemoButton({
+  children,
+  reason = "Not available in this demo: there is no eval service to call.",
+  size = "sm",
+  variant = "default",
+}: {
+  children: React.ReactNode
+  reason?: string
+  size?: "sm" | "default"
+  variant?: "default" | "outline" | "ghost"
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span className="inline-flex" />}>
+        <Button size={size} variant={variant} disabled>
+          {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{reason}</TooltipContent>
+    </Tooltip>
   )
 }

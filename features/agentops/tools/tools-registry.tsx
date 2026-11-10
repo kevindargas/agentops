@@ -1,13 +1,16 @@
 "use client"
 
 import * as React from "react"
-import { useRouter, useSearchParams } from "next/navigation"
+import { useSearchParams } from "next/navigation"
 import { KeyRoundIcon, ServerIcon, WrenchIcon } from "lucide-react"
 
+import { setQueryParams } from "@/hooks/use-query-param"
+import { CountPill } from "@/components/shared/count-pill"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { mcpServers, tools } from "@/lib/data/tools"
+import { getDeployedAgent } from "@/lib/data/agentops"
 import { McpServersTab } from "./mcp-servers"
 import { PermissionsTab } from "./permissions-matrix"
+import { serverStore, toolStore } from "./store"
 import { ToolsTab } from "./tools-table"
 
 type TabKey = "tools" | "servers" | "permissions"
@@ -15,15 +18,20 @@ const tabKeys: TabKey[] = ["tools", "servers", "permissions"]
 
 /**
  * Tabs + detail sheets driven entirely by the URL: `?tab=servers`,
- * `?tool=<name>`, `?server=<id>`. Opening a tool from a server (or vice versa)
- * swaps the param and the tab so deep links from agents resolve either way.
+ * `?tool=<name>`, `?server=<id>`, `?agent=<agt-id>`. Opening a tool from a
+ * server (or vice versa) swaps the param and the tab so deep links from agents
+ * resolve either way. `?agent=` pre-filters the Tools tab to that agent's
+ * allowlist and emphasises its row on the Permissions tab.
  */
 export function ToolsRegistry() {
-  const router = useRouter()
   const params = useSearchParams()
+  const toolCount = toolStore.use().length
+  const serverCount = serverStore.use().length
 
   const toolParam = params.get("tool")
   const serverParam = params.get("server")
+  const agentParam = params.get("agent")
+  const agentId = agentParam && getDeployedAgent(agentParam) ? agentParam : null
   const tabParam = params.get("tab") as TabKey | null
   const tab: TabKey = toolParam
     ? "tools"
@@ -33,36 +41,16 @@ export function ToolsRegistry() {
         ? tabParam
         : "tools"
 
-  const navigate = React.useCallback(
-    (patch: Record<string, string | null>) => {
-      const next = new URLSearchParams(params.toString())
-      for (const [k, v] of Object.entries(patch)) {
-        if (v) next.set(k, v)
-        else next.delete(k)
-      }
-      router.replace(`/agentops/tools${next.size ? `?${next}` : ""}`, {
-        scroll: false,
-      })
-    },
-    [params, router]
-  )
-
-  const openTool = React.useCallback(
-    (name: string | null) =>
-      navigate({ tool: name, server: null, tab: name ? "tools" : null }),
-    [navigate]
-  )
-  const openServer = React.useCallback(
-    (id: string | null) =>
-      navigate({ server: id, tool: null, tab: id ? "servers" : null }),
-    [navigate]
-  )
+  const openTool = (name: string | null) =>
+    setQueryParams({ tool: name, server: null, tab: name ? "tools" : null })
+  const openServer = (id: string | null) =>
+    setQueryParams({ server: id, tool: null, tab: id ? "servers" : null })
 
   return (
     <Tabs
       value={tab}
       onValueChange={(v) =>
-        navigate({
+        setQueryParams({
           tab: v === "tools" ? null : String(v),
           tool: null,
           server: null,
@@ -75,14 +63,10 @@ export function ToolsRegistry() {
           variant="line"
           className="h-9 w-full min-w-max justify-start gap-0 border-b p-0"
         >
-          <Trigger value="tools" icon={<WrenchIcon />} count={tools.length}>
+          <Trigger value="tools" icon={<WrenchIcon />} count={toolCount}>
             Tools
           </Trigger>
-          <Trigger
-            value="servers"
-            icon={<ServerIcon />}
-            count={mcpServers.length}
-          >
+          <Trigger value="servers" icon={<ServerIcon />} count={serverCount}>
             MCP Servers
           </Trigger>
           <Trigger value="permissions" icon={<KeyRoundIcon />}>
@@ -93,6 +77,7 @@ export function ToolsRegistry() {
       <TabsContent value="tools">
         <ToolsTab
           openName={toolParam}
+          agentId={agentId}
           onOpen={openTool}
           onOpenServer={openServer}
         />
@@ -105,7 +90,7 @@ export function ToolsRegistry() {
         />
       </TabsContent>
       <TabsContent value="permissions">
-        <PermissionsTab />
+        <PermissionsTab highlightAgentId={agentId} />
       </TabsContent>
     </Tabs>
   )
@@ -132,9 +117,10 @@ function Trigger({
       </span>
       {children}
       {count !== undefined && (
-        <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground tabular-nums transition-colors group-data-active/tab:bg-foreground group-data-active/tab:text-background">
-          {count}
-        </span>
+        <CountPill
+          count={count}
+          className="transition-colors group-data-active/tab:bg-foreground group-data-active/tab:text-background"
+        />
       )}
     </TabsTrigger>
   )

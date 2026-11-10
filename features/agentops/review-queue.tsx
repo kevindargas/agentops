@@ -11,11 +11,16 @@ import {
   SkipForwardIcon,
   ThumbsDownIcon,
   ThumbsUpIcon,
+  XIcon,
 } from "lucide-react"
 import { toast } from "sonner"
 
+import { CountPill } from "@/components/shared/count-pill"
 import { EmptyState } from "@/components/shared/empty-state"
-import { PriorityBadge } from "@/components/shared/status-badge"
+import { Eyebrow } from "@/components/shared/eyebrow"
+import { StatCard } from "@/components/shared/stat-card"
+import { StatGrid } from "@/components/shared/stat-grid"
+import { PriorityBadge, StateBadge } from "@/components/shared/status-badge"
 import { UserChip } from "@/components/shared/user-chip"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -29,10 +34,16 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { getDeployedAgent, getTrace, reviewItems as seed } from "@/lib/data"
-import { timeAgo } from "@/lib/format"
+import {
+  getDeployedAgent,
+  getTrace,
+  pendingReviewCount,
+} from "@/lib/data/agentops"
+import { currentUser } from "@/lib/data/users"
+import { formatCost, formatMs, timeAgo } from "@/lib/format"
 import type { ReviewItem, ReviewReason, ReviewRubric } from "@/lib/types"
-import { AgentChip, fmtCost, fmtMs, ModelChip, ScoreBar } from "./shared"
+import { AgentChip, ModelChip, ScoreBar } from "./shared"
+import { reviewStore } from "./stores"
 
 const reasons: ReviewReason[] = [
   "Low confidence",
@@ -52,15 +63,74 @@ const rubricKeys: { key: keyof ReviewRubric; label: string; hint: string }[] = [
   { key: "safety", label: "Safety", hint: "No PII leak, policy respected" },
 ]
 
-export function ReviewQueue() {
-  const [items, setItems] = React.useState<ReviewItem[]>(seed)
+const rubricMean = (r: ReviewRubric) =>
+  (r.accuracy + r.grounding + r.tone + r.safety) / rubricKeys.length
+
+/**
+ * Stat row for the Review Queue page. Reads the same store as the queue so
+ * approving, flagging or correcting an item moves the numbers immediately.
+ */
+export function ReviewStats() {
+  const items = reviewStore.use()
+  const pendingItems = items.filter((r) => r.status === "Pending")
+  const done = items.filter((r) => r.status !== "Pending")
+  const approved = done.filter((r) => r.status === "Approved").length
+  const scored = done
+    .map((r) => r.rubric)
+    .filter((r): r is ReviewRubric => Boolean(r))
+  const avg = scored.length
+    ? scored.reduce((s, r) => s + rubricMean(r), 0) / scored.length
+    : 0
+  return (
+    <StatGrid columns={4}>
+      <StatCard
+        label="Pending"
+        value={pendingReviewCount(items)}
+        hint={`${pendingItems.filter((r) => r.priority <= 2).length} high priority`}
+      />
+      <StatCard
+        label="Reviewed"
+        value={done.length}
+        hint={`${approved} approved · ${done.filter((r) => r.status === "Corrected").length} corrected · ${done.filter((r) => r.status === "Flagged").length} flagged`}
+      />
+      <StatCard
+        label="Approval rate"
+        value={`${Math.round((approved / Math.max(1, done.length)) * 100)}%`}
+        hint="Share of reviewed items approved"
+      />
+      <StatCard
+        label="Avg rubric score"
+        value={avg.toFixed(1)}
+        unit="/5"
+        hint={`Mean of ${rubricKeys.length} criteria on reviewed items`}
+      />
+    </StatGrid>
+  )
+}
+
+export function ReviewQueue({
+  initialSelectedId,
+  agentId,
+}: {
+  /** `?item=<rev-id>`: open this item first instead of the top-priority one. */
+  initialSelectedId?: string
+  /** `?agent=<agt-id>`: show only this agent's queue. */
+  agentId?: string
+}) {
+  const items = reviewStore.use()
   const [filter, setFilter] = React.useState<"all" | ReviewReason>("all")
-  const [selectedId, setSelectedId] = React.useState<string | null>(null)
+  const [selectedId, setSelectedId] = React.useState<string | null>(
+    initialSelectedId ?? null
+  )
   const [done, setDone] = React.useState(0)
 
+  const scoped = React.useMemo(
+    () => (agentId ? items.filter((i) => i.agentId === agentId) : items),
+    [items, agentId]
+  )
   const pending = React.useMemo(
     () =>
-      items
+      scoped
         .filter(
           (i) =>
             i.status === "Pending" && (filter === "all" || i.reason === filter)
@@ -69,11 +139,12 @@ export function ReviewQueue() {
           (a, b) =>
             a.priority - b.priority || a.created.localeCompare(b.created)
         ),
-    [items, filter]
+    [scoped, filter]
   )
-  const reviewed = items.filter((i) => i.status !== "Pending")
+  const reviewed = scoped.filter((i) => i.status !== "Pending")
   const selected =
     pending.find((i) => i.id === selectedId) ?? pending[0] ?? null
+  const agent = agentId ? getDeployedAgent(agentId) : undefined
 
   const decide = React.useCallback(
     (
@@ -84,20 +155,14 @@ export function ReviewQueue() {
     ) => {
       if (!selected) return
       const idx = pending.indexOf(selected)
-      setItems((prev) =>
-        prev.map((i) =>
-          i.id === selected.id
-            ? {
-                ...i,
-                status,
-                rubric,
-                note: note || undefined,
-                correction,
-                reviewerId: "u-001",
-              }
-            : i
-        )
-      )
+      const previous = selected
+      reviewStore.patch(selected.id, {
+        status,
+        rubric,
+        note: note || undefined,
+        correction,
+        reviewerId: currentUser.id,
+      })
       setDone((n) => n + 1)
       setSelectedId(pending[idx + 1]?.id ?? pending[idx - 1]?.id ?? null)
       toast[status === "Flagged" ? "warning" : "success"](
@@ -105,10 +170,21 @@ export function ReviewQueue() {
         {
           description:
             status === "Corrected"
-              ? "Correction saved to the eval set"
+              ? "Correction and rubric recorded on the item for this session"
               : status === "Flagged"
-                ? "Routed to the agent owner"
-                : "Added as a positive example",
+                ? "Marked for the agent owner; the note is kept on the item"
+                : "Recorded as approved with your rubric",
+          action: {
+            label: "Undo",
+            onClick: () => {
+              reviewStore.set((prev) =>
+                prev.map((i) => (i.id === previous.id ? previous : i))
+              )
+              setDone((n) => Math.max(0, n - 1))
+              setSelectedId(previous.id)
+            },
+          },
+          duration: 6000,
         }
       )
     },
@@ -123,32 +199,42 @@ export function ReviewQueue() {
 
   return (
     <div className="grid min-h-[70vh] gap-4 xl:grid-cols-[22rem_1fr]">
-      <aside className="flex min-h-0 flex-col overflow-hidden rounded-xl border bg-card">
+      <aside className="flex max-h-[40vh] min-h-0 flex-col overflow-hidden rounded-xl border bg-card xl:max-h-none">
         <div className="flex items-center justify-between gap-2 border-b px-3 py-2.5">
-          <p className="text-sm font-semibold">
-            Pending{" "}
-            <span className="ml-1 rounded-full bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground tabular-nums">
-              {pending.length}
-            </span>
+          <p className="flex items-center gap-1.5 text-sm font-semibold">
+            Pending
+            <CountPill count={pending.length} size="default" label="pending" />
           </p>
-          <p className="text-[11px] text-muted-foreground tabular-nums">
+          <p className="text-2xs text-muted-foreground tabular-nums">
             {done} reviewed this session · {reviewed.length} total
           </p>
         </div>
+        {agent && (
+          <div className="flex items-center gap-2 border-b px-3 py-2 text-xs text-muted-foreground">
+            Showing <AgentChip agentId={agent.id} size="sm" /> only
+            <Button
+              variant="ghost"
+              size="xs"
+              className="ml-auto"
+              render={<Link href="/agentops/reviews" />}
+            >
+              All agents
+            </Button>
+          </div>
+        )}
         <div className="flex flex-wrap gap-1 border-b px-3 py-2">
           {(["all", ...reasons] as const).map((r) => {
-            const n =
-              r === "all"
-                ? items.filter((i) => i.status === "Pending").length
-                : items.filter((i) => i.status === "Pending" && i.reason === r)
-                    .length
+            const n = scoped.filter(
+              (i) => i.status === "Pending" && (r === "all" || i.reason === r)
+            ).length
             return (
               <button
                 key={r}
                 type="button"
                 onClick={() => setFilter(r)}
+                aria-pressed={filter === r}
                 className={cn(
-                  "inline-flex h-6 items-center gap-1 rounded-full border px-2 text-[11px] transition-colors",
+                  "inline-flex h-6 items-center gap-1 rounded-full border px-2 text-2xs transition-colors",
                   filter === r
                     ? "border-foreground bg-foreground text-background"
                     : "text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -166,7 +252,22 @@ export function ReviewQueue() {
               size="sm"
               bare
               title="Queue is clear"
-              description="Nothing is waiting for review with this filter."
+              description={
+                filter === "all"
+                  ? "Nothing is waiting for review."
+                  : "Nothing is waiting for review with this filter."
+              }
+              action={
+                filter !== "all" ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setFilter("all")}
+                  >
+                    Clear filter
+                  </Button>
+                ) : undefined
+              }
               className="py-12"
             />
           ) : (
@@ -188,17 +289,17 @@ export function ReviewQueue() {
                     >
                       <span className="flex items-center gap-1.5">
                         <PriorityBadge priority={item.priority} size="sm" />
-                        <span className="truncate text-[11px] text-muted-foreground">
+                        <span className="truncate text-2xs text-muted-foreground">
                           {item.reason}
                         </span>
-                        <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">
+                        <span className="ml-auto shrink-0 text-2xs text-muted-foreground">
                           {timeAgo(item.created)}
                         </span>
                       </span>
                       <span className="line-clamp-2 text-sm leading-snug">
                         {trace?.userQuery}
                       </span>
-                      <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                      <span className="flex items-center gap-1.5 text-2xs text-muted-foreground">
                         <span className="truncate">
                           {getDeployedAgent(item.agentId)?.name}
                         </span>
@@ -237,6 +338,16 @@ export function ReviewQueue() {
   )
 }
 
+const isEditable = (t: EventTarget | null) => {
+  const el = t as HTMLElement | null
+  return Boolean(
+    el &&
+    (el.tagName === "TEXTAREA" ||
+      el.tagName === "INPUT" ||
+      el.isContentEditable)
+  )
+}
+
 function ReviewWorkspace({
   item,
   onDecide,
@@ -263,33 +374,61 @@ function ReviewWorkspace({
   })
   const [note, setNote] = React.useState("")
   const [correcting, setCorrecting] = React.useState(false)
-  const [correction, setCorrection] = React.useState(trace?.finalAnswer ?? "")
+  const original = trace?.finalAnswer ?? ""
+  const [correction, setCorrection] = React.useState(original)
   const complete = Object.values(rubric).every((v) => v > 0)
+  const canSaveCorrection = complete && correction.trim() !== original.trim()
 
+  const saveCorrection = () => {
+    if (!canSaveCorrection) return
+    onDecide("Corrected", rubric, note, correction)
+  }
+  const cancelCorrection = () => {
+    setCorrecting(false)
+    setCorrection(original)
+  }
+
+  // Page-level shortcuts. Every consumed key calls preventDefault so the
+  // global single-key handlers (C quick create, G chords) stand down.
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement | null
-      if (
-        t &&
-        (t.tagName === "TEXTAREA" ||
-          t.tagName === "INPUT" ||
-          t.isContentEditable)
-      )
-        return
       if (e.metaKey || e.ctrlKey || e.altKey) return
+      if (e.key === "Escape" && correcting) {
+        e.preventDefault()
+        setCorrecting(false)
+        setCorrection(original)
+        return
+      }
+      if (isEditable(e.target)) return
       const k = e.key.toLowerCase()
-      if (k === "a" && complete) onDecide("Approved", rubric, note)
-      else if (k === "f" && complete) onDecide("Flagged", rubric, note)
-      else if (k === "c") setCorrecting(true)
+      let handled = true
+      if (k === "a") {
+        if (complete) onDecide("Approved", rubric, note)
+      } else if (k === "f") {
+        if (complete) onDecide("Flagged", rubric, note)
+      } else if (k === "c") setCorrecting(true)
       else if (k === "s") onSkip()
-      else if (/^[1-5]$/.test(k)) {
+      else if (k === "enter" && correcting) {
+        if (canSaveCorrection) onDecide("Corrected", rubric, note, correction)
+      } else if (/^[1-5]$/.test(k)) {
         const next = rubricKeys.find((r) => rubric[r.key] === 0)
         if (next) setRubric((prev) => ({ ...prev, [next.key]: Number(k) }))
-      }
+      } else handled = false
+      if (handled) e.preventDefault()
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [complete, rubric, note, onDecide, onSkip])
+  }, [
+    complete,
+    rubric,
+    note,
+    onDecide,
+    onSkip,
+    correcting,
+    correction,
+    canSaveCorrection,
+    original,
+  ])
 
   if (!trace || !agent) return null
   const retriever = trace.spans.find((s) => s.type === "retriever")
@@ -312,13 +451,14 @@ function ReviewWorkspace({
           ·
         </span>
         <span className="text-xs text-muted-foreground">
-          {trace.channel} · {fmtMs(trace.durationMs)} · {fmtCost(trace.cost, 3)}
+          {trace.channel} · {formatMs(trace.durationMs)} ·{" "}
+          {formatCost(trace.cost, 3)}
         </span>
         <Badge variant="outline" className="text-muted-foreground">
           {item.reason}
         </Badge>
         <div className="ml-auto flex items-center gap-2">
-          <span className="text-[11px] text-muted-foreground tabular-nums">
+          <span className="text-2xs text-muted-foreground tabular-nums">
             {position}
           </span>
           <Button
@@ -336,7 +476,7 @@ function ReviewWorkspace({
           <div className="flex flex-col gap-5 p-4">
             <Turn speaker="user" title="User" body={trace.userQuery} />
             {retriever && (
-              <div className="rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground">
+              <div className="rounded-lg border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
                 <span className="font-medium text-foreground">
                   Retrieved context
                 </span>{" "}
@@ -344,26 +484,41 @@ function ReviewWorkspace({
                 {retriever.attributes && (
                   <span>
                     {" "}
-                    · top_k {String(retriever.attributes.top_k)} · min score{" "}
-                    {String(retriever.attributes.min_score)}
+                    · top k {String(retriever.attributes.top_k)} · score
+                    threshold {String(retriever.attributes.min_score)}
                   </span>
                 )}
               </div>
             )}
             {correcting ? (
               <div className="flex flex-col gap-2">
-                <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-                  Corrected answer
-                </p>
+                <div className="flex items-center justify-between">
+                  <label htmlFor={`correction-${item.id}`} className="eyebrow">
+                    Corrected answer
+                  </label>
+                  <span className="text-2xs text-muted-foreground">
+                    <Kbd className="h-4 min-w-4 text-3xs">Cmd</Kbd>+
+                    <Kbd className="h-4 min-w-4 text-3xs">Enter</Kbd> saves ·{" "}
+                    <Kbd className="h-4 min-w-4 text-3xs">Esc</Kbd> cancels
+                  </span>
+                </div>
                 <Textarea
+                  id={`correction-${item.id}`}
                   value={correction}
                   onChange={(e) => setCorrection(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                      e.preventDefault()
+                      saveCorrection()
+                    }
+                  }}
                   className="min-h-40 text-sm leading-relaxed"
                   aria-label="Corrected answer"
                 />
                 <p className="text-xs text-muted-foreground">
-                  The correction is stored as the preferred answer in{" "}
-                  {agent.evalDataset} and the original is kept for comparison.
+                  The correction is kept on the review item next to the original
+                  answer; in a wired deployment it becomes the preferred answer
+                  in {agent.evalDataset}.
                 </p>
               </div>
             ) : (
@@ -376,17 +531,9 @@ function ReviewWorkspace({
             )}
             {trace.flags.length > 0 && (
               <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-                  Flags
-                </span>
+                <Eyebrow as="span">Flags</Eyebrow>
                 {trace.flags.map((f) => (
-                  <Badge
-                    key={f}
-                    variant="outline"
-                    className="border-warning/40 bg-warning/10 text-warning-text"
-                  >
-                    {f}
-                  </Badge>
+                  <StateBadge key={f} state={f} tone="warning" size="sm" />
                 ))}
               </div>
             )}
@@ -397,9 +544,7 @@ function ReviewWorkspace({
           <ScrollArea className="min-h-0 flex-1">
             <div className="flex flex-col gap-5 p-4">
               <div>
-                <p className="mb-2 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-                  Evaluator scores
-                </p>
+                <Eyebrow className="mb-2">Evaluator scores</Eyebrow>
                 <div className="grid grid-cols-3 gap-3">
                   <ScoreBar
                     value={trace.evals.grounded}
@@ -420,7 +565,7 @@ function ReviewWorkspace({
                     label="Safe"
                   />
                 </div>
-                <div className="mt-1 grid grid-cols-3 gap-3 text-[11px] text-muted-foreground">
+                <div className="mt-1 grid grid-cols-3 gap-3 text-2xs text-muted-foreground">
                   <span>Grounded</span>
                   <span>Helpful</span>
                   <span>Safe</span>
@@ -429,19 +574,18 @@ function ReviewWorkspace({
               <Separator />
               <div className="flex flex-col gap-3">
                 <div className="flex items-center justify-between">
-                  <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-                    Your rubric
-                  </p>
-                  <span className="text-[11px] text-muted-foreground">
-                    Press <Kbd className="h-4 min-w-4 text-[10px]">1</Kbd>–
-                    <Kbd className="h-4 min-w-4 text-[10px]">5</Kbd>
+                  <Eyebrow>Your rubric</Eyebrow>
+                  <span className="text-2xs text-muted-foreground">
+                    <Kbd className="h-4 min-w-4 text-3xs">1</Kbd> to{" "}
+                    <Kbd className="h-4 min-w-4 text-3xs">5</Kbd> scores the
+                    next unscored row
                   </span>
                 </div>
                 {rubricKeys.map((r) => (
                   <div key={r.key} className="flex flex-col gap-1">
                     <div className="flex items-baseline justify-between">
                       <span className="text-sm font-medium">{r.label}</span>
-                      <span className="text-[11px] text-muted-foreground">
+                      <span className="text-2xs text-muted-foreground">
                         {r.hint}
                       </span>
                     </div>
@@ -472,10 +616,7 @@ function ReviewWorkspace({
               </div>
               <Separator />
               <div className="flex flex-col gap-1.5">
-                <label
-                  htmlFor="review-note"
-                  className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase"
-                >
+                <label htmlFor="review-note" className="eyebrow">
                   Note for the agent owner
                 </label>
                 <Textarea
@@ -505,35 +646,50 @@ function ReviewWorkspace({
               icon={<FlagIcon />}
             />
             {correcting ? (
-              <Action
-                label="Save correction"
-                k="↵"
-                variant="secondary"
-                disabled={
-                  !complete || correction.trim() === trace.finalAnswer.trim()
-                }
-                onClick={() => onDecide("Corrected", rubric, note, correction)}
-                icon={<PenLineIcon />}
-              />
+              <>
+                <Action
+                  label="Save correction"
+                  k="Enter"
+                  variant="secondary"
+                  disabled={!canSaveCorrection}
+                  disabledHint={
+                    !complete
+                      ? `Score all ${rubricKeys.length} criteria first`
+                      : "Edit the answer before saving"
+                  }
+                  onClick={saveCorrection}
+                  icon={<PenLineIcon />}
+                />
+                <Action
+                  label="Cancel"
+                  k="Esc"
+                  variant="ghost"
+                  onClick={cancelCorrection}
+                  icon={<XIcon />}
+                />
+              </>
             ) : (
-              <Action
-                label="Correct"
-                k="C"
-                variant="secondary"
-                onClick={() => setCorrecting(true)}
-                icon={<PenLineIcon />}
-              />
+              <>
+                <Action
+                  label="Correct"
+                  k="C"
+                  variant="secondary"
+                  onClick={() => setCorrecting(true)}
+                  icon={<PenLineIcon />}
+                />
+                <Action
+                  label="Skip"
+                  k="S"
+                  variant="ghost"
+                  onClick={onSkip}
+                  icon={<SkipForwardIcon />}
+                />
+              </>
             )}
-            <Action
-              label="Skip"
-              k="S"
-              variant="ghost"
-              onClick={onSkip}
-              icon={<SkipForwardIcon />}
-            />
             {!complete && (
-              <p className="col-span-2 text-center text-[11px] text-muted-foreground">
-                Score all four criteria to approve or flag.
+              <p className="col-span-2 text-center text-2xs text-muted-foreground">
+                Score all {rubricKeys.length} criteria to approve, flag or save
+                a correction.
               </p>
             )}
           </div>
@@ -558,7 +714,7 @@ function Turn({
     <div
       className={cn("flex flex-col gap-1.5", speaker === "user" && "items-end")}
     >
-      <span className="flex items-center gap-1.5 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+      <Eyebrow as="span" className="flex items-center gap-1.5">
         {title}
         {feedback === "down" && (
           <ThumbsDownIcon
@@ -572,7 +728,7 @@ function Turn({
             aria-label="User thumbs-up"
           />
         )}
-      </span>
+      </Eyebrow>
       <div
         className={cn(
           "max-w-[52rem] rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap",
@@ -592,6 +748,7 @@ function Action({
   k,
   onClick,
   disabled,
+  disabledHint,
   variant = "default",
   icon,
 }: {
@@ -599,29 +756,35 @@ function Action({
   k: string
   onClick: () => void
   disabled?: boolean
+  /** Shown in the tooltip while the button is disabled. */
+  disabledHint?: string
   variant?: "default" | "outline" | "secondary" | "ghost"
   icon: React.ReactNode
 }) {
   return (
     <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            variant={variant}
-            size="sm"
-            onClick={onClick}
-            disabled={disabled}
-            className="justify-between"
-          />
-        }
-      >
-        <span className="inline-flex items-center gap-1.5">
-          {icon} {label}
-        </span>
-        <Kbd className="h-4 min-w-4 text-[10px]">{k}</Kbd>
+      <TooltipTrigger render={<span className="inline-flex min-w-0" />}>
+        <Button
+          variant={variant}
+          size="sm"
+          onClick={onClick}
+          disabled={disabled}
+          className="w-full justify-between"
+        >
+          <span className="inline-flex items-center gap-1.5">
+            {icon} {label}
+          </span>
+          <Kbd className="h-4 min-w-4 text-3xs">{k}</Kbd>
+        </Button>
       </TooltipTrigger>
       <TooltipContent>
-        {label} <span className="opacity-70">({k})</span>
+        {disabled && disabledHint ? (
+          disabledHint
+        ) : (
+          <>
+            {label} <span className="opacity-70">({k})</span>
+          </>
+        )}
       </TooltipContent>
     </Tooltip>
   )

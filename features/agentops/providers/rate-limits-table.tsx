@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import { createColumnHelper } from "@tanstack/react-table"
+import { cn } from "cn"
 import { CheckIcon, GaugeIcon } from "lucide-react"
 import { toast } from "sonner"
 
@@ -15,6 +16,11 @@ import {
   type DataTableFeatures,
   type FacetDef,
 } from "@/components/data-table"
+import {
+  SheetBody,
+  SheetFooterActions,
+  sheetWidths,
+} from "@/components/shared/sheet-frame"
 import { Button } from "@/components/ui/button"
 import {
   Field,
@@ -24,24 +30,31 @@ import {
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
   Sheet,
   SheetContent,
   SheetDescription,
-  SheetFooter,
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
-import { getDeployedAgent } from "@/lib/data"
+import { deployedAgents, getDeployedAgent } from "@/lib/data/agentops"
 import {
   getApiKey,
   getProvider,
   providers,
-  rateLimits as seed,
   type RateLimit,
+  type RateLimitScope,
 } from "@/lib/data/providers"
-import { formatNumber } from "@/lib/format"
-import { fmtTokens } from "../shared"
+import { clock } from "@/lib/data/seed"
+import { formatNumber, formatTokens } from "@/lib/format"
 import { pctTone, ProviderChip } from "./shared"
+import { fakeHex, keyStore, rateLimitStore } from "./store"
 
 const col = createColumnHelper<DataTableFeatures, RateLimit>()
 
@@ -55,7 +68,11 @@ export function limitTargetName(l: RateLimit) {
   if (l.scope === "agent")
     return getDeployedAgent(l.targetId)?.name ?? l.targetId
   if (l.scope === "provider") return getProvider(l.targetId)?.name ?? l.targetId
-  return getApiKey(l.targetId)?.name ?? l.targetId
+  return (
+    keyStore.get().find((k) => k.id === l.targetId)?.name ??
+    getApiKey(l.targetId)?.name ??
+    l.targetId
+  )
 }
 
 function Utilisation({
@@ -88,7 +105,11 @@ const columns = col.columns([
   col.accessor((l) => limitTargetName(l), {
     id: "target",
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Scope" />
+      <DataTableColumnHeader
+        column={column}
+        title="Scope"
+        hint="What the quota is attached to: one agent, one provider connection, or one API key"
+      />
     ),
     cell: ({ row }) => (
       <TwoLineCell
@@ -109,7 +130,11 @@ const columns = col.columns([
   col.accessor((l) => l.usedRpm / l.rpm, {
     id: "rpm",
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Requests / min" />
+      <DataTableColumnHeader
+        column={column}
+        title="Requests / min"
+        hint="Current requests per minute against the RPM limit"
+      />
     ),
     cell: ({ row }) => (
       <Utilisation
@@ -123,13 +148,17 @@ const columns = col.columns([
   col.accessor((l) => l.usedTpm / l.tpm, {
     id: "tpm",
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Tokens / min" />
+      <DataTableColumnHeader
+        column={column}
+        title="Tokens / min"
+        hint="Current tokens per minute against the TPM limit; moves before RPM when prompts get longer"
+      />
     ),
     cell: ({ row }) => (
       <Utilisation
         used={row.original.usedTpm}
         limit={row.original.tpm}
-        format={fmtTokens}
+        format={formatTokens}
       />
     ),
     meta: { width: "w-44", label: "TPM", skeleton: "w-32" },
@@ -137,7 +166,11 @@ const columns = col.columns([
   col.accessor((l) => l.usedConcurrency / l.concurrency, {
     id: "concurrency",
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Concurrency" />
+      <DataTableColumnHeader
+        column={column}
+        title="Concurrency"
+        hint="Requests in flight at once against the cap"
+      />
     ),
     cell: ({ row }) => (
       <Utilisation
@@ -150,7 +183,11 @@ const columns = col.columns([
   }),
   col.accessor("burst", {
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Burst" />
+      <DataTableColumnHeader
+        column={column}
+        title="Burst"
+        hint="Extra requests allowed above the RPM limit for up to 10 seconds"
+      />
     ),
     cell: ({ getValue }) => (
       <NumericCell
@@ -168,7 +205,11 @@ const columns = col.columns([
   }),
   col.accessor("throttled24h", {
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Throttled · 24h" />
+      <DataTableColumnHeader
+        column={column}
+        title="Throttled · 24h"
+        hint="Requests the gateway answered with 429 because this quota was exhausted"
+      />
     ),
     cell: ({ getValue }) => (
       <NumericCell
@@ -219,8 +260,8 @@ const facets: FacetDef<RateLimit>[] = [
     id: "pressure",
     title: "Pressure",
     options: [
-      { value: "saturated", label: "Saturated (≥ 95%)" },
-      { value: "high", label: "High (80–95%)" },
+      { value: "saturated", label: "Saturated (95% or more)" },
+      { value: "high", label: "High (80 to 95%)" },
       { value: "normal", label: "Normal" },
     ],
     getValue: (l) => {
@@ -231,8 +272,9 @@ const facets: FacetDef<RateLimit>[] = [
 ]
 
 export function RateLimitsTab() {
-  const [items, setItems] = React.useState<RateLimit[]>(seed)
+  const items = rateLimitStore.use()
   const [openId, setOpenId] = React.useState<string | null>(null)
+  const [createOpen, setCreateOpen] = React.useState(false)
   const open = items.find((l) => l.id === openId) ?? null
 
   return (
@@ -248,32 +290,45 @@ export function RateLimitsTab() {
         facets={facets}
         initialSorting={[{ id: "rpm", desc: true }]}
         onRowClick={(l) => setOpenId(l.id)}
+        caption="Rate limit quotas by agent, provider and key"
         totalLabel="quotas"
         selectionLabel={(n) => (n === 1 ? "quota" : "quotas")}
         toolbar={
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => toast("Quota editor opened")}
-          >
+          <Button size="sm" onClick={() => setCreateOpen(true)}>
             <GaugeIcon /> New quota
           </Button>
         }
       />
-      <Sheet open={open !== null} onOpenChange={(o) => !o && setOpenId(null)}>
-        <SheetContent className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-md">
-          {open && (
-            <EditLimitForm
-              key={open.id}
+      <Sheet
+        open={open !== null || createOpen}
+        onOpenChange={(o) => {
+          if (!o) {
+            setOpenId(null)
+            setCreateOpen(false)
+          }
+        }}
+      >
+        <SheetContent
+          className={cn(sheetWidths.detail, "flex flex-col gap-0 p-0")}
+        >
+          {(open || createOpen) && (
+            <LimitForm
+              key={open?.id ?? "new"}
               limit={open}
               onSave={(next) => {
-                setItems((prev) =>
-                  prev.map((l) => (l.id === next.id ? next : l))
-                )
+                if (open) {
+                  rateLimitStore.patch(next.id, next)
+                  toast.success("Quota updated", {
+                    description: `${limitTargetName(next)} · ${formatNumber(next.rpm)} RPM · ${formatTokens(next.tpm)} TPM`,
+                  })
+                } else {
+                  rateLimitStore.add(next, "start")
+                  toast.success("Quota created", {
+                    description: `${limitTargetName(next)} · ${formatNumber(next.rpm)} RPM · ${formatTokens(next.tpm)} TPM`,
+                  })
+                }
                 setOpenId(null)
-                toast.success("Quota updated", {
-                  description: `${limitTargetName(next)} · ${formatNumber(next.rpm)} RPM · ${fmtTokens(next.tpm)} TPM`,
-                })
+                setCreateOpen(false)
               }}
             />
           )}
@@ -283,113 +338,245 @@ export function RateLimitsTab() {
   )
 }
 
-function EditLimitForm({
+const scopeOptions = (Object.keys(scopeLabel) as RateLimitScope[]).map((k) => ({
+  value: k,
+  label: scopeLabel[k],
+}))
+const providerOptions = providers.map((p) => ({ value: p.id, label: p.name }))
+
+function targetOptions(scope: RateLimitScope) {
+  if (scope === "agent")
+    return deployedAgents.map((a) => ({ value: a.id, label: a.name }))
+  if (scope === "provider") return providerOptions
+  return keyStore
+    .get()
+    .filter((k) => k.status !== "Revoked")
+    .map((k) => ({ value: k.id, label: k.name }))
+}
+
+/** Edit an existing quota, or create one when `limit` is null. */
+function LimitForm({
   limit: l,
   onSave,
 }: {
-  limit: RateLimit
+  limit: RateLimit | null
   onSave: (l: RateLimit) => void
 }) {
-  const [rpm, setRpm] = React.useState(String(l.rpm))
-  const [tpm, setTpm] = React.useState(String(l.tpm))
-  const [concurrency, setConcurrency] = React.useState(String(l.concurrency))
-  const [burst, setBurst] = React.useState(String(l.burst))
+  const creating = l === null
+  const [scope, setScope] = React.useState<RateLimitScope>(l?.scope ?? "agent")
+  const [targetId, setTargetId] = React.useState(
+    l?.targetId ?? deployedAgents[0].id
+  )
+  const [providerId, setProviderId] = React.useState(
+    l?.providerId ?? providers[0].id
+  )
+  const [rpm, setRpm] = React.useState(String(l?.rpm ?? 600))
+  const [tpm, setTpm] = React.useState(String(l?.tpm ?? 400_000))
+  const [concurrency, setConcurrency] = React.useState(
+    String(l?.concurrency ?? 16)
+  )
+  const [burst, setBurst] = React.useState(String(l?.burst ?? 50))
   const nums = [rpm, tpm, concurrency, burst].map(Number)
-  const valid = nums.every((n) => Number.isFinite(n) && n >= 0)
-  const name = limitTargetName(l)
+  const valid = nums.every((n) => Number.isFinite(n) && n >= 0) && targetId
+  const targets = targetOptions(scope)
+  const name = l ? limitTargetName(l) : undefined
+
+  const changeScope = (next: RateLimitScope) => {
+    setScope(next)
+    const first = targetOptions(next)[0]
+    if (first) setTargetId(first.value)
+    if (next === "provider" && first) setProviderId(first.value)
+  }
 
   return (
     <>
       <SheetHeader className="border-b px-6 py-5">
-        <SheetTitle className="text-lg">Edit quota · {name}</SheetTitle>
+        <SheetTitle className="text-lg">
+          {creating ? "New quota" : `Edit quota · ${name}`}
+        </SheetTitle>
         <SheetDescription>
-          {scopeLabel[l.scope]} scope on{" "}
-          {getProvider(l.providerId)?.name ?? l.providerId}. Changes apply
-          within one minute.
+          {creating
+            ? "Caps requests, tokens and concurrency for one agent, provider or key. Applies within one minute."
+            : `${scopeLabel[l.scope]} scope on ${getProvider(l.providerId)?.name ?? l.providerId}. Changes apply within one minute.`}
         </SheetDescription>
       </SheetHeader>
-      <form
-        id={`limit-${l.id}`}
-        className="min-h-0 flex-1 overflow-y-auto px-6 py-5"
-        onSubmit={(e) => {
-          e.preventDefault()
-          if (!valid) return
-          onSave({
-            ...l,
-            rpm: nums[0],
-            tpm: nums[1],
-            concurrency: nums[2],
-            burst: nums[3],
-            usedRpm: Math.min(l.usedRpm, nums[0]),
-            usedTpm: Math.min(l.usedTpm, nums[1]),
-            usedConcurrency: Math.min(l.usedConcurrency, nums[2]),
-          })
-        }}
-      >
-        <FieldGroup>
-          <div className="grid gap-4 rounded-lg border bg-muted/30 p-3">
-            <Utilisation
-              used={l.usedRpm}
-              limit={l.rpm}
-              format={(n) => `${formatNumber(n)} rpm`}
-            />
-            <Utilisation used={l.usedTpm} limit={l.tpm} format={fmtTokens} />
-            <Utilisation
-              used={l.usedConcurrency}
-              limit={l.concurrency}
-              format={(n) => `${n} conc.`}
-            />
-          </div>
-          <Field>
-            <FieldLabel htmlFor={`${l.id}-rpm`}>Requests per minute</FieldLabel>
-            <Input
-              id={`${l.id}-rpm`}
-              inputMode="numeric"
-              value={rpm}
-              onChange={(e) => setRpm(e.target.value)}
-              className="tabular-nums"
-            />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor={`${l.id}-tpm`}>Tokens per minute</FieldLabel>
-            <Input
-              id={`${l.id}-tpm`}
-              inputMode="numeric"
-              value={tpm}
-              onChange={(e) => setTpm(e.target.value)}
-              className="tabular-nums"
-            />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor={`${l.id}-conc`}>Max concurrency</FieldLabel>
-            <Input
-              id={`${l.id}-conc`}
-              inputMode="numeric"
-              value={concurrency}
-              onChange={(e) => setConcurrency(e.target.value)}
-              className="tabular-nums"
-            />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor={`${l.id}-burst`}>Burst allowance</FieldLabel>
-            <Input
-              id={`${l.id}-burst`}
-              inputMode="numeric"
-              value={burst}
-              onChange={(e) => setBurst(e.target.value)}
-              className="tabular-nums"
-            />
-            <FieldDescription>
-              Extra requests allowed above the RPM limit for up to 10 seconds.
-            </FieldDescription>
-          </Field>
-        </FieldGroup>
-      </form>
-      <SheetFooter className="flex-row justify-end border-t px-6 py-4">
-        <Button type="submit" form={`limit-${l.id}`} disabled={!valid}>
-          <CheckIcon /> Save quota
-        </Button>
-      </SheetFooter>
+      <SheetBody>
+        <form
+          id="limit-form"
+          onSubmit={(e) => {
+            e.preventDefault()
+            if (!valid) return
+            const resolvedProvider =
+              scope === "provider"
+                ? targetId
+                : scope === "key"
+                  ? (keyStore.get().find((k) => k.id === targetId)
+                      ?.providerId ?? providerId)
+                  : providerId
+            onSave({
+              id: l?.id ?? `rl-${fakeHex(`${scope}:${targetId}`, 3)}`,
+              scope,
+              targetId,
+              providerId: resolvedProvider,
+              rpm: nums[0],
+              tpm: nums[1],
+              concurrency: nums[2],
+              burst: nums[3],
+              usedRpm: Math.min(l?.usedRpm ?? 0, nums[0]),
+              usedTpm: Math.min(l?.usedTpm ?? 0, nums[1]),
+              usedConcurrency: Math.min(l?.usedConcurrency ?? 0, nums[2]),
+              throttled24h: l?.throttled24h ?? 0,
+              updated: clock().toISOString(),
+            })
+          }}
+        >
+          <FieldGroup>
+            {l ? (
+              <div className="grid gap-4 rounded-lg border bg-muted/30 p-3">
+                <Utilisation
+                  used={l.usedRpm}
+                  limit={l.rpm}
+                  format={(n) => `${formatNumber(n)} rpm`}
+                />
+                <Utilisation
+                  used={l.usedTpm}
+                  limit={l.tpm}
+                  format={formatTokens}
+                />
+                <Utilisation
+                  used={l.usedConcurrency}
+                  limit={l.concurrency}
+                  format={(n) => `${n} conc.`}
+                />
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <Field>
+                    <FieldLabel htmlFor="limit-scope">Scope</FieldLabel>
+                    <Select
+                      items={scopeOptions}
+                      value={scope}
+                      onValueChange={(v) =>
+                        v && changeScope(v as RateLimitScope)
+                      }
+                    >
+                      <SelectTrigger id="limit-scope" className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {scopeOptions.map((o) => (
+                          <SelectItem key={o.value} value={o.value}>
+                            {o.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="limit-target">
+                      {scopeLabel[scope]}
+                    </FieldLabel>
+                    <Select
+                      items={targets}
+                      value={targetId}
+                      onValueChange={(v) => v && setTargetId(String(v))}
+                    >
+                      <SelectTrigger id="limit-target" className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {targets.map((o) => (
+                          <SelectItem key={o.value} value={o.value}>
+                            {o.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                </div>
+                {scope === "agent" && (
+                  <Field>
+                    <FieldLabel htmlFor="limit-provider">Provider</FieldLabel>
+                    <Select
+                      items={providerOptions}
+                      value={providerId}
+                      onValueChange={(v) => v && setProviderId(String(v))}
+                    >
+                      <SelectTrigger id="limit-provider" className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {providerOptions.map((o) => (
+                          <SelectItem key={o.value} value={o.value}>
+                            {o.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FieldDescription>
+                      The connection this agent quota counts against.
+                    </FieldDescription>
+                  </Field>
+                )}
+              </>
+            )}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field>
+                <FieldLabel htmlFor="limit-rpm">Requests per minute</FieldLabel>
+                <Input
+                  id="limit-rpm"
+                  inputMode="numeric"
+                  value={rpm}
+                  onChange={(e) => setRpm(e.target.value)}
+                  className="tabular-nums"
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="limit-tpm">Tokens per minute</FieldLabel>
+                <Input
+                  id="limit-tpm"
+                  inputMode="numeric"
+                  value={tpm}
+                  onChange={(e) => setTpm(e.target.value)}
+                  className="tabular-nums"
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="limit-conc">Max concurrency</FieldLabel>
+                <Input
+                  id="limit-conc"
+                  inputMode="numeric"
+                  value={concurrency}
+                  onChange={(e) => setConcurrency(e.target.value)}
+                  className="tabular-nums"
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="limit-burst">Burst allowance</FieldLabel>
+                <Input
+                  id="limit-burst"
+                  inputMode="numeric"
+                  value={burst}
+                  onChange={(e) => setBurst(e.target.value)}
+                  className="tabular-nums"
+                />
+                <FieldDescription>
+                  Extra requests allowed above the RPM limit for up to 10
+                  seconds.
+                </FieldDescription>
+              </Field>
+            </div>
+          </FieldGroup>
+        </form>
+      </SheetBody>
+      <SheetFooterActions
+        primary={
+          <Button type="submit" form="limit-form" disabled={!valid}>
+            <CheckIcon /> {creating ? "Create quota" : "Save quota"}
+          </Button>
+        }
+      />
     </>
   )
 }

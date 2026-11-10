@@ -1,3 +1,6 @@
+import { failureModes as costGovernance } from "./controls-cost-governance"
+import { failureModes as driftSafety } from "./controls-drift-safety"
+import { failureModes as visibilityQuality } from "./controls-visibility-quality"
 import type { FailureMode, GlossaryEntry } from "./types"
 
 /**
@@ -5,14 +8,14 @@ import type { FailureMode, GlossaryEntry } from "./types"
  * controls that would have caught or contained them. Public incidents are
  * cited where the pattern is drawn from one.
  */
-export const failureModes: FailureMode[] = [
+const baseFailureModes: FailureMode[] = [
   {
     id: "fm-indirect-injection",
     title: "Indirect prompt injection via retrieved content",
     summary:
       "A web page, email or document in the knowledge base contains instructions. The agent follows them, exfiltrating data through a tool call or a crafted link.",
     realWorld:
-      "Repeated public demonstrations against browsing and email assistants (2023–2025), including data exfiltration via markdown image URLs.",
+      "Repeated public demonstrations against browsing and email assistants (2023 to 2025), including data exfiltration via markdown image URLs.",
     domain: "safety",
     controls: ["SAF-01", "SAF-04", "VIS-04", "SAF-08", "SAF-06"],
   },
@@ -132,6 +135,13 @@ export const failureModes: FailureMode[] = [
   },
 ]
 
+export const failureModes: FailureMode[] = [
+  ...baseFailureModes,
+  ...visibilityQuality,
+  ...driftSafety,
+  ...costGovernance,
+]
+
 export const glossary: GlossaryEntry[] = [
   {
     term: "Trace / span",
@@ -218,6 +228,48 @@ export const glossary: GlossaryEntry[] = [
     definition:
       "Prohibited, high-risk, limited-risk (transparency duties, e.g. chatbots) and minimal-risk. Obligations scale with the tier.",
     href: "https://artificialintelligenceact.eu/high-level-summary/",
+  },
+  {
+    term: "Error budget",
+    definition:
+      "The share of bad events an SLO allows over its window. Burn rate says how fast it is being consumed; multi-window burn-rate alerts page only when a budget is genuinely at risk.",
+    href: "https://sre.google/workbook/alerting-on-slos/",
+  },
+  {
+    term: "Idempotency key",
+    definition:
+      "A caller-chosen token sent with a write so a retry of the same action is recognised and not applied twice. The basic defence against duplicate side effects from agent retries.",
+  },
+  {
+    term: "Durable execution",
+    definition:
+      "Running an agent workflow as a checkpointed, replayable process so a crash, timeout or cancellation resumes from the last step instead of restarting and repeating actions.",
+  },
+  {
+    term: "Data contract",
+    definition:
+      "An explicit, versioned schema plus semantic constraints (ranges, units, enumerations, required citations) for a system's inputs or outputs, with compatibility rules and a violation rate you monitor.",
+  },
+  {
+    term: "Lineage",
+    definition:
+      "The set of artifact versions that produced a result: code SHA, prompt version, parameters, resolved model, index build, dataset snapshot, tool schemas and policy version. Needed to reproduce, audit or roll back.",
+  },
+  {
+    term: "Tenant isolation",
+    definition:
+      "Guarantees that one customer's documents, memory, traces and actions can never reach another's, enforced by authorization outside the model and proven by cross-tenant tests.",
+  },
+  {
+    term: "Calibration (ECE)",
+    definition:
+      "How well stated confidence matches observed accuracy. Expected calibration error averages the gap across confidence bins; it decides whether a confidence threshold for abstention or review is trustworthy.",
+  },
+  {
+    term: "ISO/IEC 42001",
+    definition:
+      "The AI management-system standard: policies, roles, impact assessment, lifecycle, data, documentation and supplier controls (Annex A) that an organisation can be certified against.",
+    href: "https://www.iso.org/standard/42001",
   },
   {
     term: "NIST AI RMF functions",

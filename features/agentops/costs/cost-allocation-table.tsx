@@ -14,16 +14,28 @@ import {
   type FacetDef,
 } from "@/components/data-table"
 import { Button } from "@/components/ui/button"
-import { deployedAgents } from "@/lib/data"
-import { costByAgent, type AgentCost } from "@/lib/data/costs"
-import { formatDelta, formatNumber } from "@/lib/format"
-import { fmtTokens, ModelChip, modelDisplayName } from "../shared"
+import { deployedAgents } from "@/lib/data/agentops"
+import {
+  costByAgent,
+  costByAgentWindowDays,
+  type AgentCost,
+} from "@/lib/data/costs"
+import {
+  formatDelta,
+  formatNumber,
+  formatTokens,
+  modelDisplayName,
+} from "@/lib/format"
+import { AgentChip, ModelChip } from "../shared"
 import { downloadText, fmtPerRequest, fmtUsd, toCsv } from "./shared"
 
 const col = createColumnHelper<DataTableFeatures, AgentCost>()
 
 const agentName = (id: string) =>
   deployedAgents.find((a) => a.id === id)?.name ?? id
+
+const windowLabel = `${costByAgentWindowDays}d`
+const csvFilename = "agentops-cost-allocation.csv"
 
 const columns = col.columns([
   col.accessor((r) => agentName(r.agentId), {
@@ -33,7 +45,7 @@ const columns = col.columns([
     ),
     cell: ({ row }) => (
       <TwoLineCell
-        primary={agentName(row.original.agentId)}
+        primary={<AgentChip agentId={row.original.agentId} />}
         secondary={row.original.team}
       />
     ),
@@ -51,7 +63,11 @@ const columns = col.columns([
   }),
   col.accessor("requests", {
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Requests" />
+      <DataTableColumnHeader
+        column={column}
+        title="Requests"
+        hint={`Requests served in the last ${costByAgentWindowDays} days.`}
+      />
     ),
     cell: ({ getValue }) => (
       <NumericCell value={getValue()} format={(n) => formatNumber(n)} />
@@ -63,7 +79,7 @@ const columns = col.columns([
       <DataTableColumnHeader column={column} title="Tokens in" />
     ),
     cell: ({ getValue }) => (
-      <NumericCell value={getValue()} format={fmtTokens} muted />
+      <NumericCell value={getValue()} format={formatTokens} muted />
     ),
     meta: {
       width: "w-24",
@@ -77,7 +93,7 @@ const columns = col.columns([
       <DataTableColumnHeader column={column} title="Tokens out" />
     ),
     cell: ({ getValue }) => (
-      <NumericCell value={getValue()} format={fmtTokens} muted />
+      <NumericCell value={getValue()} format={formatTokens} muted />
     ),
     meta: {
       width: "w-24",
@@ -88,14 +104,20 @@ const columns = col.columns([
   }),
   col.accessor("tokensCached", {
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Cached" />
+      <DataTableColumnHeader
+        column={column}
+        title="Cached"
+        hint="Input tokens served from the prompt cache and their share of all input tokens. Cache reads are billed at a fraction of the input price."
+      />
     ),
     cell: ({ getValue, row }) => {
       const total = row.original.tokensIn + row.original.tokensCached || 1
       return (
         <NumericCell
           value={getValue()}
-          format={(n) => `${fmtTokens(n)} · ${Math.round((n / total) * 100)}%`}
+          format={(n) =>
+            `${formatTokens(n)} · ${Math.round((n / total) * 100)}%`
+          }
           muted
         />
       )
@@ -109,21 +131,29 @@ const columns = col.columns([
   }),
   col.accessor("cost", {
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Cost · 7d" />
+      <DataTableColumnHeader
+        column={column}
+        title={`Cost · ${windowLabel}`}
+        hint={`Spend attributed to the agent over the last ${costByAgentWindowDays} days. Budgets and the Month to date card use the calendar period instead.`}
+      />
     ),
     cell: ({ getValue }) => (
       <NumericCell value={getValue()} format={fmtUsd} className="font-medium" />
     ),
     meta: {
       width: "w-28",
-      label: "Cost (7d)",
+      label: `Cost (${windowLabel})`,
       numeric: true,
       skeleton: "w-14",
     },
   }),
   col.accessor("costPerRequest", {
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Cost / request" />
+      <DataTableColumnHeader
+        column={column}
+        title="Cost / request"
+        hint="Cost divided by requests over the window; rank by this to find agents to right-size."
+      />
     ),
     cell: ({ getValue }) => (
       <NumericCell value={getValue()} format={fmtPerRequest} />
@@ -137,7 +167,11 @@ const columns = col.columns([
   }),
   col.accessor("deltaPct", {
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Δ vs last week" />
+      <DataTableColumnHeader
+        column={column}
+        title="Change vs last week"
+        hint={`Percent change in cost against the previous ${costByAgentWindowDays} days. Red when up, green when down, muted under 1%.`}
+      />
     ),
     cell: ({ getValue }) => {
       const v = getValue()
@@ -157,7 +191,7 @@ const columns = col.columns([
     },
     meta: {
       width: "w-28",
-      label: "Δ vs last week",
+      label: "Change vs last week",
       numeric: true,
       skeleton: "w-10",
     },
@@ -174,9 +208,11 @@ const columns = col.columns([
             style={{ width: `${Math.min(100, getValue())}%` }}
           />
         </span>
-        <span className="w-10 text-right text-xs tabular-nums">
-          {getValue().toFixed(1)}%
-        </span>
+        <NumericCell
+          value={getValue()}
+          format={(n) => `${n.toFixed(1)}%`}
+          className="w-10 text-xs"
+        />
       </span>
     ),
     meta: {
@@ -189,6 +225,15 @@ const columns = col.columns([
 ])
 
 const facets: FacetDef<AgentCost>[] = [
+  {
+    id: "agent",
+    title: "Agent",
+    options: costByAgent.map((r) => ({
+      value: r.agentId,
+      label: agentName(r.agentId),
+    })),
+    getValue: (r) => r.agentId,
+  },
   {
     id: "team",
     title: "Team",
@@ -208,6 +253,7 @@ const facets: FacetDef<AgentCost>[] = [
   },
 ]
 
+/** Builds the CSV from the seed and saves it through a Blob download. */
 function exportCsv() {
   const csv = toCsv(
     costByAgent.map((r) => ({
@@ -215,35 +261,42 @@ function exportCsv() {
       agent_id: r.agentId,
       team: r.team,
       model: r.modelId,
-      requests_7d: r.requests,
+      [`requests_${windowLabel}`]: r.requests,
       tokens_in: r.tokensIn,
       tokens_out: r.tokensOut,
       tokens_cached: r.tokensCached,
-      cost_usd_7d: r.cost.toFixed(2),
+      [`cost_usd_${windowLabel}`]: r.cost.toFixed(2),
       cost_per_request_usd: r.costPerRequest.toFixed(5),
       delta_vs_last_week_pct: r.deltaPct.toFixed(1),
       share_pct: r.share.toFixed(1),
     }))
   )
-  downloadText("agentops-cost-allocation.csv", csv)
-  toast.success("CSV exported", {
-    description: `${costByAgent.length} agents · last 7 days`,
+  downloadText(csvFilename, csv)
+  toast.success(`${csvFilename} downloaded`, {
+    description: `${costByAgent.length} agents · last ${costByAgentWindowDays} days`,
   })
 }
 
-export function CostAllocationTable() {
+export function CostAllocationTable({
+  initialAgentId,
+}: {
+  /** From `?agent=`: preselects the Agent facet. */
+  initialAgentId?: string
+}) {
   return (
     <DataTable
       columns={columns}
       data={costByAgent}
       getRowId={(r) => r.agentId}
       getSearchText={(r) => `${agentName(r.agentId)} ${r.team} ${r.modelId}`}
-      searchPlaceholder="Search agents…"
+      searchPlaceholder="Search agents..."
       facets={facets}
+      initialFacets={initialAgentId ? { agent: [initialAgentId] } : undefined}
       initialSorting={[{ id: "cost", desc: true }]}
       initialColumnVisibility={{ tokensOut: false }}
       rowHref={(r) => `/agentops/agents/${r.agentId}`}
       totalLabel="agents"
+      caption={`Cost per agent over the last ${costByAgentWindowDays} days with tokens, unit cost and week-over-week change`}
       selectionLabel={(n) => (n === 1 ? "agent" : "agents")}
       hidePagination
       toolbar={

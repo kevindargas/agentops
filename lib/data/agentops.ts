@@ -1,14 +1,23 @@
 import type {
+  AgentSlo,
   AgentTrace,
+  BoundHit,
   DeployedAgent,
   DriftSignal,
+  ErrorBudget,
   Experiment,
+  FleetControls,
   GraphNode,
   ModelRecommendation,
   Priority,
   ReviewItem,
+  RunLimits,
   SemanticEntity,
+  TraceLineage,
+  TraceOutcome,
   TraceSpan,
+  TraceStreaming,
+  VariantKey,
 } from "@/lib/types"
 import {
   chance,
@@ -87,21 +96,33 @@ const trend = (
 
 const r = createRng(7001)
 
-export const deployedAgents: DeployedAgent[] = [
+/** Agent record before run limits, SLOs and the error budget are attached. */
+type AgentBase = Omit<
+  DeployedAgent,
+  "limits" | "paused" | "pausedReason" | "slo" | "errorBudget"
+>
+
+const agentBase: AgentBase[] = [
   {
     id: "agt-support-triage",
     name: "Support Triage",
     description:
       "Classifies inbound support conversations, pulls account context and drafts a first response for the service desk.",
     team: "Service Desk",
-    ownerId: "u-003",
+    ownerId: "u-002",
     framework: "LangGraph",
     version: "v3.4.1",
     environment: "production",
     modelId: "anthropic/claude-sonnet-5.5",
     fallbackModelId: "anthropic/claude-haiku-5.5",
     health: "Healthy",
-    tools: ["search_knowledge", "read_account", "create_ticket"],
+    tools: [
+      "search_knowledge",
+      "read_account",
+      "create_ticket",
+      "redact_pii",
+      "email_send",
+    ],
     graph: ragGraph,
     metrics: {
       requests24h: 4820,
@@ -119,7 +140,12 @@ export const deployedAgents: DeployedAgent[] = [
     driftScore: 0.08,
     lastDeployed: daysAgo(6),
     evalDataset: "support-golden-v12",
-    semanticEntityIds: ["sem-open-incident", "sem-customer", "sem-sla-breach"],
+    semanticEntityIds: [
+      "sem-open-incident",
+      "sem-customer",
+      "sem-sla-breach",
+      "sem-p1",
+    ],
     promptVersion: "p-41",
     params: {
       temperature: 0.2,
@@ -141,7 +167,7 @@ export const deployedAgents: DeployedAgent[] = [
     description:
       "Employee-facing assistant for password resets, access requests and how-to questions, with ticket creation.",
     team: "Service Desk",
-    ownerId: "u-005",
+    ownerId: "u-020",
     framework: "LangGraph",
     version: "v2.9.0",
     environment: "production",
@@ -152,6 +178,7 @@ export const deployedAgents: DeployedAgent[] = [
       "reset_password",
       "request_access",
       "create_ticket",
+      "pagerduty_oncall",
     ],
     graph: toolGraph,
     metrics: {
@@ -198,7 +225,7 @@ export const deployedAgents: DeployedAgent[] = [
     environment: "production",
     modelId: "anthropic/claude-fable-5.1",
     health: "Healthy",
-    tools: ["semantic_lookup", "run_sql", "render_chart"],
+    tools: ["semantic_lookup", "run_sql", "render_chart", "run_python"],
     graph: sqlGraph,
     metrics: {
       requests24h: 640,
@@ -222,6 +249,8 @@ export const deployedAgents: DeployedAgent[] = [
       "sem-sla-breach",
       "sem-service-availability",
       "sem-change-success",
+      "sem-p1",
+      "sem-fcr",
     ],
     promptVersion: "p-18",
     params: {
@@ -244,13 +273,18 @@ export const deployedAgents: DeployedAgent[] = [
     description:
       "Scores change requests from CMDB blast radius and history, drafts CAB notes and flags freeze-window conflicts.",
     team: "Change Management",
-    ownerId: "u-007",
+    ownerId: "u-004",
     framework: "LangGraph",
     version: "v4.0.0",
     environment: "production",
     modelId: "anthropic/claude-sonnet-5.5",
     health: "Degraded",
-    tools: ["read_change", "search_services", "read_change_history"],
+    tools: [
+      "read_change",
+      "search_services",
+      "read_change_history",
+      "github_search_code",
+    ],
     graph: toolGraph,
     metrics: {
       requests24h: 215,
@@ -290,7 +324,7 @@ export const deployedAgents: DeployedAgent[] = [
     description:
       "Employee policy Q&A over the handbook and knowledge base, with PII redaction and a mandatory hand-off to a person for sensitive topics.",
     team: "People Ops",
-    ownerId: "u-009",
+    ownerId: "u-007",
     framework: "LangChain",
     version: "v2.2.7",
     environment: "production",
@@ -336,13 +370,21 @@ export const deployedAgents: DeployedAgent[] = [
     description:
       "Groups monitoring alerts into probable incidents and proposes a root CI. Runs on a schedule, no end users.",
     team: "Site Reliability",
-    ownerId: "u-011",
+    ownerId: "u-018",
     framework: "Custom",
     version: "v0.9.4",
     environment: "production",
     modelId: "deepseek/deepseek-v3.2",
     health: "Healthy",
-    tools: ["read_alerts", "search_services", "create_incident"],
+    tools: [
+      "read_alerts",
+      "search_services",
+      "create_incident",
+      "search_knowledge",
+      "send_slack_message",
+      "pagerduty_oncall",
+      "pagerduty_page",
+    ],
     graph: toolGraph,
     metrics: {
       requests24h: 1440,
@@ -360,7 +402,7 @@ export const deployedAgents: DeployedAgent[] = [
     driftScore: 0.04,
     lastDeployed: daysAgo(30),
     evalDataset: "alert-corr-v2",
-    semanticEntityIds: ["sem-service-availability", "sem-asset"],
+    semanticEntityIds: ["sem-service-availability", "sem-asset", "sem-p1"],
     promptVersion: "p-6",
     params: {
       temperature: 0.0,
@@ -388,7 +430,14 @@ export const deployedAgents: DeployedAgent[] = [
     environment: "production",
     modelId: "anthropic/claude-sonnet-5.5",
     health: "Healthy",
-    tools: ["read_incident", "search_knowledge", "create_article"],
+    tools: [
+      "read_incident",
+      "search_knowledge",
+      "create_article",
+      "redact_pii",
+      "fetch_url",
+      "kb_publish",
+    ],
     graph: ragGraph,
     metrics: {
       requests24h: 86,
@@ -428,7 +477,7 @@ export const deployedAgents: DeployedAgent[] = [
     description:
       "Staging rollout of a spend-analysis assistant over the finance semantic layer. Not yet serving employees.",
     team: "Finance Systems",
-    ownerId: "u-012",
+    ownerId: "u-016",
     framework: "LangChain",
     version: "v0.3.1",
     environment: "staging",
@@ -470,8 +519,194 @@ export const deployedAgents: DeployedAgent[] = [
   },
 ]
 
+/* ------------------------------------------------------------------------ */
+/* Run limits, SLOs and error budgets                                        */
+/* ------------------------------------------------------------------------ */
+
+/** Per-agent run bounds: short interactive loops vs long analytical runs. */
+const runLimitsByAgent: Record<string, RunLimits> = {
+  "agt-support-triage": {
+    maxSteps: 25,
+    deadlineMs: 60_000,
+    costBudgetUsd: 0.5,
+    noProgressSteps: 3,
+  },
+  "agt-it-helpdesk": {
+    maxSteps: 30,
+    deadlineMs: 90_000,
+    costBudgetUsd: 0.75,
+    noProgressSteps: 3,
+  },
+  "agt-ops-analyst": {
+    maxSteps: 40,
+    deadlineMs: 240_000,
+    costBudgetUsd: 2.5,
+    noProgressSteps: 4,
+  },
+  "agt-change-risk": {
+    maxSteps: 60,
+    deadlineMs: 300_000,
+    costBudgetUsd: 3,
+    noProgressSteps: 5,
+  },
+  "agt-hr-answers": {
+    maxSteps: 25,
+    deadlineMs: 60_000,
+    costBudgetUsd: 0.5,
+    noProgressSteps: 3,
+  },
+  "agt-alert-correlator": {
+    maxSteps: 35,
+    deadlineMs: 120_000,
+    costBudgetUsd: 1,
+    noProgressSteps: 4,
+  },
+  "agt-kb-curator": {
+    maxSteps: 60,
+    deadlineMs: 600_000,
+    costBudgetUsd: 5,
+    noProgressSteps: 6,
+  },
+  "agt-finance-copilot": {
+    maxSteps: 40,
+    deadlineMs: 180_000,
+    costBudgetUsd: 2,
+    noProgressSteps: 4,
+  },
+}
+
+const defaultLimits: RunLimits = {
+  maxSteps: 30,
+  deadlineMs: 120_000,
+  costBudgetUsd: 1,
+  noProgressSteps: 3,
+}
+
+/** SLO targets. p95 targets sit just above healthy agents' observed p95. */
+const sloByAgent: Record<string, AgentSlo> = {
+  "agt-support-triage": {
+    availability: 99,
+    p95Ms: 4000,
+    quality: 90,
+    safeCompletion: 99.5,
+  },
+  "agt-it-helpdesk": {
+    availability: 97.5,
+    p95Ms: 3000,
+    quality: 85,
+    safeCompletion: 99.5,
+  },
+  "agt-ops-analyst": {
+    availability: 97,
+    p95Ms: 10_000,
+    quality: 90,
+    safeCompletion: 99,
+  },
+  "agt-change-risk": {
+    availability: 97,
+    p95Ms: 12_000,
+    quality: 88,
+    safeCompletion: 99,
+  },
+  "agt-hr-answers": {
+    availability: 99.5,
+    p95Ms: 2500,
+    quality: 88,
+    safeCompletion: 99.9,
+  },
+  "agt-alert-correlator": {
+    availability: 98.5,
+    p95Ms: 5000,
+    quality: 85,
+    safeCompletion: 99,
+  },
+  "agt-kb-curator": {
+    availability: 98,
+    p95Ms: 25_000,
+    quality: 85,
+    safeCompletion: 99,
+  },
+  "agt-finance-copilot": {
+    availability: 99,
+    p95Ms: 6000,
+    quality: 85,
+    safeCompletion: 99.9,
+  },
+}
+
+const defaultSlo: AgentSlo = {
+  availability: 99.5,
+  p95Ms: 5000,
+  quality: 85,
+  safeCompletion: 99,
+}
+
+/**
+ * Error budget derived from the SLO vs observed metrics: each breached target
+ * burns budget, with p95 and error rate dominating the short-window burn rate.
+ */
+function deriveErrorBudget(a: AgentBase, slo: AgentSlo): ErrorBudget {
+  if (a.metrics.requests24h === 0)
+    return { remaining: 1, burnRate1h: 0, burnRate6h: 0, window: "28d" }
+  // Observed error rate relative to the error rate the availability SLO allows.
+  const availBurn = (a.metrics.errorRate / (100 - slo.availability)) * 0.8
+  const latencyBurn = Math.max(0, a.metrics.p95Ms / slo.p95Ms - 1) * 6
+  const qualityBurn = Math.max(0, slo.quality - a.metrics.quality) * 0.9
+  const burnRate1h =
+    Math.round((availBurn + latencyBurn + qualityBurn) * 10) / 10
+  const burnRate6h = Math.round(burnRate1h * 0.8 * 10) / 10
+  const remaining =
+    Math.round(
+      Math.max(
+        0.02,
+        Math.min(0.98, 1 - burnRate1h * 0.22 - a.driftScore * 0.4)
+      ) * 100
+    ) / 100
+  return { remaining, burnRate1h, burnRate6h, window: "28d" }
+}
+
+export const deployedAgents: DeployedAgent[] = agentBase.map((a) => {
+  const slo = sloByAgent[a.id] ?? defaultSlo
+  const paused = a.health === "Paused"
+  return {
+    ...a,
+    limits: runLimitsByAgent[a.id] ?? defaultLimits,
+    paused,
+    pausedReason: paused
+      ? "Paused by Finance Ops pending SOX control review of the ledger tools."
+      : undefined,
+    slo,
+    errorBudget: deriveErrorBudget(a, slo),
+  }
+})
+
 export function getDeployedAgent(id: string) {
   return deployedAgents.find((a) => a.id === id)
+}
+
+/* ------------------------------------------------------------------------ */
+/* Fleet controls and telemetry pipeline                                     */
+/* ------------------------------------------------------------------------ */
+
+/** Emergency controls; both off by default. Toggles in the UI are local. */
+export const fleetControls: FleetControls = {
+  killSwitch: false,
+  writesDisabled: false,
+  changedAt: daysAgo(19),
+  changedBy: "u-003",
+}
+
+/** Health of the trace/span export pipeline itself. */
+export const telemetryHealth = {
+  /** Share of runs sampled into tracing, 0 to 100. */
+  sampleRate: 100,
+  /** Share of runs that produced a complete trace, 0 to 100. */
+  traceCoverage: 99.4,
+  /** Share of spans dropped by the collector, 0 to 100. */
+  droppedSpanRate: 0.3,
+  exportFailures24h: 2,
+  /** p95 delay between span end and queryability, seconds. */
+  ingestionLagP95S: 41,
 }
 
 /* -------------------------------------------------------------------------- */
@@ -508,7 +743,7 @@ const queriesByAgent: Record<string, [string, string][]> = {
     ],
     [
       "Why is the wifi so slow on floor 3?",
-      "There is a known problem record (PRB0040002) for intermittent Wi-Fi on floors 3–5. Network Operations is replacing a controller this week. For now, the 'Corp-5G' network is unaffected if your device supports it.",
+      "There is a known problem record (PRB0040002) for intermittent Wi-Fi on floors 3-5. Network Operations is replacing a controller this week. For now, the 'Corp-5G' network is unaffected if your device supports it.",
     ],
   ],
   "agt-ops-analyst": [
@@ -543,14 +778,14 @@ const queriesByAgent: Record<string, [string, string][]> = {
   ],
   "agt-alert-correlator": [
     [
-      "[scheduled] Correlate alerts window 14:20–14:25",
+      "[scheduled] Correlate alerts window 14:20-14:25",
       "Grouped 3 alerts on sw-core-east-01 (PSU failure, CRC errors, link flaps) into one proposed incident with probable root CI sw-core-east-01. Suppressed 212 duplicate CloudWatch events.",
     ],
   ],
   "agt-kb-curator": [
     [
       "Draft an article from INC0010069",
-      "Drafted 'Windows update loop on reboot — fix' from four matching resolutions. Symptoms, cause (pending KB5062xxx), and the two-step fix are included; sent to the Knowledge queue for review.",
+      "Drafted 'Windows update loop on reboot: fix' from four matching resolutions. Symptoms, cause (pending KB5062xxx), and the two-step fix are included; sent to the Knowledge queue for review.",
     ],
   ],
   "agt-finance-copilot": [
@@ -561,11 +796,46 @@ const queriesByAgent: Record<string, [string, string][]> = {
   ],
 }
 
+/** Short hex digest of a string (FNV-1a), stable across SSR and CSR. */
+function digest(input: string, length = 8) {
+  let h = 0x811c9dc5
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i)
+    h = Math.imul(h, 0x01000193) >>> 0
+  }
+  return h
+    .toString(16)
+    .padStart(8, "0")
+    .repeat(Math.ceil(length / 8))
+    .slice(0, length)
+}
+
+/**
+ * Primary knowledge base each agent retrieves from; ids are the records in
+ * `lib/data/knowledge.ts`. Kept here (not imported) to avoid a module cycle.
+ */
+export const primaryKnowledgeBaseByAgent: Record<string, string> = {
+  "agt-support-triage": "kb-support-kb",
+  "agt-it-helpdesk": "kb-it-runbooks",
+  "agt-ops-analyst": "kb-incident-postmortems",
+  "agt-change-risk": "kb-change-history",
+  "agt-hr-answers": "kb-policy-handbook",
+  "agt-alert-correlator": "kb-incident-postmortems",
+  "agt-kb-curator": "kb-itsm-knowledge",
+  "agt-finance-copilot": "kb-finance-glossary",
+}
+
+const hex = (rng: () => number, length: number) =>
+  Array.from({ length }, () => Math.floor(rng() * 16).toString(16)).join("")
+
 function buildSpans(
   rng: () => number,
+  /** Separate stream for the outcome/lineage fields so legacy data is stable. */
+  aux: () => number,
   agent: DeployedAgent,
   totalMs: number,
   failed: boolean,
+  outcome: TraceOutcome,
   query: string,
   answer: string
 ): TraceSpan[] {
@@ -609,6 +879,28 @@ function buildSpans(
     }
     if (n.type === "llm") {
       span.modelId = agent.modelId
+      const lastLlm = !nodes.slice(i + 1).some((m) => m.type === "llm")
+      span.finishReason = errored
+        ? "error"
+        : lastLlm && outcome === "refused"
+          ? "content_filter"
+          : lastLlm && outcome === "invalid_output"
+            ? "length"
+            : !lastLlm &&
+                n.next.some(
+                  (id) => nodes.find((m) => m.id === id)?.type === "tool"
+                )
+              ? "tool_calls"
+              : "stop"
+      span.requestedModelId = agent.modelId
+      span.responseModelId =
+        agent.fallbackModelId && chance(aux, 0.08)
+          ? agent.fallbackModelId
+          : chance(aux, 0.2)
+            ? `${agent.modelId}-20260912`
+            : agent.modelId
+      if (span.responseModelId !== agent.modelId)
+        span.modelId = span.responseModelId
       span.tokensIn = int(rng, 900, 6200)
       span.tokensOut = int(rng, 80, 900)
       span.cost =
@@ -630,7 +922,7 @@ function buildSpans(
       }
     } else if (n.type === "retriever") {
       span.attributes = {
-        index: `${agent.evalDataset.split("-")[0]}-kb`,
+        index: primaryKnowledgeBaseByAgent[agent.id] ?? "kb-support-kb",
         top_k: 6,
         hits: int(rng, 3, 6),
         min_score: 0.71,
@@ -657,17 +949,82 @@ function buildSpans(
   return spans
 }
 
-const flagPool = [
+/** Every flag the trace generator can emit; facets should be built from this. */
+export const traceFlags = [
   "Low confidence",
   "Hallucination risk",
   "Missing citation",
   "Policy: PII",
   "Tool error",
   "Long latency",
-]
+] as const
+
+export type TraceFlag = (typeof traceFlags)[number]
+
+const codeShaByAgent = (() => {
+  const sha = createRng(7013)
+  return Object.fromEntries(agentBase.map((a) => [a.id, hex(sha, 40)]))
+})()
+
+/** Rotates through the non-deadline bounds so every facet value is seeded. */
+const partialBounds: BoundHit[] = ["max_steps", "cost_budget", "no_progress"]
+let partialBoundCursor = 0
+
+/** Outcome of a run, consistent with the failure flag and evaluator signals. */
+function pickOutcome(
+  aux: () => number,
+  failed: boolean,
+  flags: string[]
+): { outcome: TraceOutcome; boundHit?: BoundHit } {
+  if (failed) {
+    const outcome = weighted<TraceOutcome>(aux, [
+      ["tool_error", 5],
+      ["timeout", 3],
+      ["rate_limited", 2],
+    ])
+    if (outcome === "timeout" && chance(aux, 0.6))
+      return { outcome, boundHit: "deadline" }
+    return { outcome }
+  }
+  if (flags.includes("Policy: PII") && chance(aux, 0.6))
+    return { outcome: "refused" }
+  if (flags.includes("Missing citation") && chance(aux, 0.5))
+    return { outcome: "partial" }
+  if (flags.includes("Long latency") && chance(aux, 0.5))
+    return {
+      outcome: "partial",
+      boundHit: partialBounds[partialBoundCursor++ % partialBounds.length],
+    }
+  const roll = aux()
+  if (roll < 0.03) return { outcome: "invalid_output" }
+  if (roll < 0.05) return { outcome: "abandoned" }
+  return { outcome: "completed" }
+}
+
+function buildLineage(agent: DeployedAgent): TraceLineage {
+  const hasRetriever = agent.graph.some((n) => n.type === "retriever")
+  return {
+    codeSha: codeShaByAgent[agent.id],
+    promptVersion: agent.promptVersion,
+    paramsHash: digest(JSON.stringify(agent.params)),
+    indexBuildId: hasRetriever
+      ? `idx-${primaryKnowledgeBaseByAgent[agent.id] ?? "kb-support-kb"}-20261103`
+      : undefined,
+    toolSchemaVersions: agent.tools.length
+      ? Object.fromEntries(
+          agent.tools.map((t, i) => [t, `v${1 + (i % 2)}.${digest(t, 1)}`])
+        )
+      : undefined,
+    policyVersion: "default-v3",
+  }
+}
+
+const pickVariant = (rng: () => number): VariantKey =>
+  chance(rng, 0.5) ? "A" : "B"
 
 function buildTraces(count: number): AgentTrace[] {
   const rng = createRng(7002)
+  const aux = createRng(7012)
   const out: AgentTrace[] = []
   const live = deployedAgents.filter((a) => a.metrics.requests24h > 0)
   for (let i = 0; i < count; i++) {
@@ -689,6 +1046,9 @@ function buildTraces(count: number): AgentTrace[] {
     const flags: string[] = []
     if (!failed && grounded < 0.7) flags.push("Low confidence")
     if (!failed && grounded < 0.62) flags.push("Missing citation")
+    // Confident-sounding answer with weak grounding: the classic hallucination shape.
+    if (!failed && grounded < 0.68 && helpful > 0.88)
+      flags.push("Hallucination risk")
     if (safe < 1) flags.push("Policy: PII")
     if (failed) flags.push("Tool error")
     if (durationMs > agent.metrics.p95Ms) flags.push("Long latency")
@@ -712,11 +1072,30 @@ function buildTraces(count: number): AgentTrace[] {
           ? "Reviewed"
           : "Needs review"
         : "Succeeded"
-    const spans = buildSpans(rng, agent, durationMs, failed, q, a)
+    const { outcome, boundHit } = pickOutcome(aux, failed, flags)
+    const spans = buildSpans(rng, aux, agent, durationMs, failed, outcome, q, a)
+    // Keep these draws in their original order so legacy trace data is stable.
+    const startedAt = hoursAgo(rng() * 48)
+    const channel: AgentTrace["channel"] =
+      agent.id === "agt-alert-correlator" || agent.id === "agt-kb-curator"
+        ? "API"
+        : pick(rng, ["Web", "Web", "Slack", "Teams", "Email"])
+    const streams = !["API", "Email"].includes(channel)
+    const lastFinish = spans
+      .filter((s) => s.type === "llm")
+      .at(-1)?.finishReason
+    const streaming: TraceStreaming | undefined = streams
+      ? {
+          ttftMs: int(aux, 380, 1900),
+          tokensPerSec: int(aux, 38, 120),
+          disconnected: outcome === "abandoned",
+          truncated: outcome === "abandoned" || lastFinish === "length",
+        }
+      : undefined
     const llm = spans.filter((s) => s.type === "llm")
     const tokensIn = llm.reduce((s, x) => s + (x.tokensIn ?? 0), 0)
     const tokensOut = llm.reduce((s, x) => s + (x.tokensOut ?? 0), 0)
-    const exp =
+    const exp: string | undefined =
       agent.id === "agt-it-helpdesk"
         ? "exp-helpdesk-haiku"
         : agent.id === "agt-support-triage"
@@ -725,13 +1104,12 @@ function buildTraces(count: number): AgentTrace[] {
     out.push({
       id: `tr_${(0x3f0000 + i * 7919).toString(16)}`,
       agentId: agent.id,
-      startedAt: hoursAgo(rng() * 48),
+      startedAt,
       durationMs,
       status,
-      channel:
-        agent.id === "agt-alert-correlator" || agent.id === "agt-kb-curator"
-          ? "API"
-          : pick(rng, ["Web", "Web", "Slack", "Teams", "Email"]),
+      outcome,
+      boundHit,
+      channel,
       sessionId: `ses_${int(rng, 10000, 99999)}`,
       userQuery: q,
       finalAnswer: failed
@@ -749,10 +1127,13 @@ function buildTraces(count: number): AgentTrace[] {
         helpful: Math.round(helpful * 100) / 100,
         safe,
       },
-      flags: flags.length ? flags : flagPool.filter(() => false),
+      flags,
       spans,
+      lineage: buildLineage(agent),
+      streaming,
       experimentId: exp,
-      variant: exp ? (chance(rng, 0.5) ? "A" : "B") : undefined,
+      // Drawn last to keep the legacy draw order (and ids) stable.
+      variant: exp ? pickVariant(rng) : undefined,
     })
   }
   return out.sort((a, b) => b.startedAt.localeCompare(a.startedAt))
@@ -770,10 +1151,12 @@ export function getTrace(id: string) {
 
 function buildReviews(): ReviewItem[] {
   const rng = createRng(7003)
+  // One queue item per trace the generator marked for review, so the trace
+  // record and the queue never disagree.
   const candidates = agentTraces.filter(
     (t) => t.status === "Needs review" || t.status === "Reviewed"
   )
-  return candidates.slice(0, 26).map((t, i) => {
+  return candidates.map((t, i) => {
     const reason: ReviewItem["reason"] =
       t.userFeedback === "down"
         ? "User thumbs-down"
@@ -833,6 +1216,11 @@ function buildReviews(): ReviewItem[] {
 }
 
 export const reviewItems: ReviewItem[] = buildReviews()
+
+/** Review items still waiting for a verdict (sidebar badge, stat cards). */
+export function pendingReviewCount(items: ReviewItem[] = reviewItems) {
+  return items.filter((r) => r.status === "Pending").length
+}
 
 /* -------------------------------------------------------------------------- */
 /* Drift                                                                       */
@@ -976,9 +1364,45 @@ export const driftSignals: DriftSignal[] = [
   },
 ]
 
+const severityRank: Record<DriftSignal["severity"], number> = {
+  Info: 0,
+  Warning: 1,
+  Critical: 2,
+}
+
+/**
+ * Highest severity among an agent's open (not resolved) drift signals, or null
+ * when nothing is open. Lets the Agents table colour the Drift column from the
+ * same facts the fleet banner and the drift board use, not only from PSI.
+ */
+export function openDriftSeverity(
+  agentId: string,
+  signals: DriftSignal[] = driftSignals
+): DriftSignal["severity"] | null {
+  let top: DriftSignal["severity"] | null = null
+  for (const s of signals) {
+    if (s.agentId !== agentId || s.state === "Resolved") continue
+    if (!top || severityRank[s.severity] > severityRank[top]) top = s.severity
+  }
+  return top
+}
+
+/** Open drift signals, optionally for one agent. */
+export function openDriftCount(agentId?: string) {
+  return driftSignals.filter(
+    (s) => s.state !== "Resolved" && (!agentId || s.agentId === agentId)
+  ).length
+}
+
 /* -------------------------------------------------------------------------- */
 /* Experiments                                                                 */
 /* -------------------------------------------------------------------------- */
+
+/** Share of traffic a freshly drafted A/B test sends to variant B, percent. */
+export const defaultExperimentSplit = 20
+
+/** P(B > A) a variant must reach before it can be promoted. */
+export const SIGNIFICANCE_THRESHOLD = 0.95
 
 const days = (n: number) =>
   Array.from({ length: n }, (_, i) =>
@@ -1008,7 +1432,7 @@ export const experiments: Experiment[] = [
     primaryMetric: "quality",
     started: daysAgo(9),
     ends: daysAgo(-5),
-    ownerId: "u-005",
+    ownerId: "u-020",
     variants: [
       {
         key: "A",
@@ -1048,7 +1472,7 @@ export const experiments: Experiment[] = [
     primaryMetric: "quality",
     started: daysAgo(4),
     ends: daysAgo(-10),
-    ownerId: "u-003",
+    ownerId: "u-002",
     variants: [
       {
         key: "A",
@@ -1073,7 +1497,7 @@ export const experiments: Experiment[] = [
         errorRate: 0.6,
       },
     ],
-    significance: 0.61,
+    significance: 0.96,
     daily: daily(4, 91, 91.5, 2),
   },
   {
@@ -1083,7 +1507,7 @@ export const experiments: Experiment[] = [
     hypothesis:
       "BM25 + embeddings resolves semantic-layer entities more reliably than embeddings alone, reducing SQL validation failures.",
     kind: "retrieval",
-    status: "Completed",
+    status: "Promoted",
     split: 50,
     primaryMetric: "quality",
     started: daysAgo(21),
@@ -1126,7 +1550,7 @@ export const experiments: Experiment[] = [
     primaryMetric: "cost",
     started: daysAgo(16),
     ends: daysAgo(12),
-    ownerId: "u-009",
+    ownerId: "u-007",
     variants: [
       {
         key: "A",
@@ -1166,7 +1590,7 @@ export const experiments: Experiment[] = [
     split: 50,
     primaryMetric: "latency",
     started: daysAgo(-2),
-    ownerId: "u-007",
+    ownerId: "u-004",
     variants: [
       {
         key: "A",
@@ -1316,7 +1740,7 @@ export const modelRecommendations: ModelRecommendation[] = [
     summary:
       "The Flash Lite experiment was stopped after quality fell 6 points and thumbs-up dropped 11 points. No cheaper model clears the HR policy eval bar today.",
     fromModelId: "google/gemini-3-flash-preview",
-    toModelId: "google/gemini-3-flash-preview",
+    toModelId: "google/gemini-3.1-flash-lite",
     evidence: [
       { metric: "Quality (Flash Lite)", from: "90.2", to: "84.1", good: false },
       { metric: "Thumbs-up (Flash Lite)", from: "80%", to: "69%", good: false },
@@ -1328,11 +1752,21 @@ export const modelRecommendations: ModelRecommendation[] = [
   },
 ]
 
+/** Recommendations nobody has acted on yet (sidebar badge, stat cards). */
+export function openRecommendationCount(
+  items: ModelRecommendation[] = modelRecommendations
+) {
+  return items.filter((r) => r.status === "New").length
+}
+
 /* -------------------------------------------------------------------------- */
 /* Semantic layer                                                              */
 /* -------------------------------------------------------------------------- */
 
-export const semanticEntities: SemanticEntity[] = [
+/** Entities before `usedByAgentIds` is derived from the agents' allowlists. */
+type SemanticSeed = Omit<SemanticEntity, "usedByAgentIds">
+
+const semanticSeeds: SemanticSeed[] = [
   {
     id: "sem-open-incident",
     name: "Open incident",
@@ -1343,9 +1777,8 @@ export const semanticEntities: SemanticEntity[] = [
     formula: "incident.state IN ('New','In Progress','On Hold')",
     sources: ["itsm.incident"],
     synonyms: ["active incident", "unresolved ticket", "open ticket"],
-    ownerId: "u-003",
+    ownerId: "u-002",
     status: "Verified",
-    usedByAgentIds: ["agt-support-triage", "agt-ops-analyst", "agt-kb-curator"],
     queries30d: 4120,
     lastVerified: daysAgo(12),
     issues: [],
@@ -1363,7 +1796,6 @@ export const semanticEntities: SemanticEntity[] = [
     synonyms: ["time to resolve", "resolution time", "MTTR"],
     ownerId: "u-001",
     status: "Verified",
-    usedByAgentIds: ["agt-ops-analyst"],
     queries30d: 860,
     lastVerified: daysAgo(30),
     issues: [],
@@ -1378,9 +1810,8 @@ export const semanticEntities: SemanticEntity[] = [
     formula: "COUNT(*) WHERE sla_breached = true",
     sources: ["itsm.incident", "itsm.sla_task"],
     synonyms: ["breached SLA", "missed SLA", "SLA miss"],
-    ownerId: "u-003",
+    ownerId: "u-002",
     status: "Verified",
-    usedByAgentIds: ["agt-support-triage", "agt-ops-analyst"],
     queries30d: 1310,
     lastVerified: daysAgo(12),
     issues: [],
@@ -1397,7 +1828,6 @@ export const semanticEntities: SemanticEntity[] = [
     synonyms: ["uptime", "availability %", "SLO attainment"],
     ownerId: "u-011",
     status: "Verified",
-    usedByAgentIds: ["agt-ops-analyst", "agt-alert-correlator"],
     queries30d: 540,
     lastVerified: daysAgo(20),
     issues: [],
@@ -1412,9 +1842,8 @@ export const semanticEntities: SemanticEntity[] = [
     formula: "COUNT(close_code='Successful') / COUNT(state='Closed')",
     sources: ["itsm.change_request"],
     synonyms: ["successful changes", "change failure rate (inverse)"],
-    ownerId: "u-007",
+    ownerId: "u-004",
     status: "Draft",
-    usedByAgentIds: ["agt-ops-analyst", "agt-change-risk"],
     queries30d: 210,
     issues: [
       "Referenced by 2 agents while still Draft",
@@ -1430,9 +1859,8 @@ export const semanticEntities: SemanticEntity[] = [
       "A calendar range during which only Emergency changes may be implemented.",
     sources: ["itsm.freeze_window"],
     synonyms: ["blackout period", "freeze", "moratorium"],
-    ownerId: "u-007",
+    ownerId: "u-004",
     status: "Verified",
-    usedByAgentIds: ["agt-change-risk"],
     queries30d: 95,
     lastVerified: daysAgo(40),
     issues: [],
@@ -1449,7 +1877,6 @@ export const semanticEntities: SemanticEntity[] = [
     synonyms: ["account", "client", "tenant"],
     ownerId: "u-004",
     status: "Needs review",
-    usedByAgentIds: ["agt-support-triage"],
     queries30d: 2210,
     lastVerified: daysAgo(95),
     issues: [
@@ -1467,9 +1894,8 @@ export const semanticEntities: SemanticEntity[] = [
     formula: "worker.type = 'employee' AND worker.status = 'active'",
     sources: ["hr.worker"],
     synonyms: ["staff member", "colleague", "team member"],
-    ownerId: "u-009",
+    ownerId: "u-007",
     status: "Verified",
-    usedByAgentIds: ["agt-it-helpdesk", "agt-hr-answers"],
     queries30d: 3880,
     lastVerified: daysAgo(8),
     issues: [],
@@ -1484,9 +1910,8 @@ export const semanticEntities: SemanticEntity[] = [
     formula: "accrued_days - taken_days - scheduled_days",
     sources: ["hr.leave_ledger"],
     synonyms: ["PTO balance", "vacation days left", "holiday allowance"],
-    ownerId: "u-009",
+    ownerId: "u-007",
     status: "Verified",
-    usedByAgentIds: ["agt-hr-answers"],
     queries30d: 1540,
     lastVerified: daysAgo(8),
     issues: [],
@@ -1503,11 +1928,6 @@ export const semanticEntities: SemanticEntity[] = [
     synonyms: ["CI", "device", "configuration item"],
     ownerId: "u-011",
     status: "Verified",
-    usedByAgentIds: [
-      "agt-it-helpdesk",
-      "agt-change-risk",
-      "agt-alert-correlator",
-    ],
     queries30d: 1790,
     lastVerified: daysAgo(15),
     issues: [],
@@ -1524,7 +1944,6 @@ export const semanticEntities: SemanticEntity[] = [
     synonyms: ["expenditure", "costs", "actuals"],
     ownerId: "u-012",
     status: "Draft",
-    usedByAgentIds: ["agt-finance-copilot"],
     queries30d: 40,
     issues: ["No owner sign-off", "Currency conversion date not specified"],
   },
@@ -1539,7 +1958,6 @@ export const semanticEntities: SemanticEntity[] = [
     synonyms: ["department code", "CC"],
     ownerId: "u-012",
     status: "Draft",
-    usedByAgentIds: ["agt-finance-copilot"],
     queries30d: 38,
     issues: ["No owner sign-off"],
   },
@@ -1554,7 +1972,6 @@ export const semanticEntities: SemanticEntity[] = [
     synonyms: ["supplier", "provider"],
     ownerId: "u-012",
     status: "Deprecated",
-    usedByAgentIds: ["agt-finance-copilot"],
     queries30d: 12,
     lastVerified: daysAgo(200),
     issues: ["Superseded by 'Supplier' in the Procurement domain"],
@@ -1568,13 +1985,8 @@ export const semanticEntities: SemanticEntity[] = [
       "Critical priority: widespread outage or severe business impact. Response 15 min, resolution 4 h.",
     sources: [],
     synonyms: ["P1", "critical", "sev-1", "major"],
-    ownerId: "u-003",
+    ownerId: "u-002",
     status: "Verified",
-    usedByAgentIds: [
-      "agt-support-triage",
-      "agt-ops-analyst",
-      "agt-alert-correlator",
-    ],
     queries30d: 2960,
     lastVerified: daysAgo(12),
     issues: [],
@@ -1589,14 +2001,24 @@ export const semanticEntities: SemanticEntity[] = [
     formula: "COUNT(reassignment_count = 0 AND resolved) / COUNT(resolved)",
     sources: ["itsm.incident"],
     synonyms: ["FCR", "first-touch resolution"],
-    ownerId: "u-003",
+    ownerId: "u-002",
     status: "Needs review",
-    usedByAgentIds: ["agt-ops-analyst"],
     queries30d: 320,
     lastVerified: daysAgo(100),
     issues: ["Last verified 100 days ago (policy: 90)"],
   },
 ]
+
+/**
+ * `usedByAgentIds` is derived from `DeployedAgent.semanticEntityIds` so the
+ * semantic-layer sheet and the agent record always agree.
+ */
+export const semanticEntities: SemanticEntity[] = semanticSeeds.map((s) => ({
+  ...s,
+  usedByAgentIds: deployedAgents
+    .filter((a) => a.semanticEntityIds.includes(s.id))
+    .map((a) => a.id),
+}))
 
 export function getSemanticEntity(id: string) {
   return semanticEntities.find((s) => s.id === id)
@@ -1606,12 +2028,32 @@ export function getSemanticEntity(id: string) {
 /* Fleet-level series                                                          */
 /* -------------------------------------------------------------------------- */
 
+/** Centre of the fleet quality series; the drift board draws it as the baseline. */
+export const fleetQualityBaseline = 89.5
+
+/** Live fleet totals (the "today" column of every fleet-level view). */
+export const fleetTotals = {
+  requests24h: deployedAgents.reduce((s, a) => s + a.metrics.requests24h, 0),
+  tokens24h: deployedAgents.reduce((s, a) => s + a.metrics.tokens24h, 0),
+  costPerDay:
+    Math.round(
+      deployedAgents.reduce((s, a) => s + a.metrics.costPerDay, 0) * 100
+    ) / 100,
+}
+
 const f = createRng(7006)
-/** Last 30 days of fleet traffic, quality and cost. */
+/**
+ * Last 30 days of fleet traffic, quality and cost. The final point is the
+ * live fleet total so the chart ends exactly where the stat cards are.
+ */
 export const fleetDaily = days(30).map((name, i) => {
   const weekend = i % 7 === 5 || i % 7 === 6
   const base = weekend ? 7800 : 15_600
-  const requests = Math.round(base + (f() - 0.5) * 2400 + i * 60)
+  const last = i === 29
+  const requests = last
+    ? fleetTotals.requests24h
+    : Math.round(base + (f() - 0.5) * 2400 + i * 60)
+  const costPerRequest = fleetTotals.costPerDay / fleetTotals.requests24h
   return {
     name,
     requests,
@@ -1621,8 +2063,13 @@ export const fleetDaily = days(30).map((name, i) => {
     reviewed: Math.round(requests * 0.028),
     quality:
       Math.round(
-        (89.5 + (f() - 0.5) * 1.6 - (i > 24 ? (i - 24) * 0.35 : 0)) * 10
+        (fleetQualityBaseline +
+          (f() - 0.5) * 1.6 -
+          (i > 24 ? (i - 24) * 0.35 : 0)) *
+          10
       ) / 10,
-    cost: Math.round((requests * 0.0345 + (f() - 0.5) * 40) * 100) / 100,
+    cost: last
+      ? fleetTotals.costPerDay
+      : Math.round((requests * costPerRequest + (f() - 0.5) * 40) * 100) / 100,
   }
 })

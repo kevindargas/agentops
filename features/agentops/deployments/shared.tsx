@@ -1,5 +1,3 @@
-"use client"
-
 import Link from "next/link"
 import { cn } from "cn"
 import {
@@ -28,10 +26,10 @@ import { formatDelta } from "@/lib/format"
 import { ModelChip } from "../shared"
 
 /* ------------------------------------------------------------------------ */
-/* Tones for strings not yet in status-badge.tsx                             */
+/* Tones for strings that stateTone does not cover                           */
 /* ------------------------------------------------------------------------ */
 
-export const stageTone: Record<ReleaseStage, Tone> = {
+const stageTone: Record<ReleaseStage, Tone> = {
   Draft: "muted",
   "Pending approval": "warning",
   Canary: "progress",
@@ -41,7 +39,7 @@ export const stageTone: Record<ReleaseStage, Tone> = {
   Failed: "danger",
 }
 
-export const environmentTone: Record<ReleaseEnvironment, Tone> = {
+const environmentTone: Record<ReleaseEnvironment, Tone> = {
   production: "success",
   staging: "info",
   development: "muted",
@@ -108,7 +106,7 @@ export function VersionChip({
     <Badge
       variant="outline"
       className={cn(
-        "font-mono text-[11px] tabular-nums",
+        "font-mono text-2xs tabular-nums",
         tone === "muted" && "text-muted-foreground",
         className
       )}
@@ -171,7 +169,7 @@ export function TrafficBar({
           ))}
       </span>
       <span className="font-mono text-xs text-muted-foreground tabular-nums">
-        {inactive ? "—" : `${value}%`}
+        {inactive ? "n/a" : `${value}%`}
       </span>
     </span>
   )
@@ -189,7 +187,7 @@ const kindChip: Record<ReleaseChange["kind"], string> = {
   retrieval: "border-chart-3/30 bg-chart-3/10",
 }
 
-export function ChangeChip({
+function ChangeChip({
   change,
   className,
 }: {
@@ -197,7 +195,7 @@ export function ChangeChip({
   className?: string
 }) {
   const base = cn(
-    "inline-flex h-6 max-w-full items-center gap-1 rounded-md border px-1.5 text-[11px] leading-none whitespace-nowrap",
+    "inline-flex h-6 max-w-full items-center gap-1 rounded-md border px-1.5 text-2xs leading-none whitespace-nowrap",
     kindChip[change.kind],
     className
   )
@@ -206,17 +204,17 @@ export function ChangeChip({
       <span className={base}>
         <ModelChip
           modelId={change.before}
-          className="text-[11px] [&>span:first-child]:size-4"
+          className="text-2xs [&>span:first-child]:size-4"
         />
         <ArrowRightIcon className="size-3 shrink-0 text-muted-foreground" />
         <ModelChip
           modelId={change.after}
-          className="text-[11px] [&>span:first-child]:size-4"
+          className="text-2xs [&>span:first-child]:size-4"
         />
       </span>
     )
   if (change.kind === "tools") {
-    const added = change.before === "—"
+    const added = change.before === ""
     return (
       <span className={cn(base, "font-mono")}>
         <span className={added ? "text-success-text" : "text-danger-text"}>
@@ -258,7 +256,7 @@ export function ChangeChips({
         <Tooltip>
           <TooltipTrigger
             render={
-              <span className="inline-flex h-6 items-center rounded-md border px-1.5 text-[11px] text-muted-foreground" />
+              <span className="inline-flex h-6 items-center rounded-md border px-1.5 text-2xs text-muted-foreground" />
             }
           >
             +{rest} more
@@ -280,6 +278,9 @@ export function ChangeChips({
 /* Health / gates                                                            */
 /* ------------------------------------------------------------------------ */
 
+/** Red past these: error-rate delta in points, quality delta in composite points. */
+export const healthTolerance = { errorRateDelta: 0.2, qualityDelta: -0.5 }
+
 export function HealthDeltas({
   release,
   className,
@@ -294,10 +295,12 @@ export function HealthDeltas({
     release.rollout.length > 0
   if (!measured)
     return (
-      <span className={cn("text-xs text-muted-foreground", className)}>—</span>
+      <span className={cn("text-xs text-muted-foreground", className)}>
+        n/a
+      </span>
     )
-  const errBad = errorRateDelta > 0.2
-  const qBad = qualityDelta < -0.5
+  const errBad = errorRateDelta > healthTolerance.errorRateDelta
+  const qBad = qualityDelta < healthTolerance.qualityDelta
   return (
     <span
       className={cn(
@@ -315,16 +318,33 @@ export function HealthDeltas({
   )
 }
 
+/** Where a gate chip points: the runs list with the run highlighted. */
+export function evalRunHref(runId: string) {
+  return `/agentops/evals?run=${runId}`
+}
+
+/**
+ * Gate result with score and, when it failed for a reason the composite does
+ * not explain (regressions, pass-rate floor), that reason. Draft releases
+ * without a gate render a muted "No gate".
+ */
 export function EvalGateChip({
   gate,
   className,
+  showReason = true,
 }: {
   gate?: EvalGate
   className?: string
+  showReason?: boolean
 }) {
   if (!gate)
     return (
-      <span className={cn("text-xs text-muted-foreground", className)}>—</span>
+      <span
+        className={cn("text-xs text-muted-foreground", className)}
+        title="No eval run attached yet"
+      >
+        No gate
+      </span>
     )
   const meta =
     gate.status === "passed"
@@ -341,22 +361,28 @@ export function EvalGateChip({
             label: "Pending",
           }
   return (
-    <Link
-      href={`/agentops/evals?run=${gate.runId}`}
-      className={cn(
-        "inline-flex items-center gap-1 text-xs font-medium hover:underline [&_svg]:size-3.5",
-        meta.tone,
-        className
-      )}
-      title={`Eval run ${gate.runId}`}
-    >
-      {meta.icon}
-      {meta.label}
-      {gate.status !== "pending" && (
-        <span className="font-normal text-muted-foreground tabular-nums">
-          {gate.score.toFixed(1)}
+    <span className={cn("inline-flex min-w-0 flex-col gap-0.5", className)}>
+      <Link
+        href={evalRunHref(gate.runId)}
+        className={cn(
+          "inline-flex items-center gap-1 text-xs font-medium hover:underline [&_svg]:size-3.5",
+          meta.tone
+        )}
+        title={`Eval run ${gate.runId}${gate.reason ? ` · ${gate.reason}` : ""}`}
+      >
+        {meta.icon}
+        {meta.label}
+        {gate.status !== "pending" && (
+          <span className="font-normal text-muted-foreground tabular-nums">
+            {gate.score.toFixed(1)} / {gate.threshold}
+          </span>
+        )}
+      </Link>
+      {showReason && gate.reason && (
+        <span className="truncate text-2xs text-danger-text">
+          {gate.reason}
         </span>
       )}
-    </Link>
+    </span>
   )
 }

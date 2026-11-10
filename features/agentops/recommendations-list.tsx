@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { cn } from "cn"
 import {
   ArrowRightIcon,
@@ -18,11 +19,12 @@ import {
 import { toast } from "sonner"
 
 import { EmptyState } from "@/components/shared/empty-state"
+import { Eyebrow } from "@/components/shared/eyebrow"
 import { StateBadge } from "@/components/shared/status-badge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { modelRecommendations as seed } from "@/lib/data"
+import { defaultExperimentSplit } from "@/lib/data/agentops"
 import { formatCurrency, timeAgo } from "@/lib/format"
 import type {
   ModelRecommendation,
@@ -30,6 +32,7 @@ import type {
   RecommendationStatus,
 } from "@/lib/types"
 import { AgentChip, ModelChip } from "./shared"
+import { draftExperiment, recommendationStore } from "./stores"
 
 const kindMeta: Record<
   RecommendationKind,
@@ -62,31 +65,46 @@ const kindMeta: Record<
   },
 }
 
-export function RecommendationsList({ agentId }: { agentId?: string }) {
-  const [items, setItems] = React.useState<ModelRecommendation[]>(seed)
+const isOpen = (r: ModelRecommendation) =>
+  r.status === "New" || r.status === "Testing"
+
+export function RecommendationsList({
+  agentId,
+  highlightId,
+}: {
+  agentId?: string
+  /** `?open=<rec-id>`: scroll to and outline this card. */
+  highlightId?: string
+}) {
+  const items = recommendationStore.use()
   const [status, setStatus] = React.useState<
     "open" | RecommendationStatus | "all"
-  >("open")
+  >(() => {
+    const target = highlightId
+      ? items.find((r) => r.id === highlightId)
+      : undefined
+    return target && !isOpen(target) ? "all" : "open"
+  })
   const scoped = agentId ? items.filter((r) => r.agentId === agentId) : items
   const visible = scoped
     .filter((r) =>
       status === "open"
-        ? r.status === "New" || r.status === "Testing"
+        ? isOpen(r)
         : status === "all"
           ? true
           : r.status === status
     )
     .sort((a, b) => b.confidence - a.confidence)
   const savings = scoped
-    .filter((r) => r.status === "New" || r.status === "Testing")
+    .filter(isOpen)
     .reduce((s, r) => s + (r.savingsPerMonth ?? 0), 0)
 
-  const set = (id: string, next: RecommendationStatus, msg: string) => {
-    setItems((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, status: next } : r))
-    )
-    toast(msg)
-  }
+  React.useEffect(() => {
+    if (!highlightId) return
+    document
+      .getElementById(`rec-${highlightId}`)
+      ?.scrollIntoView({ block: "center" })
+  }, [highlightId])
 
   return (
     <div className="flex flex-col gap-4">
@@ -123,11 +141,22 @@ export function RecommendationsList({ agentId }: { agentId?: string }) {
           icon={<CheckIcon />}
           title="Nothing to recommend"
           description="Recommendations appear when shadow evaluations, experiments or provider notices show a better configuration for an agent."
+          action={
+            status !== "all" ? (
+              <Button variant="outline" onClick={() => setStatus("all")}>
+                Show all
+              </Button>
+            ) : undefined
+          }
         />
       ) : (
         <div className="grid gap-4 xl:grid-cols-2">
           {visible.map((r) => (
-            <RecommendationCard key={r.id} rec={r} onSet={set} />
+            <RecommendationCard
+              key={r.id}
+              rec={r}
+              highlighted={r.id === highlightId}
+            />
           ))}
         </div>
       )}
@@ -137,19 +166,68 @@ export function RecommendationsList({ agentId }: { agentId?: string }) {
 
 function RecommendationCard({
   rec: r,
-  onSet,
+  highlighted,
 }: {
   rec: ModelRecommendation
-  onSet: (id: string, next: RecommendationStatus, msg: string) => void
+  highlighted?: boolean
 }) {
+  const router = useRouter()
   const meta = kindMeta[r.kind]
   const Icon = meta.icon
   const sameModel = r.fromModelId === r.toModelId
+  const shortTitle = r.title.split(":")[0]
+
+  const setStatus = (
+    next: RecommendationStatus,
+    title: string,
+    description: string
+  ) => {
+    const previous = r
+    recommendationStore.patch(r.id, { status: next })
+    toast(title, {
+      description,
+      action: {
+        label: "Undo",
+        onClick: () =>
+          recommendationStore.set((prev) =>
+            prev.map((x) => (x.id === previous.id ? previous : x))
+          ),
+      },
+      duration: 6000,
+    })
+  }
+
+  const startTest = () => {
+    const exp = draftExperiment({
+      agentId: r.agentId,
+      kind: sameModel ? "prompt" : "model",
+      primaryMetric:
+        r.kind === "cost"
+          ? "cost"
+          : r.kind === "latency"
+            ? "latency"
+            : "quality",
+      name: r.title,
+      hypothesis: r.summary,
+      toModelId: sameModel ? undefined : r.toModelId,
+    })
+    recommendationStore.patch(r.id, { status: "Testing", experimentId: exp.id })
+    toast.success(`A/B test drafted with a ${defaultExperimentSplit}% split`, {
+      description: `${exp.name} · Draft, start it from the experiment sheet`,
+      action: {
+        label: "Open experiment",
+        onClick: () => router.push(`/agentops/experiments?open=${exp.id}`),
+      },
+    })
+  }
+
   return (
     <article
+      id={`rec-${r.id}`}
       className={cn(
-        "flex flex-col gap-4 rounded-xl border bg-card p-5",
-        r.status === "Dismissed" && "opacity-70"
+        "flex scroll-mt-24 flex-col gap-4 rounded-xl border bg-card p-5",
+        r.status === "Dismissed" && "opacity-70",
+        highlighted && "ring-2 ring-ring/50"
       )}
     >
       <div className="flex items-start gap-3">
@@ -162,15 +240,13 @@ function RecommendationCard({
           <Icon className="size-4" />
         </span>
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-            <span className="font-medium tracking-wide uppercase">
-              {meta.label}
-            </span>
+          <Eyebrow className="flex flex-wrap items-center gap-1.5 normal-case">
+            <span className="uppercase">{meta.label}</span>
             <span aria-hidden>·</span>
             <AgentChip agentId={r.agentId} size="sm" />
             <span aria-hidden>·</span>
             {timeAgo(r.created)}
-          </div>
+          </Eyebrow>
           <h3 className="mt-0.5 text-base leading-snug font-semibold">
             {r.title}
           </h3>
@@ -246,23 +322,21 @@ function RecommendationCard({
             </Button>
           ) : (
             r.status === "New" && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() =>
-                  onSet(r.id, "Testing", "A/B test drafted with a 10% split")
-                }
-              >
+              <Button variant="outline" size="sm" onClick={startTest}>
                 <FlaskConicalIcon /> Start A/B test
               </Button>
             )
           )}
-          {(r.status === "New" || r.status === "Testing") && (
+          {isOpen(r) && (
             <>
               <Button
                 size="sm"
                 onClick={() =>
-                  onSet(r.id, "Applied", `Applied to ${r.title.split(":")[0]}`)
+                  setStatus(
+                    "Applied",
+                    `Marked applied: ${shortTitle}`,
+                    "Status only. Ship the change through Deployments so the agent record follows."
+                  )
                 }
               >
                 <CheckIcon /> Apply
@@ -272,7 +346,11 @@ function RecommendationCard({
                 size="icon-sm"
                 aria-label="Dismiss recommendation"
                 onClick={() =>
-                  onSet(r.id, "Dismissed", "Recommendation dismissed")
+                  setStatus(
+                    "Dismissed",
+                    "Recommendation dismissed",
+                    `${shortTitle} stays listed under Dismissed for the record.`
+                  )
                 }
               >
                 <XIcon />

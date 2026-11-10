@@ -1,3 +1,6 @@
+import { controls as costGovernance } from "./controls-cost-governance"
+import { controls as driftSafety } from "./controls-drift-safety"
+import { controls as visibilityQuality } from "./controls-visibility-quality"
 import type { ControlDef, ControlSet, DomainDef } from "./types"
 
 /**
@@ -13,7 +16,7 @@ export const domains: DomainDef[] = [
     title: "Visibility",
     short: "Visibility",
     description:
-      "Can you see what the system did, for whom, at what cost — every request, span, tool call and retrieval?",
+      "Can you see what the system did, for whom, at what cost: every request, span, tool call and retrieval?",
     color: "var(--chart-1)",
   },
   {
@@ -21,7 +24,7 @@ export const domains: DomainDef[] = [
     title: "Quality",
     short: "Quality",
     description:
-      "Do you measure whether answers and actions are correct, grounded and useful — before and after release?",
+      "Do you measure whether answers and actions are correct, grounded and useful: before and after release?",
     color: "var(--chart-2)",
   },
   {
@@ -61,7 +64,7 @@ export const domains: DomainDef[] = [
 const agentic = ["agent", "multi-agent"] as const
 const retrieval = ["rag", "agent", "multi-agent"] as const
 
-export const controls: ControlDef[] = [
+const baseControls: ControlDef[] = [
   // ---------------------------------------------------------------- Visibility
   {
     id: "VIS-01",
@@ -296,7 +299,7 @@ export const controls: ControlDef[] = [
     what: "A curated, versioned set of representative inputs with expected outputs or rubrics, including edge cases, adversarial cases and known past failures.",
     why: "Without a fixed dataset every improvement claim is anecdotal and every regression is a surprise. The dataset is the unit test suite of the system.",
     how: [
-      "Start with 50–200 cases sampled from real traffic plus hand-written edge cases; label expected behaviour, not exact text.",
+      "Start with 50 to 200 cases sampled from real traffic plus hand-written edge cases; label expected behaviour, not exact text.",
       "Version the dataset alongside the prompt (same repo or dataset registry) and record which version each eval run used.",
       "Add every production failure as a new case within a week of the incident.",
     ],
@@ -386,8 +389,8 @@ export const controls: ControlDef[] = [
     what: "A sample of production traffic plus every flagged or low-confidence response is routed to reviewers who grade against a shared rubric.",
     why: "Humans find the failure classes you have not thought to measure yet. The queue is where new eval cases and new guardrails come from.",
     how: [
-      "Sample 1–5% of traffic stratified by agent and intent; route guardrail flags and negative feedback at 100%.",
-      "Use a rubric with 3–5 dimensions and free-text failure tags; keep inter-rater checks.",
+      "Sample 1 to 5% of traffic stratified by agent and intent; route guardrail flags and negative feedback at 100%.",
+      "Use a rubric with 3 to 5 dimensions and free-text failure tags; keep inter-rater checks.",
       "Feed accepted reviews back into the golden dataset and the judge calibration set.",
     ],
     done: "The queue shows review volume, median time-to-review and the top failure tags for the last 30 days; at least one tag turned into a dataset case.",
@@ -592,7 +595,7 @@ export const controls: ControlDef[] = [
     domain: "drift",
     title: "Model deprecation tracking",
     what: "Every model in use is inventoried with its provider deprecation date and a migration owner; evals run against the successor before the cutoff.",
-    why: "Providers retire models on 6–12 month cycles. Finding out from a 404 in production is avoidable.",
+    why: "Providers retire models on 6 to 12 month cycles. Finding out from a 404 in production is avoidable.",
     how: [
       "Inventory models per agent and subscribe to provider deprecation feeds.",
       "Set a reminder 90 days before each cutoff and run the eval suite on the candidate successor.",
@@ -1057,7 +1060,7 @@ export const controls: ControlDef[] = [
     domain: "cost-performance",
     title: "Caching",
     what: "Prompt caching, exact-match response caching and (where safe) semantic caching are used with hit-rate monitoring and cache-safe scoping per tenant.",
-    why: "Repeated system prompts and FAQ-style questions are the easiest 20–40% cost cut available, but cross-tenant cache hits are a data leak.",
+    why: "Repeated system prompts and FAQ-style questions are the easiest 20 to 40% cost cut available, but cross-tenant cache hits are a data leak.",
     how: [
       "Enable provider prompt caching for long static prefixes; order prompts static-first.",
       "Add an exact or semantic cache at the gateway keyed by tenant and prompt version.",
@@ -1373,12 +1376,29 @@ export const controls: ControlDef[] = [
   },
 ]
 
+const domainOrder = domains.map((d) => d.id)
+
+/**
+ * Base controls plus the wave-2 extensions, grouped by domain so every
+ * domain's controls stay contiguous regardless of which file defines them.
+ */
+export const controls: ControlDef[] = [
+  ...baseControls,
+  ...visibilityQuality,
+  ...driftSafety,
+  ...costGovernance,
+].sort(
+  (a, b) =>
+    domainOrder.indexOf(a.domain) - domainOrder.indexOf(b.domain) ||
+    a.id.localeCompare(b.id)
+)
+
 export const defaultControlSet: ControlSet = {
   id: "agentops-llmops-v1",
   name: "AgentOps LLMOps Readiness",
-  version: "1.0.0",
+  version: "1.1.0",
   description:
-    "Six-domain control set for operating chatbots, RAG systems and agents in production, mapped to OWASP LLM Top 10, NIST AI RMF, the EU AI Act and OTel GenAI conventions.",
+    "Six-domain control set for operating chatbots, RAG systems and agents in production (observability, evaluation, drift, safety, agentic action, reliability, cost and governance) mapped to OWASP LLM Top 10, NIST AI RMF, the EU AI Act, ISO/IEC 42001 and OTel GenAI conventions.",
   domains,
   controls,
 }

@@ -58,7 +58,15 @@ import {
 } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { currentUser, initials } from "@/lib/data/users"
+import { siteConfig } from "@/config/site"
+import {
+  cabSchedule,
+  incidentAutoCloseDays,
+  onHoldAutoResolveDays,
+} from "@/lib/constants"
+import { createRng, daysAgo, hoursAgo, NOW } from "@/lib/data/seed"
+import { currentUser, groups, initials, users } from "@/lib/data/users"
+import { timeAgo } from "@/lib/format"
 
 export type SettingsSection =
   | "profile"
@@ -113,12 +121,79 @@ const sections: {
 ]
 
 const timeZones: Record<string, string> = {
-  "America/Los_Angeles": "Pacific — Los Angeles",
-  "America/New_York": "Eastern — New York",
-  "Europe/London": "GMT — London",
-  "Europe/Berlin": "CET — Berlin",
-  "Asia/Kolkata": "IST — Kolkata",
-  "Asia/Tokyo": "JST — Tokyo",
+  "America/Los_Angeles": "Pacific (Los Angeles)",
+  "America/New_York": "Eastern (New York)",
+  "Europe/London": "GMT (London)",
+  "Europe/Berlin": "CET (Berlin)",
+  "Asia/Kolkata": "IST (Kolkata)",
+  "Asia/Tokyo": "JST (Tokyo)",
+}
+
+const weekdays = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const
+const cabDayDefault = weekdays[cabSchedule.weekday]
+const cabTimeDefault = `${String(cabSchedule.hour).padStart(2, "0")}:${String(cabSchedule.minute).padStart(2, "0")}`
+
+const autoCloseOptions = Array.from(
+  new Set([1, incidentAutoCloseDays, onHoldAutoResolveDays, 7])
+).sort((a, b) => a - b)
+
+interface Session {
+  id: string
+  device: string
+  where: string
+  /** ISO timestamp of the last activity; undefined marks this device. */
+  lastActive?: string
+}
+
+const seededSessions: Session[] = [
+  {
+    id: "s-1",
+    device: "MacBook Pro · Chrome",
+    where: `${currentUser.location}, US`,
+  },
+  {
+    id: "s-2",
+    device: `iPhone · ${siteConfig.name} app`,
+    where: `${currentUser.location}, US`,
+    lastActive: hoursAgo(2),
+  },
+  {
+    id: "s-3",
+    device: "Windows · Edge",
+    where: "Austin, US",
+    lastActive: daysAgo(3),
+  },
+]
+
+/** Deterministic replacement token; the seed advances on every rotation. */
+function mintToken(rotation: number) {
+  const rng = createRng(4242 + rotation)
+  const hex = Array.from({ length: 24 }, () =>
+    Math.floor(rng() * 16).toString(16)
+  ).join("")
+  return `kui_live_${hex}`
+}
+
+const maskToken = (token: string) =>
+  `${token.slice(0, 9)}${"•".repeat(20)}${token.slice(-4)}`
+
+/** Build and download the directory export as a JSON file. */
+function downloadDirectoryExport() {
+  const payload = {
+    workspace: siteConfig.workspace,
+    exportedAt: NOW.toISOString(),
+    users,
+    groups,
+  }
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {
+    type: "application/json",
+  })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement("a")
+  a.href = url
+  a.download = `${siteConfig.workspace.toLowerCase().replace(/\s+/g, "-")}-directory.json`
+  a.click()
+  URL.revokeObjectURL(url)
 }
 
 function SwitchRow({
@@ -142,7 +217,7 @@ function SwitchRow({
         >
           {label}
           {badge && (
-            <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">
+            <Badge variant="secondary" className="h-4 px-1.5 text-3xs">
               {badge}
             </Badge>
           )}
@@ -174,9 +249,9 @@ function SectionCard({
       id={id}
       className={cn("scroll-mt-24", destructive && "border-destructive/40")}
     >
-      <CardHeader className={cn(destructive && "text-destructive")}>
+      <CardHeader className={cn(destructive && "text-danger-text")}>
         <CardTitle>{title}</CardTitle>
-        <CardDescription className={cn(destructive && "text-destructive/80")}>
+        <CardDescription className={cn(destructive && "text-danger-text/80")}>
           {description}
         </CardDescription>
       </CardHeader>
@@ -198,6 +273,11 @@ export function SettingsForm({
   const { theme, setTheme } = useTheme()
   const [active, setActive] = React.useState<SettingsSection>(initialSection)
   const [confirm, setConfirm] = React.useState<"reset" | "purge" | null>(null)
+  const [photoName, setPhotoName] = React.useState<string | null>(null)
+  const photoInput = React.useRef<HTMLInputElement>(null)
+  const [sessions, setSessions] = React.useState<Session[]>(seededSessions)
+  const [rotation, setRotation] = React.useState(0)
+  const token = mintToken(rotation)
   // Deep links (?section=platform) land on the requested card.
   React.useEffect(() => {
     if (initialSection !== "profile")
@@ -248,7 +328,7 @@ export function SettingsForm({
                       : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
                     s.id === "danger" &&
                       !isActive &&
-                      "text-destructive/80 hover:text-destructive"
+                      "text-danger-text/80 hover:text-danger-text"
                   )}
                 >
                   <Icon
@@ -259,7 +339,7 @@ export function SettingsForm({
                   />
                   <span className="flex flex-col leading-tight">
                     {s.label}
-                    <span className="hidden text-[11px] font-normal text-muted-foreground lg:inline">
+                    <span className="hidden text-2xs font-normal text-muted-foreground lg:inline">
                       {s.description}
                     </span>
                   </span>
@@ -293,13 +373,50 @@ export function SettingsForm({
                 <p className="text-xs text-muted-foreground">
                   {currentUser.title} · {currentUser.department}
                 </p>
-                <div className="flex gap-2">
-                  <Button variant="outline" size="xs">
-                    Upload photo
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    ref={photoInput}
+                    type="file"
+                    accept="image/*"
+                    className="sr-only"
+                    aria-label="Choose a profile photo"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0]
+                      if (!file) return
+                      setPhotoName(file.name)
+                      toast.success("Photo selected", {
+                        description: `${file.name} is kept in this session only.`,
+                      })
+                    }}
+                  />
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    onClick={() => photoInput.current?.click()}
+                  >
+                    {photoName ? "Replace photo" : "Upload photo"}
                   </Button>
-                  <Button variant="ghost" size="xs">
-                    Remove
-                  </Button>
+                  {photoName && (
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      onClick={() => {
+                        setPhotoName(null)
+                        if (photoInput.current) photoInput.current.value = ""
+                        toast("Photo removed")
+                      }}
+                    >
+                      Remove
+                    </Button>
+                  )}
+                  {photoName && (
+                    <span
+                      className="max-w-48 truncate text-xs text-muted-foreground"
+                      title={photoName}
+                    >
+                      {photoName}
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
@@ -559,31 +676,26 @@ export function SettingsForm({
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => toast("Other sessions signed out")}
+                  disabled={sessions.length <= 1}
+                  onClick={() => {
+                    const others = sessions.filter((s) => s.lastActive).length
+                    setSessions((prev) => prev.filter((s) => !s.lastActive))
+                    toast(
+                      `${others} other session${others === 1 ? "" : "s"} removed`,
+                      {
+                        description:
+                          "Only this device remains in the list for this session.",
+                      }
+                    )
+                  }}
                 >
                   Sign out others
                 </Button>
               </div>
               <ul className="divide-y text-sm">
-                {[
-                  {
-                    device: "MacBook Pro · Chrome",
-                    where: "San Francisco, US",
-                    when: "This device",
-                  },
-                  {
-                    device: "iPhone · AgentOps app",
-                    where: "San Francisco, US",
-                    when: "Active 2 hours ago",
-                  },
-                  {
-                    device: "Windows · Edge",
-                    where: "Austin, US",
-                    when: "Active 3 days ago",
-                  },
-                ].map((s) => (
+                {sessions.map((s) => (
                   <li
-                    key={s.device}
+                    key={s.id}
                     className="flex items-center justify-between gap-3 px-4 py-2.5"
                   >
                     <div className="min-w-0">
@@ -593,12 +705,14 @@ export function SettingsForm({
                     <span
                       className={cn(
                         "shrink-0 text-xs",
-                        s.when === "This device"
-                          ? "font-medium text-success-text"
-                          : "text-muted-foreground"
+                        s.lastActive
+                          ? "text-muted-foreground"
+                          : "font-medium text-success-text"
                       )}
                     >
-                      {s.when}
+                      {s.lastActive
+                        ? `Active ${timeAgo(s.lastActive)}`
+                        : "This device"}
                     </span>
                   </li>
                 ))}
@@ -610,17 +724,18 @@ export function SettingsForm({
                 <Input
                   id="apikey"
                   readOnly
-                  value="kui_live_••••••••••••••••••••7f3a"
+                  value={maskToken(token)}
                   className="font-mono"
                 />
                 <Button
                   variant="outline"
-                  onClick={() =>
+                  onClick={() => {
+                    setRotation((r) => r + 1)
                     toast.success("New token generated", {
                       description:
-                        "The previous token stops working in 24 hours.",
+                        "The masked value above changed. Tokens live in this session only.",
                     })
-                  }
+                  }}
                 >
                   Rotate
                 </Button>
@@ -628,6 +743,8 @@ export function SettingsForm({
               <FieldDescription>
                 Grants the same permissions as your user. Store it in a secret
                 manager.
+                {rotation > 0 &&
+                  ` Rotated ${rotation} time${rotation === 1 ? "" : "s"} this session.`}
               </FieldDescription>
             </Field>
           </FieldGroup>
@@ -647,7 +764,10 @@ export function SettingsForm({
             <div className="grid gap-4 sm:grid-cols-2">
               <Field>
                 <FieldLabel htmlFor="workspace">Workspace name</FieldLabel>
-                <Input id="workspace" defaultValue="Acme Corp" />
+                <Input id="workspace" defaultValue={siteConfig.workspace} />
+                <FieldDescription>
+                  Shown in the sidebar and on exports.
+                </FieldDescription>
               </Field>
               <Field>
                 <FieldLabel htmlFor="prefix">Incident number prefix</FieldLabel>
@@ -661,30 +781,33 @@ export function SettingsForm({
                   Auto-close resolved incidents after
                 </FieldLabel>
                 <Select
-                  defaultValue="3"
-                  items={{
-                    "1": "1 day",
-                    "3": "3 days",
-                    "5": "5 days",
-                    "7": "7 days",
-                  }}
+                  defaultValue={String(incidentAutoCloseDays)}
+                  items={Object.fromEntries(
+                    autoCloseOptions.map((d) => [
+                      String(d),
+                      `${d} day${d === 1 ? "" : "s"}`,
+                    ])
+                  )}
                 >
                   <SelectTrigger id="autoclose" className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {["1", "3", "5", "7"].map((d) => (
-                      <SelectItem key={d} value={d}>
-                        {d} day{d === "1" ? "" : "s"}
+                    {autoCloseOptions.map((d) => (
+                      <SelectItem key={d} value={String(d)}>
+                        {d} day{d === 1 ? "" : "s"}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                <FieldDescription>
+                  The resolve dialog quotes the same period.
+                </FieldDescription>
               </Field>
               <Field>
                 <FieldLabel htmlFor="cab">CAB meeting day</FieldLabel>
                 <Select
-                  defaultValue="thu"
+                  defaultValue={cabDayDefault}
                   items={{
                     mon: "Monday",
                     tue: "Tuesday",
@@ -709,11 +832,24 @@ export function SettingsForm({
                   this meeting.
                 </FieldDescription>
               </Field>
+              <Field>
+                <FieldLabel htmlFor="cab-time">CAB meeting time</FieldLabel>
+                <Input
+                  id="cab-time"
+                  type="time"
+                  defaultValue={cabTimeDefault}
+                  className="font-mono"
+                />
+                <FieldDescription>
+                  {cabSchedule.timeZone}. Changes and approvals currently show
+                  &quot;{cabSchedule.label}&quot;.
+                </FieldDescription>
+              </Field>
             </div>
             <div className="divide-y">
               <SwitchRow
-                label="Require CI on P1/P2 incidents"
-                description="Agents must link a configuration item before resolving"
+                label="Require an affected service on P1/P2 incidents"
+                description="Agents must link a service before resolving"
               />
               <SwitchRow
                 label="Major incident approval"
@@ -721,7 +857,7 @@ export function SettingsForm({
               />
               <SwitchRow
                 label="Virtual agent"
-                description="Enable the AI assistant in the Employee Center"
+                description="Enable the assistant in the self-service portal"
               />
               <SwitchRow
                 label="Agent autonomy"
@@ -742,20 +878,21 @@ export function SettingsForm({
           <ul className="divide-y">
             <li className="flex flex-col gap-3 py-3.5 first:pt-0 sm:flex-row sm:items-center sm:justify-between">
               <div className="space-y-0.5">
-                <p className="text-sm font-medium">Export all data</p>
+                <p className="text-sm font-medium">Export directory</p>
                 <p className="text-xs text-muted-foreground">
-                  Download a JSON archive of every record, attachment and audit
-                  entry.
+                  Download a JSON file of the {users.length} users and{" "}
+                  {groups.length} groups in this workspace.
                 </p>
               </div>
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() =>
-                  toast.success("Export started", {
-                    description: "We'll email you when the archive is ready.",
+                onClick={() => {
+                  downloadDirectoryExport()
+                  toast.success("Directory export downloaded", {
+                    description: `${users.length} users and ${groups.length} groups as JSON.`,
                   })
-                }
+                }}
               >
                 <DownloadIcon /> Export
               </Button>
@@ -764,14 +901,14 @@ export function SettingsForm({
               <div className="space-y-0.5">
                 <p className="text-sm font-medium">Reset demo data</p>
                 <p className="text-xs text-muted-foreground">
-                  Restore all mock incidents, changes and requests to their
-                  seeded state.
+                  Reload the app so every list returns to its seeded state.
+                  Anything created in this session is discarded.
                 </p>
               </div>
               <Button
                 variant="outline"
                 size="sm"
-                className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                className="border-destructive/40 text-danger-text hover:bg-destructive/10 hover:text-danger-text"
                 onClick={() => setConfirm("reset")}
               >
                 <ShieldIcon /> Reset data
@@ -809,8 +946,8 @@ export function SettingsForm({
             </AlertDialogTitle>
             <AlertDialogDescription>
               {confirm === "purge"
-                ? "This permanently deletes Acme Corp, all 24 users and every record. This cannot be undone."
-                : "All records return to their seeded state. Anything you created in this session will be lost."}
+                ? `In a connected workspace this permanently deletes ${siteConfig.workspace}, all ${users.length} users and every record. The sample workspace cannot be deleted.`
+                : "The page reloads and every list returns to its seeded state. Anything you created in this session is lost."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -818,17 +955,15 @@ export function SettingsForm({
             <AlertDialogAction
               variant="destructive"
               onClick={() => {
-                toast(
-                  confirm === "purge"
-                    ? "Workspace deletion scheduled"
-                    : "Demo data reset",
-                  {
-                    description:
-                      confirm === "purge"
-                        ? "Admins have 24 hours to cancel from the audit log."
-                        : "Reload the page to see the seeded records.",
-                  }
-                )
+                if (confirm === "reset") {
+                  setConfirm(null)
+                  window.location.reload()
+                  return
+                }
+                toast("Delete workspace is disabled for the sample workspace", {
+                  description:
+                    "Connect a backend to enable deletion; nothing was changed.",
+                })
                 setConfirm(null)
               }}
             >

@@ -2,6 +2,8 @@
 
 import * as React from "react"
 
+import { siteConfig } from "@/config/site"
+
 /**
  * Last-resort boundary for errors thrown by the root layout itself. It must
  * render its own <html> and <body>, and cannot rely on the app's providers or
@@ -50,7 +52,7 @@ export default function GlobalError({
               Application error
             </p>
             <h1 style={{ fontSize: 20, fontWeight: 600, margin: "8px 0 6px" }}>
-              AgentOps could not start
+              {siteConfig.name} could not start
             </h1>
             <p
               style={{

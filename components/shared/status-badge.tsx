@@ -20,7 +20,14 @@ import type { AlertSeverity, ChangeRisk, Priority } from "@/lib/types"
  * module (agent, trace, incident, change, request, review…) on one color system.
  */
 export type Tone =
-  "neutral" | "info" | "progress" | "warning" | "success" | "danger" | "muted"
+  | "neutral"
+  | "info"
+  | "progress"
+  | "warning"
+  | "success"
+  | "danger"
+  | "muted"
+  | "brand"
 
 export type BadgeSize = "sm" | "default"
 
@@ -28,7 +35,8 @@ export type BadgeSize = "sm" | "default"
  * One treatment for every tone: tinted fill, hairline ring in the same hue and
  * a readable text color (`*-text` tokens in globals.css are tuned for 4.5:1 on
  * the tint in both modes). `dot` is the solid marker used inside badges and by
- * <StatusDot />; `text` is for inline text-only indicators.
+ * <StatusDot />; `text` is for inline text-only indicators. Icon sizes: `size-4`
+ * default, `size-3.5` beside 12px text, `size-3` only inside `sm` badges.
  */
 export const toneClasses: Record<
   Tone,
@@ -39,6 +47,12 @@ export const toneClasses: Record<
     dot: "bg-foreground/55",
     text: "text-foreground",
     soft: "bg-muted text-foreground",
+  },
+  brand: {
+    badge: "border-brand/25 bg-brand/10 text-brand",
+    dot: "bg-brand",
+    text: "text-brand",
+    soft: "bg-brand/10 text-brand",
   },
   info: {
     badge: "border-info/25 bg-info/10 text-info-text",
@@ -79,7 +93,7 @@ export const toneClasses: Record<
 }
 
 const sizeClasses: Record<BadgeSize, string> = {
-  sm: "h-4.5 gap-1 px-1.5 text-[11px] leading-none [&>svg]:size-2.5!",
+  sm: "h-4.5 gap-1 px-1.5 text-2xs leading-none [&>svg]:size-2.5!",
   default: "gap-1.5",
 }
 
@@ -107,6 +121,12 @@ const stateTone: Record<string, Tone> = {
   Synced: "success",
   Stale: "warning",
   Error: "danger",
+  // Retrieval quality (LowRecallOutcome)
+  "Fallback answer": "warning",
+  "Escalated to human": "info",
+  "Hallucination flagged": "danger",
+  "No answer": "muted",
+  "Answered from memory": "progress",
   // Providers, keys, budgets
   Connected: "success",
   Disconnected: "danger",
@@ -130,6 +150,27 @@ const stateTone: Record<string, Tone> = {
   Destructive: "danger",
   // Agent operations
   Drifting: "warning",
+  // Secrets and tool permissions
+  Valid: "success",
+  Low: "success",
+  Moderate: "info",
+  High: "warning",
+  "Very High": "danger",
+  // Workflow agent runs
+  succeeded: "success",
+  "needs-approval": "warning",
+  failed: "danger",
+  skipped: "muted",
+  // Routing and gates
+  passed: "success",
+  pending: "muted",
+  // Trace outcomes (labels from `outcomeLabel` in features/agentops/shared)
+  Refused: "info",
+  "Invalid output": "danger",
+  "Tool error": "danger",
+  Timeout: "danger",
+  "Rate limited": "warning",
+  Abandoned: "muted",
   "Needs review": "warning",
   Reviewed: "success",
   Flagged: "danger",
@@ -231,29 +272,42 @@ const stateTone: Record<string, Tone> = {
   "At risk": "warning",
   Breached: "danger",
   Met: "success",
+  // audit / evals
+  "This session": "info",
+  "In golden set": "success",
 }
 
 export function toneForState(state: string): Tone {
   return stateTone[state] ?? "neutral"
 }
 
-/** Solid status marker for tables and lists; pulses for in-flight tones. */
+/**
+ * Solid status marker for tables and lists; pulses for in-flight tones. Pass
+ * `label` (or `state`) so the colour is not the only carrier of meaning; the
+ * text is rendered visually hidden.
+ */
 export function StatusDot({
   tone = "neutral",
   state,
   pulse,
+  label,
   className,
 }: {
   tone?: Tone
   state?: string
   pulse?: boolean
+  /** Screen-reader text. Defaults to `state`. */
+  label?: string
   className?: string
 }) {
   const t = state ? toneForState(state) : tone
   const live = pulse ?? t === "progress"
+  const text = label ?? state
   return (
     <span
-      aria-hidden
+      aria-hidden={text ? undefined : true}
+      role={text ? "img" : undefined}
+      aria-label={text}
       className={cn("relative inline-flex size-2 shrink-0", className)}
     >
       {live && (

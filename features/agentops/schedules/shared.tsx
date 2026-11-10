@@ -12,13 +12,16 @@ import {
   LayersIcon,
   MailIcon,
   MessageCircleIcon,
+  PauseCircleIcon,
   TrendingDownIcon,
   WebhookIcon,
   type LucideIcon,
 } from "lucide-react"
 
+import { EmptyValue } from "@/components/data-table"
 import { StateBadge, type Tone } from "@/components/shared/status-badge"
-import { deployedAgents } from "@/lib/data"
+import { Badge } from "@/components/ui/badge"
+import { deployedAgents, getDeployedAgent } from "@/lib/data/agentops"
 import type {
   RunStatus,
   TriggerAction,
@@ -27,12 +30,12 @@ import type {
 } from "@/lib/data/schedules"
 
 /* ------------------------------------------------------------------------ */
-/* Agent colours — fixed order, one hue per agent                            */
+/* Agent colours: fixed order, one hue per agent                             */
 /* ------------------------------------------------------------------------ */
 
 const agentIndex = new Map(deployedAgents.map((a, i) => [a.id, i]))
 
-/** CSS colour for an agent: `var(--chart-1)` … `var(--chart-8)`, never cycled. */
+/** CSS colour for an agent: `var(--chart-1)` to `var(--chart-8)`, never cycled. */
 export function agentColor(agentId: string) {
   const i = agentIndex.get(agentId) ?? 0
   return `var(--chart-${Math.min(8, i + 1)})`
@@ -53,8 +56,6 @@ export function AgentDot({
     />
   )
 }
-
-export { fmtClock, fmtRunDuration, fmtUntil } from "./format"
 
 /* ------------------------------------------------------------------------ */
 /* Badges                                                                    */
@@ -88,6 +89,35 @@ export function RunStatusBadge({
   return <StateBadge state={status} size={size} pulse={status === "Running"} />
 }
 
+/**
+ * Warning chip shown next to a schedule or trigger whose target agent is
+ * manually paused: the scheduler will not get a run accepted until the agent
+ * is resumed.
+ */
+export function TargetPausedBadge({
+  agentId,
+  className,
+}: {
+  agentId: string
+  className?: string
+}) {
+  const agent = getDeployedAgent(agentId)
+  if (!agent?.paused) return null
+  return (
+    <Badge
+      variant="outline"
+      className={cn(
+        "h-5 gap-1 border-warning/40 px-1.5 text-2xs text-warning-text",
+        className
+      )}
+      title={agent.pausedReason ?? `${agent.name} is paused`}
+    >
+      <PauseCircleIcon className="size-3" />
+      Target agent paused
+    </Badge>
+  )
+}
+
 export const sourceIcon: Record<TriggerSource, LucideIcon> = {
   Webhook: WebhookIcon,
   "Slack mention": MessageCircleIcon,
@@ -107,7 +137,7 @@ export const actionIcon: Record<TriggerAction, LucideIcon> = {
 }
 
 export function TraceLink({ traceId }: { traceId?: string }) {
-  if (!traceId) return <span className="text-xs text-muted-foreground">—</span>
+  if (!traceId) return <EmptyValue />
   return (
     <Link
       href={`/agentops/traces/${traceId}`}
@@ -129,7 +159,7 @@ export function Mono({
   return (
     <code
       className={cn(
-        "rounded-sm bg-muted px-1 py-0.5 font-mono text-[11px]",
+        "rounded-sm bg-muted px-1 py-0.5 font-mono text-2xs",
         className
       )}
     >

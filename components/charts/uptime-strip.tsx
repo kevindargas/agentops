@@ -62,7 +62,7 @@ export function UptimeStrip({
         ))}
       </div>
       {caption && (
-        <div className="flex items-center justify-between text-[11px] text-muted-foreground tabular-nums">
+        <div className="flex items-center justify-between text-2xs text-muted-foreground tabular-nums">
           <span>{days.length} days ago</span>
           <span>
             {up} of {days.length} days operational

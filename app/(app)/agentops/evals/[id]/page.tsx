@@ -16,6 +16,9 @@ import { RecordNotFound } from "@/components/record/record-not-found"
 import { RecordSection } from "@/components/record/record-section"
 import { DetailList } from "@/components/shared/detail-list"
 import { EmptyState } from "@/components/shared/empty-state"
+import { MetricTile } from "@/components/shared/metric-tile"
+import { StatCard } from "@/components/shared/stat-card"
+import { StatGrid } from "@/components/shared/stat-grid"
 import { StateBadge } from "@/components/shared/status-badge"
 import { UserChip } from "@/components/shared/user-chip"
 import { Badge } from "@/components/ui/badge"
@@ -23,13 +26,7 @@ import {
   CasesGrid,
   ScoreDistribution,
 } from "@/features/agentops/evals/cases-grid"
-import {
-  fmtCost,
-  fmtDuration,
-  fmtMs,
-  formatEvalScore,
-  triggerHint,
-} from "@/features/agentops/evals/format"
+import { formatEvalScore, triggerHint } from "@/features/agentops/evals/format"
 import { RunActions } from "@/features/agentops/evals/run-actions"
 import {
   ChangeBadge,
@@ -38,7 +35,7 @@ import {
   RunStatusBadge,
 } from "@/features/agentops/evals/shared"
 import { AgentChip, ModelChip, ScoreBar } from "@/features/agentops/shared"
-import { getDeployedAgent } from "@/lib/data"
+import { getDeployedAgent } from "@/lib/data/agentops"
 import {
   getDataset,
   getEvalCases,
@@ -46,7 +43,13 @@ import {
   getEvaluator,
   getReleaseGate,
 } from "@/lib/data/evals"
-import { formatDateTime, timeAgo } from "@/lib/format"
+import {
+  formatCost,
+  formatDateTime,
+  formatDurationMs,
+  formatMs,
+  timeAgo,
+} from "@/lib/format"
 
 export async function generateMetadata({
   params,
@@ -69,7 +72,7 @@ export default async function EvalRunPage({
       <RecordNotFound
         number={id}
         backHref="/agentops/evals"
-        backLabel="eval runs"
+        backLabel="Evals"
       />
     )
   const agent = getDeployedAgent(run.agentId)
@@ -86,8 +89,7 @@ export default async function EvalRunPage({
         number={run.id}
         title={`${agent?.name ?? run.agentId} · ${dataset?.name ?? run.datasetId}`}
         backHref="/agentops/evals"
-        backLabel="eval runs"
-        editable={false}
+        backLabel="Evals"
         description={
           run.note ??
           `${run.trigger} run of the deployed configuration against ${dataset?.name ?? run.datasetId}.`
@@ -165,12 +167,8 @@ export default async function EvalRunPage({
             href: `/agentops/evals?tab=datasets&dataset=${run.datasetId}`,
           },
           {
-            label: "Export results",
-            message: "Export started — CSV with every case and score",
-          },
-          {
-            label: "Cancel run",
-            message: inFlight ? "Run cancelled" : "Run already finished",
+            label: "Show in runs list",
+            href: `/agentops/evals?run=${run.id}`,
           },
         ]}
       />
@@ -197,14 +195,14 @@ export default async function EvalRunPage({
                     label: "Duration",
                     value: inFlight
                       ? "in progress"
-                      : fmtDuration(run.durationMs),
+                      : formatDurationMs(run.durationMs),
                   },
                   {
                     label: "Cost",
-                    value: fmtCost(run.cost),
+                    value: formatCost(run.cost),
                     hint:
                       run.cases && !inFlight
-                        ? `${fmtCost(run.cost / run.cases, 3)} per case`
+                        ? `${formatCost(run.cost / run.cases, 3)} per case`
                         : undefined,
                   },
                   {
@@ -243,7 +241,7 @@ export default async function EvalRunPage({
                           : "Text",
                     },
                     { label: "Max tool calls", value: String(p.maxToolCalls) },
-                    { label: "Timeout", value: fmtMs(p.timeoutMs) },
+                    { label: "Timeout", value: formatMs(p.timeoutMs) },
                   ]}
                 />
               </RecordSection>
@@ -263,7 +261,7 @@ export default async function EvalRunPage({
                         className="flex items-center justify-between gap-2 text-sm"
                       >
                         <span className="truncate">{ev.name}</span>
-                        <span className="shrink-0 text-[11px] text-muted-foreground">
+                        <span className="shrink-0 text-2xs text-muted-foreground">
                           {ev.type}
                         </span>
                       </li>
@@ -295,63 +293,56 @@ export default async function EvalRunPage({
           />
         ) : (
           <>
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              <SummaryCard
+            <StatGrid columns={4}>
+              <StatCard
                 label="Composite"
                 value={<ScoreBar value={run.composite} />}
-                delta={<DeltaValue value={run.delta} />}
                 hint={
-                  baseline ? `baseline ${baseline.composite}` : "no baseline"
+                  <span className="flex items-center gap-2">
+                    <DeltaValue value={run.delta} />
+                    {baseline
+                      ? `baseline ${baseline.composite}`
+                      : "no baseline"}
+                  </span>
                 }
               />
-              <SummaryCard
+              <StatCard
                 label="Pass rate"
-                value={
-                  <span className="text-2xl font-semibold tabular-nums">
-                    {run.passRate}%
+                value={run.passRate}
+                unit="%"
+                hint={
+                  <span className="flex items-center gap-2">
+                    {baseline && (
+                      <DeltaValue
+                        value={run.passRate - baseline.passRate}
+                        unit="pt"
+                      />
+                    )}
+                    {run.passed} passed · {run.failed} failed
                   </span>
                 }
-                delta={
-                  baseline ? (
-                    <DeltaValue
-                      value={run.passRate - baseline.passRate}
-                      unit="pt"
-                    />
-                  ) : undefined
-                }
-                hint={`${run.passed} passed · ${run.failed} failed`}
               />
-              <SummaryCard
+              <StatCard
                 label="Regressions"
-                value={
-                  <span
-                    className={
-                      run.regressions
-                        ? "text-2xl font-semibold text-danger-text tabular-nums"
-                        : "text-2xl font-semibold tabular-nums"
-                    }
-                  >
-                    {run.regressions}
-                  </span>
+                value={run.regressions}
+                className={
+                  run.regressions
+                    ? "[&_[data-slot=card-title]]:text-danger-text"
+                    : undefined
                 }
                 hint="passed on baseline, fail now"
               />
-              <SummaryCard
+              <StatCard
                 label="Improvements"
-                value={
-                  <span
-                    className={
-                      run.improvements
-                        ? "text-2xl font-semibold text-success-text tabular-nums"
-                        : "text-2xl font-semibold tabular-nums"
-                    }
-                  >
-                    {run.improvements}
-                  </span>
+                value={run.improvements}
+                className={
+                  run.improvements
+                    ? "[&_[data-slot=card-title]]:text-success-text"
+                    : undefined
                 }
                 hint="failed on baseline, pass now"
               />
-            </div>
+            </StatGrid>
 
             <RecordSection
               title="Scores by evaluator"
@@ -369,36 +360,28 @@ export default async function EvalRunPage({
                   const b = baseline?.scores[e]
                   const d = b === undefined ? null : Math.round((v - b) * 100)
                   return (
-                    <div
+                    <MetricTile
                       key={e}
-                      className="flex flex-col gap-2 rounded-lg border bg-muted/30 px-3 py-2.5"
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <span className="min-w-0">
-                          <span className="block truncate text-sm font-medium">
-                            {ev.name}
-                          </span>
-                          <span className="block text-[11px] text-muted-foreground">
+                      label={ev.name}
+                      value={formatEvalScore(v, ev.scale)}
+                      delta={d ?? undefined}
+                      deltaUnit="pt"
+                      hint={
+                        <span className="flex flex-col gap-1.5">
+                          <ScoreBar
+                            value={v}
+                            max={1}
+                            thresholds={{ good: 85, ok: 70 }}
+                            label={`${ev.name} ${formatEvalScore(v, ev.scale)}`}
+                          />
+                          <span>
                             {ev.measures} · {ev.scale}
+                            {b !== undefined &&
+                              ` · was ${formatEvalScore(b, ev.scale)}`}
                           </span>
                         </span>
-                        <DeltaValue value={d} unit="pt" />
-                      </div>
-                      <div className="flex items-end justify-between gap-2">
-                        <ScoreBar
-                          value={v}
-                          max={1}
-                          thresholds={{ good: 85, ok: 70 }}
-                          className="flex-1"
-                          label={`${ev.name} ${formatEvalScore(v, ev.scale)}`}
-                        />
-                        <span className="font-mono text-xs text-muted-foreground tabular-nums">
-                          {formatEvalScore(v, ev.scale)}
-                          {b !== undefined &&
-                            ` · was ${formatEvalScore(b, ev.scale)}`}
-                        </span>
-                      </div>
-                    </div>
+                      }
+                    />
                   )
                 })}
               </div>
@@ -428,30 +411,5 @@ export default async function EvalRunPage({
         )}
       </RecordLayout>
     </>
-  )
-}
-
-function SummaryCard({
-  label,
-  value,
-  delta,
-  hint,
-}: {
-  label: string
-  value: React.ReactNode
-  delta?: React.ReactNode
-  hint?: string
-}) {
-  return (
-    <div className="flex flex-col gap-2 rounded-xl bg-card px-4 py-3 ring-1 ring-foreground/10">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-medium text-muted-foreground">
-          {label}
-        </span>
-        {delta}
-      </div>
-      <div className="flex items-center gap-1">{value}</div>
-      {hint && <p className="text-[11px] text-muted-foreground">{hint}</p>}
-    </div>
   )
 }

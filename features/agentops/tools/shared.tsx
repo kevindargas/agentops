@@ -6,13 +6,23 @@ import {
   BracesIcon,
   CheckIcon,
   CodeIcon,
+  DatabaseIcon,
+  FlaskConicalIcon,
   GlobeIcon,
+  LayoutTemplateIcon,
+  MinusIcon,
   PlugZapIcon,
+  RepeatIcon,
+  SendIcon,
+  ServerCogIcon,
   ShieldBanIcon,
+  TerminalIcon,
   UserCheckIcon,
+  UserRoundIcon,
   type LucideIcon,
 } from "lucide-react"
 
+import { Eyebrow } from "@/components/shared/eyebrow"
 import { StateBadge, type Tone } from "@/components/shared/status-badge"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -20,21 +30,24 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { getDeployedAgent } from "@/lib/data"
+import { getDeployedAgent } from "@/lib/data/agentops"
 import {
   getMcpServer,
   type McpAuth,
   type McpStatus,
   type McpTransport,
   type PermissionDecision,
+  type Tool,
   type ToolApproval,
+  type ToolIdentity,
+  type ToolOutputSink,
   type ToolRisk,
   type ToolSource,
   type ToolStatus,
 } from "@/lib/data/tools"
 
 /* ------------------------------------------------------------------------ */
-/* Tones — passed explicitly until the strings land in stateTone            */
+/* Tones                                                                     */
 /* ------------------------------------------------------------------------ */
 
 export const riskTone: Record<ToolRisk, Tone> = {
@@ -43,13 +56,13 @@ export const riskTone: Record<ToolRisk, Tone> = {
   Destructive: "danger",
 }
 
-export const toolStatusTone: Record<ToolStatus, Tone> = {
+const toolStatusTone: Record<ToolStatus, Tone> = {
   Active: "success",
   Deprecated: "muted",
   Disabled: "danger",
 }
 
-export const serverStatusTone: Record<McpStatus, Tone> = {
+const serverStatusTone: Record<McpStatus, Tone> = {
   Connected: "success",
   Degraded: "warning",
   Disconnected: "danger",
@@ -263,7 +276,7 @@ export function SourceChip({
   )
 }
 
-export const transportLabel: Record<McpTransport, string> = {
+const transportLabel: Record<McpTransport, string> = {
   stdio: "stdio",
   "streamable-http": "Streamable HTTP",
   sse: "SSE (legacy)",
@@ -274,7 +287,7 @@ export function TransportBadge({ transport }: { transport: McpTransport }) {
     <Badge
       variant="outline"
       className={cn(
-        "h-5 px-1.5 font-mono text-[11px] font-medium",
+        "h-5 px-1.5 font-mono text-2xs font-medium",
         transport === "sse"
           ? "border-warning/40 bg-warning/10 text-warning-text"
           : "text-muted-foreground"
@@ -285,7 +298,7 @@ export function TransportBadge({ transport }: { transport: McpTransport }) {
   )
 }
 
-export const authTone: Record<McpAuth, string> = {
+const authTone: Record<McpAuth, string> = {
   "OAuth 2.1": "border-brand/30 bg-brand/10 text-brand",
   mTLS: "border-success/30 bg-success/10 text-success-text",
   "API key": "border-chart-4/30 bg-chart-4/15 text-chart-4",
@@ -296,7 +309,7 @@ export function AuthBadge({ auth }: { auth: McpAuth }) {
   return (
     <Badge
       variant="outline"
-      className={cn("h-5 px-1.5 text-[11px] font-medium", authTone[auth])}
+      className={cn("h-5 px-1.5 text-2xs font-medium", authTone[auth])}
     >
       {auth === "none" ? "No auth" : auth}
     </Badge>
@@ -345,6 +358,7 @@ export function AgentStack({
               "inline-flex items-center -space-x-1.5 rounded-full",
               className
             )}
+            role="img"
             aria-label={`${agents.length} agent${agents.length === 1 ? "" : "s"}: ${agents.map((a) => a.name).join(", ")}`}
           />
         }
@@ -353,7 +367,7 @@ export function AgentStack({
           <span
             key={a.id}
             aria-hidden
-            className="inline-flex size-6 items-center justify-center rounded-full border border-brand/30 bg-brand/10 font-mono text-[9px] font-semibold text-brand ring-2 ring-background"
+            className="inline-flex size-6 items-center justify-center rounded-full border border-brand/30 bg-brand/10 font-mono text-3xs font-semibold text-brand ring-2 ring-background"
           >
             {agentInitials(a.name)}
           </span>
@@ -361,7 +375,7 @@ export function AgentStack({
         {rest > 0 && (
           <span
             aria-hidden
-            className="inline-flex size-6 items-center justify-center rounded-full border bg-muted font-mono text-[9px] font-medium text-muted-foreground tabular-nums ring-2 ring-background"
+            className="inline-flex size-6 items-center justify-center rounded-full border bg-muted font-mono text-3xs font-medium text-muted-foreground tabular-nums ring-2 ring-background"
           >
             +{rest}
           </span>
@@ -382,4 +396,202 @@ export function AgentStack({
 
 export function fmtPct(n: number, digits = 1) {
   return `${n.toFixed(digits)}%`
+}
+
+/** Label/value tile used inside the tool and server sheets. */
+export function Fact({
+  label,
+  children,
+  className,
+}: {
+  label: string
+  children: React.ReactNode
+  className?: string
+}) {
+  return (
+    <div className={cn("rounded-lg border bg-muted/30 px-3 py-2", className)}>
+      <Eyebrow as="span">{label}</Eyebrow>
+      <div className="mt-1 text-sm">{children}</div>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------------ */
+/* Side-effect safety & identity                                             */
+/* ------------------------------------------------------------------------ */
+
+export const sinkMeta: Record<
+  ToolOutputSink,
+  { label: string; icon: LucideIcon; hint: string; hazardous: boolean }
+> = {
+  none: {
+    label: "No side effects",
+    icon: MinusIcon,
+    hint: "Output only flows back to the model.",
+    hazardous: false,
+  },
+  fetches_url: {
+    label: "Fetches URLs",
+    icon: GlobeIcon,
+    hint: "Pulls remote content; treat results as untrusted input.",
+    hazardous: false,
+  },
+  writes_record: {
+    label: "Writes records",
+    icon: DatabaseIcon,
+    hint: "Creates or updates data in a system of record.",
+    hazardous: false,
+  },
+  sends_message: {
+    label: "Sends messages",
+    icon: SendIcon,
+    hint: "Reaches people directly; cannot be unsent.",
+    hazardous: false,
+  },
+  renders_html: {
+    label: "Renders HTML",
+    icon: LayoutTemplateIcon,
+    hint: "Renders markup; XSS and hidden-instruction surface.",
+    hazardous: true,
+  },
+  executes_code: {
+    label: "Executes code",
+    icon: TerminalIcon,
+    hint: "Runs generated code; must stay inside the sandbox.",
+    hazardous: true,
+  },
+}
+
+export function SinkChip({
+  sink,
+  warn,
+}: {
+  sink: ToolOutputSink
+  /** Highlight a hazardous sink that is not contained. */
+  warn?: boolean
+}) {
+  const meta = sinkMeta[sink]
+  const Icon = meta.icon
+  return (
+    <Badge
+      variant="outline"
+      title={meta.hint}
+      className={cn(
+        "h-5 gap-1 px-1.5 text-2xs font-medium",
+        warn
+          ? "border-destructive/30 bg-destructive/10 text-danger-text"
+          : meta.hazardous
+            ? "border-warning/40 bg-warning/10 text-warning-text"
+            : "text-muted-foreground"
+      )}
+    >
+      <Icon className="size-3" aria-hidden />
+      {meta.label}
+    </Badge>
+  )
+}
+
+export const identityModeMeta: Record<
+  ToolIdentity["mode"],
+  { label: string; tone: Tone; icon: LucideIcon; hint: string }
+> = {
+  service: {
+    label: "Service identity",
+    tone: "neutral",
+    icon: ServerCogIcon,
+    hint: "Runs as the platform service account, independent of who asked.",
+  },
+  delegated: {
+    label: "Delegated",
+    tone: "info",
+    icon: UserRoundIcon,
+    hint: "Acts on behalf of the requesting user with a scoped, short-lived token.",
+  },
+}
+
+export function IdentityModeBadge({
+  mode,
+  size,
+}: {
+  mode: ToolIdentity["mode"]
+  size?: "sm" | "default"
+}) {
+  const meta = identityModeMeta[mode]
+  const Icon = meta.icon
+  return (
+    <StateBadge
+      state={meta.label}
+      tone={meta.tone}
+      size={size}
+      icon={<Icon aria-hidden />}
+    />
+  )
+}
+
+/**
+ * Three fixed slots (idempotent, dry run, delegated) so the column lines up
+ * row to row. Inactive slots render dimmed instead of disappearing.
+ */
+export function SafetyGlyphs({
+  tool: t,
+  className,
+}: {
+  tool: Pick<Tool, "idempotent" | "supportsDryRun" | "identity" | "risk">
+  className?: string
+}) {
+  const slots: { on: boolean; icon: LucideIcon; label: string; off: string }[] =
+    [
+      {
+        on: t.idempotent,
+        icon: RepeatIcon,
+        label: "Idempotent: safe to retry",
+        off: "Not idempotent: retries can repeat the side effect",
+      },
+      {
+        on: t.supportsDryRun,
+        icon: FlaskConicalIcon,
+        label: "Supports dry run",
+        off:
+          t.risk === "Destructive"
+            ? "No dry run on a destructive tool"
+            : "No dry run",
+      },
+      {
+        on: t.identity.mode === "delegated",
+        icon: UserRoundIcon,
+        label: `Delegated identity · ${t.identity.tokenTtlMin} min token`,
+        off: `Service identity · ${t.identity.tokenTtlMin} min token`,
+      },
+    ]
+  return (
+    <span className={cn("inline-flex items-center gap-0.5", className)}>
+      {slots.map((slot, i) => {
+        const Icon = slot.icon
+        const alarming = !slot.on && i === 1 && t.risk === "Destructive"
+        return (
+          <Tooltip key={slot.label}>
+            <TooltipTrigger
+              render={
+                <span
+                  role="img"
+                  aria-label={slot.on ? slot.label : slot.off}
+                  className={cn(
+                    "inline-flex size-5 items-center justify-center rounded-sm border",
+                    slot.on
+                      ? "border-success/30 bg-success/10 text-success-text"
+                      : alarming
+                        ? "border-destructive/30 bg-destructive/10 text-danger-text"
+                        : "border-transparent text-muted-foreground/40"
+                  )}
+                />
+              }
+            >
+              <Icon className="size-3" aria-hidden />
+            </TooltipTrigger>
+            <TooltipContent>{slot.on ? slot.label : slot.off}</TooltipContent>
+          </Tooltip>
+        )
+      })}
+    </span>
+  )
 }

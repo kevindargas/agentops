@@ -2,9 +2,10 @@
 
 import * as React from "react"
 import { createColumnHelper } from "@tanstack/react-table"
+import { cn } from "cn"
 import { PlusIcon, SlidersHorizontalIcon, SparklesIcon } from "lucide-react"
-import { toast } from "sonner"
 
+import { CHART_HEIGHT, shortDate } from "@/components/charts/chart-primitives"
 import { IncidentTrendChart } from "@/components/charts/incident-trend-chart"
 import {
   DataTable,
@@ -15,9 +16,14 @@ import {
   type DataTableFeatures,
   type FacetDef,
 } from "@/components/data-table"
+import { MetricTile } from "@/components/shared/metric-tile"
+import {
+  SheetBody,
+  SheetFooterActions,
+  sheetWidths,
+} from "@/components/shared/sheet-frame"
 import { UserChip } from "@/components/shared/user-chip"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import {
   Sheet,
   SheetContent,
@@ -32,8 +38,10 @@ import {
   type EvaluatorScale,
   type EvaluatorType,
 } from "@/lib/data/evals"
+import { daysAgo } from "@/lib/data/seed"
 import { ModelChip } from "@/features/agentops/shared"
-import { fmtCost } from "./shared"
+import { formatCost } from "@/lib/format"
+import { NotInDemoButton } from "./shared"
 
 const col = createColumnHelper<DataTableFeatures, Evaluator>()
 const types: EvaluatorType[] = [
@@ -46,12 +54,15 @@ const types: EvaluatorType[] = [
   "Custom code",
   "Human",
 ]
-const scales: EvaluatorScale[] = ["0–1", "1–5", "pass/fail"]
+const scales: EvaluatorScale[] = ["0-1", "1-5", "pass/fail"]
+
+/** Agreement floor below which a judge should not gate anything alone. */
+const AGREEMENT_FLOOR = 80
 
 function agreementClass(n: number) {
   return n >= 90
     ? "text-success-text"
-    : n >= 80
+    : n >= AGREEMENT_FLOOR
       ? undefined
       : "text-warning-text"
 }
@@ -76,13 +87,13 @@ const columns = col.columns([
     ),
     cell: ({ row }) => (
       <span className="flex min-w-0 flex-col gap-1">
-        <Badge variant="outline" className="w-fit text-[11px]">
+        <Badge variant="outline" className="w-fit text-2xs">
           {row.original.type}
         </Badge>
         {row.original.modelId && (
           <ModelChip
             modelId={row.original.modelId}
-            className="text-[11px] text-muted-foreground"
+            className="text-2xs text-muted-foreground"
           />
         )}
       </span>
@@ -97,7 +108,13 @@ const columns = col.columns([
     meta: { width: "w-36", label: "Measures", skeleton: "w-24" },
   }),
   col.accessor("scale", {
-    header: "Scoring",
+    header: ({ column }) => (
+      <DataTableColumnHeader
+        column={column}
+        title="Scoring"
+        hint="Scale the evaluator reports on. Scores are stored normalised 0 to 1 and rendered on this scale."
+      />
+    ),
     cell: ({ getValue }) => (
       <span className="font-mono text-xs text-muted-foreground">
         {getValue()}
@@ -108,12 +125,16 @@ const columns = col.columns([
   }),
   col.accessor("costPerCase", {
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Cost / case" />
+      <DataTableColumnHeader
+        column={column}
+        title="Cost / case"
+        hint="Judge spend per evaluated case; code evaluators are free."
+      />
     ),
     cell: ({ getValue }) => (
       <NumericCell
         value={getValue()}
-        format={(n) => (n === 0 ? "free" : fmtCost(n, 4))}
+        format={(n) => (n === 0 ? "free" : formatCost(n, 4))}
         muted
       />
     ),
@@ -126,13 +147,20 @@ const columns = col.columns([
   }),
   col.accessor("humanAgreement", {
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Human agreement" />
+      <DataTableColumnHeader
+        column={column}
+        title="Human agreement"
+        hint={`Share of cases where the evaluator agrees with a human label. Below ${AGREEMENT_FLOOR}% it should not be the sole gate.`}
+      />
     ),
     cell: ({ getValue, row }) =>
       row.original.type === "Human" ? (
-        <span className="block text-right text-xs text-muted-foreground">
-          reference
-        </span>
+        <NumericCell
+          value={getValue()}
+          format={() => "reference"}
+          muted
+          className="text-xs"
+        />
       ) : (
         <NumericCell
           value={getValue()}
@@ -201,11 +229,12 @@ export function EvaluatorsTable() {
         initialSorting={[{ id: "datasets", desc: true }]}
         onRowClick={(r) => setOpenId(r.id)}
         totalLabel="evaluators"
+        caption="Evaluators with type, scale, cost per case and agreement with human labels"
         selectionLabel={(n) => (n === 1 ? "evaluator" : "evaluators")}
         toolbar={
-          <Button size="sm" onClick={() => toast("Evaluator editor opened")}>
+          <NotInDemoButton reason="Evaluator definitions are sample data; there is no editor in this template.">
             <PlusIcon /> New evaluator
-          </Button>
+          </NotInDemoButton>
         }
       />
       <EvaluatorSheet evaluator={open} onClose={() => setOpenId(null)} />
@@ -213,12 +242,8 @@ export function EvaluatorsTable() {
   )
 }
 
-const week = (i: number) =>
-  new Date(Date.UTC(2026, 10, 5 - (11 - i) * 7)).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
-  })
+/** Week labels anchored to the demo clock, oldest first. */
+const week = (i: number) => shortDate(daysAgo((11 - i) * 7))
 
 function EvaluatorSheet({
   evaluator: e,
@@ -238,7 +263,9 @@ function EvaluatorSheet({
     e?.type === "Embedding similarity"
   return (
     <Sheet open={e !== null} onOpenChange={(o) => !o && onClose()}>
-      <SheetContent className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
+      <SheetContent
+        className={cn(sheetWidths.editor, "flex flex-col gap-0 p-0")}
+      >
         {e && (
           <>
             <SheetHeader className="gap-3 border-b px-6 py-5">
@@ -265,29 +292,37 @@ function EvaluatorSheet({
               </SheetDescription>
             </SheetHeader>
 
-            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+            <SheetBody>
               <div className="flex flex-col gap-6">
                 <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  <Fact
+                  <MetricTile
                     label="Human agreement"
                     value={
-                      e.type === "Human" ? (
-                        "reference"
-                      ) : (
-                        <span className={agreementClass(e.humanAgreement)}>
-                          {e.humanAgreement}%
-                        </span>
-                      )
+                      e.type === "Human" ? "reference" : `${e.humanAgreement}%`
+                    }
+                    tone={
+                      e.type === "Human"
+                        ? undefined
+                        : e.humanAgreement >= 90
+                          ? "success"
+                          : e.humanAgreement < AGREEMENT_FLOOR
+                            ? "warning"
+                            : undefined
                     }
                   />
-                  <Fact
+                  <MetricTile
                     label="Cost / case"
                     value={
-                      e.costPerCase === 0 ? "free" : fmtCost(e.costPerCase, 4)
+                      e.costPerCase === 0
+                        ? "free"
+                        : formatCost(e.costPerCase, 4)
                     }
                   />
-                  <Fact label="Datasets" value={e.usedInDatasetIds.length} />
-                  <Fact
+                  <MetricTile
+                    label="Datasets"
+                    value={e.usedInDatasetIds.length}
+                  />
+                  <MetricTile
                     label="Owner"
                     value={<UserChip userId={e.ownerId} size="xs" />}
                   />
@@ -311,15 +346,15 @@ function EvaluatorSheet({
                           color: "var(--chart-1)",
                         },
                       ]}
-                      height={180}
+                      height={CHART_HEIGHT.sm}
                       showLegend={false}
                       valueFormatter={(v) => `${v}%`}
                     />
-                    {e.humanAgreement < 80 && (
+                    {e.humanAgreement < AGREEMENT_FLOOR && (
                       <p className="rounded-lg border border-warning/40 bg-warning/5 px-3 py-2 text-xs text-warning-text">
-                        Below the 80% agreement floor — use only alongside a
-                        second evaluator, and schedule a recalibration from the
-                        latest review-queue labels.
+                        Below the {AGREEMENT_FLOOR}% agreement floor. Use only
+                        alongside a second evaluator, and schedule a
+                        recalibration from the latest review-queue labels.
                       </p>
                     )}
                   </section>
@@ -335,7 +370,7 @@ function EvaluatorSheet({
                           ? "Reviewer rubric"
                           : "Judge prompt"}
                   </h3>
-                  <pre className="max-h-96 overflow-auto rounded-lg border bg-muted/40 p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap">
+                  <pre className="max-h-96 overflow-auto rounded-lg border bg-muted/40 p-3 font-mono text-2xs leading-relaxed whitespace-pre-wrap">
                     {e.prompt}
                   </pre>
                 </section>
@@ -346,7 +381,7 @@ function EvaluatorSheet({
                     {e.usedInDatasetIds.map((id) => (
                       <code
                         key={id}
-                        className="rounded-sm bg-muted px-1.5 py-0.5 font-mono text-[11px]"
+                        className="rounded-sm bg-muted px-1.5 py-0.5 font-mono text-2xs"
                       >
                         {getDataset(id)?.name ?? id}
                       </code>
@@ -354,44 +389,32 @@ function EvaluatorSheet({
                   </div>
                 </section>
               </div>
-            </div>
+            </SheetBody>
 
-            <div className="flex flex-wrap items-center justify-end gap-2 border-t px-6 py-4">
-              {e.type !== "Human" && (
-                <Button
-                  variant="outline"
+            <SheetFooterActions
+              secondary={
+                e.type !== "Human" ? (
+                  <NotInDemoButton
+                    size="sm"
+                    variant="outline"
+                    reason="Recalibration scores the last 50 human-labelled cases through the judge; it needs the eval service."
+                  >
+                    <SparklesIcon /> Recalibrate
+                  </NotInDemoButton>
+                ) : undefined
+              }
+              primary={
+                <NotInDemoButton
                   size="sm"
-                  onClick={() =>
-                    toast("Calibration run queued", {
-                      description:
-                        "Scoring the last 50 human-labelled cases from the review queue",
-                    })
-                  }
+                  reason="Evaluator definitions are sample data; there is no editor in this template."
                 >
-                  <SparklesIcon /> Recalibrate
-                </Button>
-              )}
-              <Button
-                size="sm"
-                onClick={() => toast("Evaluator editor opened")}
-              >
-                <SlidersHorizontalIcon /> Edit
-              </Button>
-            </div>
+                  <SlidersHorizontalIcon /> Edit
+                </NotInDemoButton>
+              }
+            />
           </>
         )}
       </SheetContent>
     </Sheet>
-  )
-}
-
-function Fact({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div className="rounded-lg border bg-muted/30 px-3 py-2">
-      <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-        {label}
-      </p>
-      <div className="mt-1 text-sm font-medium tabular-nums">{value}</div>
-    </div>
   )
 }

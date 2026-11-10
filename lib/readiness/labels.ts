@@ -43,9 +43,9 @@ export const systemTypeHint: Record<SystemType, string> = {
 }
 
 export const autonomyLabel: Record<AutonomyLevel, string> = {
-  assist: "Assist — suggests only",
-  supervised: "Supervised — acts with approval",
-  autonomous: "Autonomous — acts without approval",
+  assist: "Assist: suggests only",
+  supervised: "Supervised: acts with approval",
+  autonomous: "Autonomous: acts without approval",
 }
 
 export const sensitivityLabel: Record<DataSensitivity, string> = {
@@ -93,8 +93,8 @@ export const maturityLevelLabel: Record<MaturityLevel, string> = {
 
 export const maturityLevelHint: Record<MaturityLevel, string> = {
   "ad-hoc": "Controls depend on individuals. Score below 40.",
-  defined: "Controls are planned and partially built. Score 40–64.",
-  managed: "Controls are in place and measured. Score 65–84.",
+  defined: "Controls are planned and partially built. Score 40 to 64.",
+  managed: "Controls are in place and measured. Score 65 to 84.",
   optimized:
     "Score 85+ and at least half of required controls verified with evidence.",
 }

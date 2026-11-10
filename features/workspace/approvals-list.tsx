@@ -4,10 +4,12 @@ import * as React from "react"
 import Link from "next/link"
 import { cn } from "cn"
 import {
+  BookOpenIcon,
   CheckCheckIcon,
   CheckIcon,
   ClockIcon,
   GitBranchIcon,
+  HistoryIcon,
   PackageIcon,
   ShieldCheckIcon,
   XIcon,
@@ -28,6 +30,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Label } from "@/components/ui/label"
 import {
   Select,
   SelectContent,
@@ -35,19 +38,33 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet"
 import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { CountPill } from "@/components/shared/count-pill"
 import { EmptyState } from "@/components/shared/empty-state"
 import { recordHref } from "@/components/shared/record-link"
-import { RiskBadge } from "@/components/shared/status-badge"
-import { UserChip } from "@/components/shared/user-chip"
 import {
-  approvals as seed,
-  getCatalogItem,
-  getChange,
-  getRequest,
-  NOW,
-} from "@/lib/data"
+  SheetBody,
+  SheetFooterActions,
+  sheetWidths,
+} from "@/components/shared/sheet-frame"
+import {
+  RiskBadge,
+  StateBadge,
+  toneClasses,
+} from "@/components/shared/status-badge"
+import { UserChip } from "@/components/shared/user-chip"
+import { getCatalogItem } from "@/lib/data/catalog"
+import { getChange, getRequest } from "@/lib/data/itsm"
+import { NOW } from "@/lib/data/seed"
 import {
   formatCurrency,
   formatDate,
@@ -55,8 +72,15 @@ import {
   timeAgo,
 } from "@/lib/format"
 import type { Approval, ChangeRisk } from "@/lib/types"
+import {
+  approvalsStore,
+  decidedApprovals,
+  decideApprovals,
+  pendingApprovals,
+  type ApprovalDecision,
+} from "./approvals-store"
 
-type Decision = "Approved" | "Rejected"
+type Decision = ApprovalDecision
 type TypeFilter = "All" | Approval["recordType"]
 type SortKey = "due" | "requested" | "risk"
 
@@ -85,9 +109,12 @@ function enrich(a: Approval): EnrichedApproval {
         ? `${c.type} change · ${c.category}${c.cabRequired ? " · CAB required" : ""}`
         : "Change",
       window: c
-        ? `${formatDateTime(c.plannedStart)} – ${formatDateTime(c.plannedEnd).split(", ")[1] ?? ""}`
+        ? `${formatDateTime(c.plannedStart)} to ${formatDateTime(c.plannedEnd).split(", ")[1] ?? ""}`
         : undefined,
     }
+  }
+  if (a.recordType === "Knowledge") {
+    return { ...a, risk: "Low", detail: "Knowledge article" }
   }
   const r = getRequest(a.recordNumber)
   const names =
@@ -106,10 +133,21 @@ function enrich(a: Approval): EnrichedApproval {
   }
 }
 
-const initial = seed.map(enrich)
+const typeIcon: Record<Approval["recordType"], React.ReactNode> = {
+  Change: <GitBranchIcon className="size-5" />,
+  Request: <PackageIcon className="size-5" />,
+  Knowledge: <BookOpenIcon className="size-5" />,
+}
+
+const typeTint: Record<Approval["recordType"], string> = {
+  Change: toneClasses.info.soft,
+  Request: toneClasses.progress.soft,
+  Knowledge: toneClasses.muted.soft,
+}
 
 export function ApprovalsList() {
-  const [items, setItems] = React.useState<EnrichedApproval[]>(initial)
+  const all = approvalsStore.use()
+  const items = React.useMemo(() => pendingApprovals(all).map(enrich), [all])
   const [selected, setSelected] = React.useState<Set<string>>(() => new Set())
   const [type, setType] = React.useState<TypeFilter>("All")
   const [sort, setSort] = React.useState<SortKey>("due")
@@ -156,7 +194,7 @@ export function ApprovalsList() {
     if (!pending) return
     const { ids, decision } = pending
     const affected = items.filter((a) => ids.includes(a.id))
-    setItems((all) => all.filter((a) => !ids.includes(a.id)))
+    decideApprovals(ids, decision)
     setSelected((prev) => {
       const next = new Set(prev)
       ids.forEach((id) => next.delete(id))
@@ -171,17 +209,13 @@ export function ApprovalsList() {
     if (decision === "Approved")
       toast.success(`${label} approved`, {
         description:
-          affected.length === 1
-            ? affected[0].recordType === "Change"
-              ? "The change is now scheduled."
-              : "Fulfillment has started."
-            : "Decisions recorded and requesters notified.",
+          "Recorded in this session. The record page shows the same decision.",
       })
     else
       toast(`${label} rejected`, {
-        description: comment
-          ? "Your comment was sent to the requester."
-          : "Requesters have been notified.",
+        description: comment.trim()
+          ? "Recorded in this session with your comment."
+          : "Recorded in this session.",
       })
   }
 
@@ -196,7 +230,7 @@ export function ApprovalsList() {
       <EmptyState
         icon={<ShieldCheckIcon />}
         title="No pending approvals"
-        description="You're all caught up. New approval requests will appear here as soon as they are routed to you."
+        description="You are all caught up. New approval requests will appear here as soon as they are routed to you."
         action={
           <Button variant="outline" size="sm" render={<Link href="/my-work" />}>
             Back to My Work
@@ -226,9 +260,7 @@ export function ApprovalsList() {
               {t === "Change" && <GitBranchIcon className="size-3.5" />}
               {t === "Request" && <PackageIcon className="size-3.5" />}
               {t === "All" ? "All" : `${t}s`}
-              <span className="text-xs text-muted-foreground tabular-nums">
-                {counts[t]}
-              </span>
+              <CountPill count={counts[t]} />
             </ToggleGroupItem>
           ))}
         </ToggleGroup>
@@ -274,7 +306,7 @@ export function ApprovalsList() {
       </div>
 
       {selectedVisible.length > 0 && (
-        <div className="sticky top-16 z-10 flex flex-wrap items-center gap-2 rounded-xl border bg-card/95 px-3 py-2 shadow-sm backdrop-blur supports-backdrop-filter:bg-card/80">
+        <div className="sticky top-16 z-10 flex flex-wrap items-center gap-2 rounded-xl border bg-card/95 px-3 py-2 shadow-raised backdrop-blur supports-backdrop-filter:bg-card/80">
           <span className="text-sm font-medium tabular-nums">
             {selectedVisible.length} selected
           </span>
@@ -356,8 +388,8 @@ export function ApprovalsList() {
             </AlertDialogTitle>
             <AlertDialogDescription>
               {pending?.decision === "Approved"
-                ? "Approved changes move to Scheduled and approved requests start fulfillment immediately. Requesters are notified by email."
-                : "Rejected records are returned to the requester with your comment. They can revise and resubmit."}
+                ? "The approval is marked Approved for this session and the change or request record shows the same decision."
+                : "The approval is marked Rejected for this session. Your comment stays with the decision in the history sheet."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           {pending && pending.ids.length > 1 && (
@@ -376,13 +408,19 @@ export function ApprovalsList() {
               })}
             </ul>
           )}
+          <Label htmlFor="approval-comment" className="sr-only">
+            {pending?.decision === "Approved"
+              ? "Comment"
+              : "Reason for rejection"}
+          </Label>
           <Textarea
+            id="approval-comment"
             value={comment}
             onChange={(e) => setComment(e.target.value)}
             placeholder={
               pending?.decision === "Approved"
-                ? "Optional comment for the record…"
-                : "Reason for rejection (sent to the requester)"
+                ? "Optional comment for the record"
+                : "Reason for rejection"
             }
             className="min-h-20"
           />
@@ -418,11 +456,10 @@ function ApprovalCard({
   const hoursLeft = (new Date(a.due).getTime() - NOW.getTime()) / 3_600_000
   const overdue = hoursLeft < 0
   const urgent = !overdue && hoursLeft < 36
-  const Icon = a.recordType === "Change" ? GitBranchIcon : PackageIcon
   return (
     <Card
       className={cn(
-        "py-4 transition-all hover:shadow-md",
+        "lift py-4",
         selected && "border-brand/50 ring-2 ring-brand/20"
       )}
     >
@@ -437,12 +474,10 @@ function ApprovalCard({
           <div
             className={cn(
               "flex size-10 shrink-0 items-center justify-center rounded-lg",
-              a.recordType === "Change"
-                ? "bg-info/10 text-info"
-                : "bg-brand/10 text-brand"
+              typeTint[a.recordType]
             )}
           >
-            <Icon className="size-5" />
+            {typeIcon[a.recordType]}
           </div>
         </div>
         <div className="min-w-0 flex-1 space-y-2">
@@ -498,13 +533,13 @@ function ApprovalCard({
                 className={cn(
                   "inline-flex items-center gap-1 tabular-nums",
                   overdue
-                    ? "font-medium text-destructive"
+                    ? "font-medium text-danger-text"
                     : urgent
                       ? "font-medium text-warning-text"
                       : ""
                 )}
               >
-                <ClockIcon className="size-3" />
+                <ClockIcon className="size-3.5" />
                 {formatDate(a.due, { year: undefined })}
                 <span className="font-normal text-muted-foreground">
                   ·{" "}
@@ -547,5 +582,79 @@ function Meta({
       <p className="text-muted-foreground">{label}</p>
       <div className="text-sm text-foreground">{children}</div>
     </div>
+  )
+}
+
+/**
+ * Header action listing every approval decided in this session, read from the
+ * shared approvals store (so decisions taken on a change or request record
+ * appear here too).
+ */
+export function DecisionHistoryButton() {
+  const all = approvalsStore.use()
+  const decided = decidedApprovals(all).sort((a, b) =>
+    b.requested.localeCompare(a.requested)
+  )
+  return (
+    <Sheet>
+      <SheetTrigger render={<Button variant="outline" />}>
+        <HistoryIcon /> Decision history
+        {decided.length > 0 && <CountPill count={decided.length} />}
+      </SheetTrigger>
+      <SheetContent
+        className={cn(sheetWidths.detail, "flex flex-col gap-0 p-0")}
+      >
+        <SheetHeader className="border-b px-6 py-5">
+          <SheetTitle>Decision history</SheetTitle>
+          <SheetDescription>
+            Approvals decided in this session. Reloading the page restores the
+            seeded inbox.
+          </SheetDescription>
+        </SheetHeader>
+        <SheetBody>
+          {decided.length === 0 ? (
+            <EmptyState
+              size="sm"
+              icon={<HistoryIcon />}
+              title="No decisions yet"
+              description="Approve or reject something and it will be listed here."
+            />
+          ) : (
+            <ul className="flex flex-col divide-y">
+              {decided.map((a) => (
+                <li
+                  key={a.id}
+                  className="flex items-start justify-between gap-3 py-3 first:pt-0 last:pb-0"
+                >
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="secondary">{a.recordType}</Badge>
+                      <Link
+                        href={recordHref(a.recordNumber)}
+                        className="font-mono text-xs font-medium underline-offset-4 hover:underline"
+                      >
+                        {a.recordNumber}
+                      </Link>
+                    </div>
+                    <p className="truncate text-sm">{a.shortDescription}</p>
+                    <p className="text-xs text-muted-foreground">
+                      Requested by{" "}
+                      <UserChip
+                        userId={a.requestedById}
+                        size="xs"
+                        className="[&_span]:text-xs"
+                      />{" "}
+                      · requested {timeAgo(a.requested)}
+                    </p>
+                  </div>
+                  <StateBadge state={a.state} />
+                </li>
+              ))}
+            </ul>
+          )}
+        </SheetBody>
+        <SheetFooterActions />
+      </SheetContent>
+    </Sheet>
   )
 }

@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { cn } from "cn"
 import {
   ActivityIcon,
@@ -10,12 +11,14 @@ import {
   CheckIcon,
   CircleDashedIcon,
   ClockIcon,
+  FileClockIcon,
   FlaskConicalIcon,
   GitCompareIcon,
   PauseIcon,
   PlayIcon,
   RocketIcon,
   RouteIcon,
+  ScrollTextIcon,
   ShieldCheckIcon,
   ShieldIcon,
   StepForwardIcon,
@@ -25,12 +28,17 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
+import { CHART_HEIGHT } from "@/components/charts/chart-primitives"
+import { RolloutChart } from "@/components/charts/rollout-chart"
 import { LifecycleTracker } from "@/components/record/lifecycle-tracker"
 import { MetaItem, RecordHeader } from "@/components/record/record-header"
 import { RecordLayout } from "@/components/record/record-layout"
+import { RecordNotFound } from "@/components/record/record-not-found"
 import { RecordSection } from "@/components/record/record-section"
 import { DetailList } from "@/components/shared/detail-list"
+import { Eyebrow } from "@/components/shared/eyebrow"
 import { StatCard } from "@/components/shared/stat-card"
+import { StatGrid } from "@/components/shared/stat-grid"
 import { RiskBadge } from "@/components/shared/status-badge"
 import { UserChip } from "@/components/shared/user-chip"
 import {
@@ -44,23 +52,42 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
-import { getDeployedAgent, getExperiment, NOW } from "@/lib/data"
-import type {
-  Release,
-  ReleaseEvent,
-  ReleaseStage,
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldLabel,
+} from "@/components/ui/field"
+import { Textarea } from "@/components/ui/textarea"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
+import { getDeployedAgent, getExperiment } from "@/lib/data/agentops"
+import {
+  releasePromptVersion,
+  type Release,
+  type ReleaseEvent,
+  type ReleaseStage,
 } from "@/lib/data/deployments"
+import { clock } from "@/lib/data/seed"
+import { currentUser } from "@/lib/data/users"
 import { formatDelta, formatDateTime, timeAgo } from "@/lib/format"
+import { auditHref, recordAudit } from "../audit/audit-store"
+import { downloadText } from "../audit/export"
 import { AgentChip, ModelChip } from "../shared"
-import { RolloutChart } from "./rollout-chart"
 import {
   EnvironmentBadge,
   EvalGateChip,
+  evalRunHref,
+  healthTolerance,
   StageBadge,
   VersionChip,
   environmentLabel,
   strategyLabel,
 } from "./shared"
+import { releaseStore } from "./store"
 
 function costDeltaUsd(costPerDay: number, pct: number) {
   const usd = (costPerDay * pct) / 100
@@ -98,18 +125,71 @@ const eventTone: Partial<Record<ReleaseEvent["kind"], string>> = {
   fail: "text-danger-text",
 }
 
-export function ReleaseRecord({ release: initial }: { release: Release }) {
-  const [release, setRelease] = React.useState(initial)
-  const [approved, setApproved] = React.useState(
-    initial.approvers.every((a) => a.status === "approved")
-  )
+/** Markdown release notes for the overflow export. */
+function releaseNotes(release: Release, agentName: string) {
+  const lines = [
+    `# ${release.id}: ${agentName} ${release.previousVersion} to ${release.version}`,
+    "",
+    release.summary,
+    "",
+    `- Stage: ${release.stage}`,
+    `- Environment: ${release.environment}`,
+    `- Strategy: ${strategyLabel(release.strategy, release.steps)}`,
+    `- Risk: ${release.risk}`,
+    `- Eval gate: ${release.evalGate ? `${release.evalGate.status} (${release.evalGate.score} / ${release.evalGate.threshold}, run ${release.evalGate.runId})` : "not run"}`,
+    `- Guardrail coverage: ${release.guardrailCoverage}%`,
+    `- Cost delta: ${formatDelta(release.costDeltaPct, "%", 1)} per day`,
+    `- Rollback target: ${release.rollbackTarget}`,
+    "",
+    "## Changes",
+    "",
+    "| Field | Before | After |",
+    "| --- | --- | --- |",
+    ...release.changes.map((c) => `| ${c.field} | ${c.before} | ${c.after} |`),
+    "",
+    "## Activity",
+    "",
+    ...[...release.activity]
+      .sort((a, b) => a.at.localeCompare(b.at))
+      .map((e) => `- ${e.at} ${e.kind}: ${e.message}`),
+    "",
+  ]
+  return lines.join("\n")
+}
+
+export function ReleaseRecord({
+  id,
+  initial,
+}: {
+  id: string
+  /** Seeded release for the first server render; session drafts have none. */
+  initial?: Release
+}) {
+  const router = useRouter()
+  const releases = releaseStore.use()
+  const release = releases.find((r) => r.id === id) ?? initial
   const [paused, setPaused] = React.useState(false)
   const [dialog, setDialog] = React.useState<Dialog>(null)
+  const [reason, setReason] = React.useState("")
+  const [touched, setTouched] = React.useState(false)
+
+  if (!release)
+    return (
+      <RecordNotFound
+        number={id}
+        backHref="/agentops/deployments"
+        backLabel="Deployments"
+      />
+    )
+
   const agent = getDeployedAgent(release.agentId)
+  const agentName = agent?.name ?? release.agentId
   const experiment = release.experimentId
     ? getExperiment(release.experimentId)
     : undefined
+  const promptVersion = releasePromptVersion(release)
 
+  const approved = release.approvers.every((a) => a.status === "approved")
   const lifecycleCurrent =
     release.stage === "Draft" || release.stage === "Pending approval"
       ? approved
@@ -120,49 +200,94 @@ export function ReleaseRecord({ release: initial }: { release: Release }) {
   const stepIdx = release.steps.indexOf(release.traffic)
   const nextStep = release.steps[stepIdx + 1]
   const gateOk = release.evalGate?.status === "passed"
-  const allApproved = release.approvers.every((a) => a.status === "approved")
   const coverageOk = release.guardrailCoverage >= 80
   const costOk = release.costDeltaPct <= 10
   const canDeploy = approved && gateOk && !live && release.stage !== "Promoted"
+  const reasonValid = reason.trim().length >= 10
+  const errBad = release.health.errorRateDelta > healthTolerance.errorRateDelta
+  const qBad = release.health.qualityDelta < healthTolerance.qualityDelta
+  const deltasText = `Quality ${formatDelta(release.health.qualityDelta, "", 1)} and error rate ${formatDelta(release.health.errorRateDelta, "pt", 2)} versus ${release.previousVersion}`
+
+  const releaseId = release.id
+  const target = {
+    kind: "release",
+    id: release.id,
+    label: `${agentName} ${release.version}`,
+    href: `/agentops/deployments/${release.id}`,
+  }
+  const context = { agentId: release.agentId, releaseId: release.id }
 
   function log(
     kind: ReleaseEvent["kind"],
     message: string,
     patch?: Partial<Release>
   ) {
-    setRelease((r) => ({
+    releaseStore.patch(id, (r) => ({
       ...r,
       ...patch,
       activity: [
         ...r.activity,
         {
-          id: `local-${r.activity.length}`,
+          id: `${r.id}-local-${r.activity.length}`,
           kind,
-          at: NOW.toISOString(),
-          actorId: "u-001",
+          at: clock().toISOString(),
+          actorId: currentUser.id,
           message,
         },
       ],
     }))
   }
 
+  function openDialog(next: Dialog) {
+    setReason("")
+    setTouched(false)
+    setDialog(next)
+  }
+
+  function auditToast(
+    title: string,
+    description: string,
+    eventId: string,
+    kind: "success" | "default" = "default"
+  ) {
+    const opts = {
+      description: `${description} Recorded as ${eventId}.`,
+      action: {
+        label: "Open audit log",
+        onClick: () => router.push(auditHref("release", releaseId)),
+      },
+      duration: 8000,
+    }
+    if (kind === "success") toast.success(title, opts)
+    else toast(title, opts)
+  }
+
   function approve() {
-    setApproved(true)
-    setRelease((r) => ({
-      ...r,
-      approvers: r.approvers.map((a) =>
+    if (!release) return
+    log("approval", "Approved: all required sign-offs collected", {
+      approvers: release.approvers.map((a) =>
         a.status === "approved"
           ? a
-          : { ...a, status: "approved", at: NOW.toISOString() }
+          : { ...a, status: "approved", at: clock().toISOString() }
       ),
-    }))
-    log("approval", "Approved — all required sign-offs collected")
-    toast.success(`${release.id} approved`, {
-      description: "The rollout can start whenever the owner is ready.",
     })
+    const event = recordAudit({
+      action: "release.approved",
+      source: "release",
+      target,
+      summary: `Approved ${release.id} (${agentName} ${release.version}) with gate ${release.evalGate?.status ?? "not run"} at ${release.evalGate?.score ?? "n/a"}`,
+      context: { ...context, approvalId: `apr-${release.id.slice(4)}` },
+    })
+    auditToast(
+      `${release.id} approved`,
+      "The rollout can start whenever the owner is ready.",
+      event.id,
+      "success"
+    )
   }
 
   function startRollout() {
+    if (!release) return
     const first = release.steps[0]
     const stage: ReleaseStage =
       release.strategy === "Canary" ? "Canary" : "Progressing"
@@ -171,65 +296,151 @@ export function ReleaseRecord({ release: initial }: { release: Release }) {
       release.strategy === "Canary"
         ? `Canary started at ${first}% of ${release.environment} traffic`
         : `${release.strategy} deployment started`,
-      { stage, traffic: first, deployedAt: NOW.toISOString() }
+      { stage, traffic: first, deployedAt: clock().toISOString() }
     )
-    toast.success("Rollout started", {
-      description: `${agent?.name} ${release.version} is receiving ${first}% of traffic.`,
+    const event = recordAudit({
+      action: "release.deployed",
+      source: "release",
+      target,
+      summary: `Started ${release.strategy.toLowerCase()} rollout of ${release.id} (${agentName} ${release.version}) at ${first}% of ${release.environment}`,
+      before: release.stage,
+      after: stage,
+      context,
     })
+    auditToast(
+      "Rollout started",
+      `${agentName} ${release.version} is receiving ${first}% of traffic.`,
+      event.id,
+      "success"
+    )
   }
 
   function advance() {
-    if (nextStep === undefined) return
+    if (!release || nextStep === undefined) return
     const promotedNow = nextStep === 100
     log(
       promotedNow ? "promote" : "advance",
       promotedNow
         ? `Promoted to 100% of ${release.environment}`
-        : `Advanced to ${nextStep}% — quality ${formatDelta(release.health.qualityDelta, "", 1)} vs baseline`,
+        : `Advanced to ${nextStep}%. Quality ${formatDelta(release.health.qualityDelta, "", 1)} vs baseline`,
       {
         traffic: nextStep,
         stage: promotedNow ? "Promoted" : "Progressing",
-        completedAt: promotedNow ? NOW.toISOString() : release.completedAt,
+        completedAt: promotedNow ? clock().toISOString() : release.completedAt,
       }
     )
+    const event = recordAudit({
+      action: promotedNow ? "release.promoted" : "release.canary.advanced",
+      source: "release",
+      target,
+      summary: promotedNow
+        ? `Promoted ${release.id} (${agentName} ${release.version}) to 100% of ${release.environment}`
+        : `Advanced ${release.id} (${agentName} ${release.version}) to ${nextStep}% of ${release.environment}`,
+      before: `${release.traffic}%`,
+      after: `${nextStep}%`,
+      context,
+    })
     setDialog(null)
-    toast.success(promotedNow ? "Release promoted" : `Advanced to ${nextStep}%`)
+    auditToast(
+      promotedNow ? "Release promoted" : `Advanced to ${nextStep}%`,
+      deltasText + ".",
+      event.id,
+      "success"
+    )
   }
 
   function promote() {
-    log("promote", `Promoted to 100% of ${release.environment}`, {
-      traffic: 100,
-      stage: "Promoted",
-      completedAt: NOW.toISOString(),
+    if (!release) return
+    const note = reason.trim()
+    log(
+      "promote",
+      `Promoted to 100% of ${release.environment}${note ? `: ${note}` : ""}`,
+      {
+        traffic: 100,
+        stage: "Promoted",
+        completedAt: clock().toISOString(),
+      }
+    )
+    const event = recordAudit({
+      action: "release.promoted",
+      source: "release",
+      target,
+      summary: `Promoted ${release.id} (${agentName} ${release.version}) to 100% of ${release.environment}, skipping remaining canary steps`,
+      before: `${release.traffic}%`,
+      after: "100%",
+      context: { ...context, reason: note || undefined },
     })
     setDialog(null)
-    toast.success("Release promoted", {
-      description: `${agent?.name} now serves ${release.version} on 100% of ${release.environment}.`,
-    })
+    auditToast(
+      "Release promoted",
+      `${agentName} now serves ${release.version} on 100% of ${release.environment}.`,
+      event.id,
+      "success"
+    )
   }
 
   function rollback() {
-    log("rollback", `Rolled back to ${release.rollbackTarget}`, {
+    if (!release) return
+    if (!reasonValid) {
+      setTouched(true)
+      return
+    }
+    const text = reason.trim()
+    log("rollback", `Rolled back to ${release.rollbackTarget}: ${text}`, {
       traffic: 0,
       stage: "Rolled back",
-      completedAt: NOW.toISOString(),
+      completedAt: clock().toISOString(),
+    })
+    const event = recordAudit({
+      action: "release.rolled_back",
+      source: "release",
+      target,
+      summary: `Rolled back ${release.id} (${agentName} ${release.version}) to ${release.rollbackTarget}`,
+      before: release.version,
+      after: release.rollbackTarget,
+      context: { ...context, reason: text },
     })
     setDialog(null)
-    toast(`Rolled back to ${release.rollbackTarget}`, {
-      description:
-        "Traffic returned to the previous version within 30 seconds.",
-    })
+    auditToast(
+      `Rolled back to ${release.rollbackTarget}`,
+      `Traffic returned to ${release.rollbackTarget}; the reason is on the release activity.`,
+      event.id
+    )
   }
 
   function togglePause() {
+    if (!release) return
     const next = !paused
     setPaused(next)
     log(
       "note",
-      next ? "Rollout paused — traffic held at current step" : "Rollout resumed"
+      next ? "Rollout paused: traffic held at current step" : "Rollout resumed"
     )
+    const event = recordAudit({
+      action: next ? "release.paused" : "release.resumed",
+      source: "release",
+      target,
+      summary: next
+        ? `Paused the rollout of ${release.id} (${agentName} ${release.version}) at ${release.traffic}%`
+        : `Resumed the rollout of ${release.id} (${agentName} ${release.version}) at ${release.traffic}%`,
+      context,
+    })
     setDialog(null)
-    toast(next ? "Rollout paused" : "Rollout resumed")
+    auditToast(
+      next ? "Rollout paused" : "Rollout resumed",
+      next
+        ? `Traffic stays at ${release.traffic}% and nothing advances automatically.`
+        : "Health checks and manual advancement are available again.",
+      event.id
+    )
+  }
+
+  function exportNotes() {
+    if (!release) return
+    const file = `${release.id}-release-notes.md`
+    downloadText(file, releaseNotes(release, agentName), "text/markdown")
+    toast.success("Release notes exported", { description: file })
+    return false
   }
 
   const gateItems = [
@@ -243,7 +454,17 @@ export function ReleaseRecord({ release: initial }: { release: Release }) {
       detail: release.evalGate ? (
         <EvalGateChip gate={release.evalGate} />
       ) : (
-        "Not run"
+        <span>
+          Not run yet.{" "}
+          <Link
+            href={`/agentops/evals?agent=${release.agentId}`}
+            className="underline-offset-4 hover:underline"
+          >
+            Open the agent&apos;s eval runs
+          </Link>{" "}
+          and promote a passed Pre-deploy run, or draft a new release once one
+          exists.
+        </span>
       ),
     },
     {
@@ -260,7 +481,7 @@ export function ReleaseRecord({ release: initial }: { release: Release }) {
     },
     {
       label: "Approvals",
-      ok: allApproved,
+      ok: approved,
       detail: `${release.approvers.filter((a) => a.status === "approved").length} of ${release.approvers.length} approvers signed off`,
     },
   ]
@@ -269,11 +490,10 @@ export function ReleaseRecord({ release: initial }: { release: Release }) {
     <>
       <RecordHeader
         number={release.id}
-        title={`${agent?.name ?? release.agentId} ${release.version}`}
+        title={`${agentName} ${release.version}`}
         backHref="/agentops/deployments"
-        backLabel="deployments"
+        backLabel="Deployments"
         description={release.summary}
-        editable={false}
         badges={
           <>
             <StageBadge stage={release.stage} />
@@ -308,9 +528,20 @@ export function ReleaseRecord({ release: initial }: { release: Release }) {
         actions={
           <>
             {release.stage === "Pending approval" && !approved && (
-              <Button onClick={approve} disabled={!gateOk}>
-                <CheckIcon /> Approve
-              </Button>
+              <Tooltip>
+                <TooltipTrigger render={<span className="inline-flex" />}>
+                  <Button onClick={approve} disabled={!gateOk}>
+                    <CheckIcon /> Approve
+                  </Button>
+                </TooltipTrigger>
+                {!gateOk && (
+                  <TooltipContent>
+                    {release.evalGate
+                      ? `Eval gate ${release.evalGate.status}${release.evalGate.reason ? `: ${release.evalGate.reason}` : ""}. The gate must pass before approval.`
+                      : "No eval gate yet. Run a Pre-deploy eval first."}
+                  </TooltipContent>
+                )}
+              </Tooltip>
             )}
             {canDeploy &&
               (release.stage === "Draft" ||
@@ -320,12 +551,28 @@ export function ReleaseRecord({ release: initial }: { release: Release }) {
                 </Button>
               )}
             {live && (
-              <Button onClick={() => setDialog("promote")} disabled={paused}>
-                <RocketIcon /> Promote
-              </Button>
+              <>
+                <Tooltip>
+                  <TooltipTrigger render={<span className="inline-flex" />}>
+                    <Button
+                      onClick={() => openDialog("promote")}
+                      disabled={paused}
+                    >
+                      <RocketIcon /> Promote
+                    </Button>
+                  </TooltipTrigger>
+                  {paused && (
+                    <TooltipContent>Resume the rollout first.</TooltipContent>
+                  )}
+                </Tooltip>
+                <Button variant="outline" onClick={() => openDialog("pause")}>
+                  {paused ? <PlayIcon /> : <PauseIcon />}{" "}
+                  {paused ? "Resume" : "Pause"}
+                </Button>
+              </>
             )}
             {(live || release.stage === "Promoted") && (
-              <Button variant="outline" onClick={() => setDialog("rollback")}>
+              <Button variant="outline" onClick={() => openDialog("rollback")}>
                 <UndoIcon /> Roll back
               </Button>
             )}
@@ -337,14 +584,33 @@ export function ReleaseRecord({ release: initial }: { release: Release }) {
             icon: <BotIcon />,
             href: `/agentops/agents/${release.agentId}`,
           },
+          ...(promptVersion
+            ? [
+                {
+                  label: `Open prompt version ${promptVersion.id}`,
+                  icon: <ScrollTextIcon />,
+                  href: `/agentops/prompts/${promptVersion.promptId}`,
+                },
+              ]
+            : []),
           {
-            label: "Compare traces by version",
+            label: promptVersion
+              ? `Traces on ${promptVersion.id}`
+              : "Compare traces for this agent",
             icon: <GitCompareIcon />,
-            href: `/agentops/traces?agent=${release.agentId}`,
+            href: promptVersion
+              ? `/agentops/traces?agent=${release.agentId}&version=${promptVersion.id}`
+              : `/agentops/traces?agent=${release.agentId}`,
           },
           {
-            label: "Export release notes",
-            message: "Release notes copied as Markdown",
+            label: "Audit history",
+            icon: <FileClockIcon />,
+            href: auditHref("release", release.id),
+          },
+          {
+            label: "Export release notes (Markdown)",
+            separatorBefore: true,
+            onSelect: exportNotes,
           },
         ]}
       />
@@ -397,7 +663,7 @@ export function ReleaseRecord({ release: initial }: { release: Release }) {
                             />
                             <span
                               className={cn(
-                                "text-[11px] font-medium capitalize",
+                                "text-2xs font-medium capitalize",
                                 a.status === "approved"
                                   ? "text-success-text"
                                   : "text-warning-text"
@@ -413,14 +679,37 @@ export function ReleaseRecord({ release: initial }: { release: Release }) {
                   {
                     label: "Eval run",
                     value: release.evalGate ? (
+                      <span className="flex flex-col gap-0.5">
+                        <Link
+                          href={evalRunHref(release.evalGate.runId)}
+                          className="font-mono text-xs hover:underline"
+                        >
+                          {release.evalGate.runId}
+                        </Link>
+                        <Link
+                          href={`/agentops/evals/${release.evalGate.runId}`}
+                          className="text-xs text-muted-foreground hover:underline"
+                        >
+                          Open run record
+                        </Link>
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground">
+                        Not run (Draft)
+                      </span>
+                    ),
+                  },
+                  {
+                    label: "Prompt version",
+                    value: promptVersion ? (
                       <Link
-                        href={`/agentops/evals?run=${release.evalGate.runId}`}
+                        href={`/agentops/prompts/${promptVersion.promptId}`}
                         className="font-mono text-xs hover:underline"
                       >
-                        {release.evalGate.runId}
+                        {promptVersion.id}
                       </Link>
                     ) : (
-                      "—"
+                      <span className="text-muted-foreground">Unchanged</span>
                     ),
                   },
                   {
@@ -441,19 +730,29 @@ export function ReleaseRecord({ release: initial }: { release: Release }) {
                   },
                   {
                     label: "Rollback target",
-                    value: <VersionChip version={release.rollbackTarget} />,
+                    value: (
+                      <Link
+                        href={`/agentops/deployments?tab=environments&agent=${release.agentId}`}
+                        title="Confirm in the environments matrix"
+                      >
+                        <VersionChip
+                          version={release.rollbackTarget}
+                          className="hover:underline"
+                        />
+                      </Link>
+                    ),
                   },
                   {
                     label: "Deployed",
                     value: release.deployedAt
                       ? formatDateTime(release.deployedAt)
-                      : "—",
+                      : "n/a",
                   },
                   {
                     label: "Completed",
                     value: release.completedAt
                       ? formatDateTime(release.completedAt)
-                      : "—",
+                      : "n/a",
                   },
                 ]}
               />
@@ -461,12 +760,13 @@ export function ReleaseRecord({ release: initial }: { release: Release }) {
           </>
         }
       >
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatGrid columns={4}>
           <StatCard
-            size="sm"
             label="Traffic on new version"
             value={
-              live || release.stage === "Promoted" ? `${release.traffic}%` : "—"
+              live || release.stage === "Promoted"
+                ? `${release.traffic}%`
+                : "n/a"
             }
             hint={
               live && nextStep !== undefined
@@ -477,44 +777,33 @@ export function ReleaseRecord({ release: initial }: { release: Release }) {
             }
           />
           <StatCard
-            size="sm"
             label="Quality vs baseline"
             value={
               release.rollout.length
                 ? formatDelta(release.health.qualityDelta, "", 1)
-                : "—"
+                : "n/a"
             }
             hint={
               release.rollout.length ? "Evaluator composite" : "No rollout data"
             }
-            className={cn(
-              release.health.qualityDelta < -0.5 && "ring-destructive/30"
-            )}
+            className={cn(qBad && "ring-destructive/30")}
           />
           <StatCard
-            size="sm"
             label="Error rate vs baseline"
             value={
               release.rollout.length
                 ? formatDelta(release.health.errorRateDelta, "pt", 2)
-                : "—"
+                : "n/a"
             }
-            hint={
-              release.health.errorRateDelta > 0.2
-                ? "Above tolerance"
-                : "Within tolerance"
-            }
-            className={cn(
-              release.health.errorRateDelta > 0.2 && "ring-destructive/30"
-            )}
+            hint={errBad ? "Above tolerance" : "Within tolerance"}
+            className={cn(errBad && "ring-destructive/30")}
           />
           <StatCard
-            size="sm"
             label="Cost delta"
             value={formatDelta(release.costDeltaPct, "%", 1)}
             hint="Estimated per day"
           />
-        </div>
+        </StatGrid>
 
         <RecordSection
           title="Changes"
@@ -523,7 +812,11 @@ export function ReleaseRecord({ release: initial }: { release: Release }) {
           contentClassName="overflow-x-auto"
         >
           <table className="w-full min-w-[32rem] text-sm">
-            <thead className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+            <caption className="sr-only">
+              Configuration changes between {release.previousVersion} and{" "}
+              {release.version}
+            </caption>
+            <thead className="text-2xs font-medium tracking-wide text-muted-foreground uppercase">
               <tr className="border-b">
                 <th className="py-2 pr-3 text-left font-medium">Field</th>
                 <th className="py-2 pr-3 text-left font-medium">
@@ -568,18 +861,29 @@ export function ReleaseRecord({ release: initial }: { release: Release }) {
           action={
             live ? (
               <div className="flex flex-wrap gap-1.5">
+                <Tooltip>
+                  <TooltipTrigger render={<span className="inline-flex" />}>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => openDialog("advance")}
+                      disabled={paused || nextStep === undefined}
+                    >
+                      <StepForwardIcon /> Advance to {nextStep ?? 100}%
+                    </Button>
+                  </TooltipTrigger>
+                  {(paused || nextStep === undefined) && (
+                    <TooltipContent>
+                      {paused
+                        ? "Resume the rollout first."
+                        : "Already at the last step; use Promote."}
+                    </TooltipContent>
+                  )}
+                </Tooltip>
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => setDialog("advance")}
-                  disabled={paused || nextStep === undefined}
-                >
-                  <StepForwardIcon /> Advance to {nextStep ?? 100}%
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setDialog("pause")}
+                  onClick={() => openDialog("pause")}
                 >
                   {paused ? <PlayIcon /> : <PauseIcon />}{" "}
                   {paused ? "Resume" : "Pause"}
@@ -587,7 +891,7 @@ export function ReleaseRecord({ release: initial }: { release: Release }) {
                 <Button
                   size="sm"
                   variant="destructive"
-                  onClick={() => setDialog("rollback")}
+                  onClick={() => openDialog("rollback")}
                 >
                   <UndoIcon /> Roll back
                 </Button>
@@ -597,12 +901,11 @@ export function ReleaseRecord({ release: initial }: { release: Release }) {
         >
           <div className="grid gap-6 lg:grid-cols-2">
             <div className="flex flex-col gap-2">
-              <h4 className="text-xs font-medium text-muted-foreground">
-                Traffic share and quality
-              </h4>
+              <Eyebrow as="h3">Traffic share and quality</Eyebrow>
               <RolloutChart
                 points={release.rollout}
                 domain={[0, 100]}
+                height={CHART_HEIGHT.md}
                 series={[
                   {
                     key: "traffic",
@@ -628,12 +931,11 @@ export function ReleaseRecord({ release: initial }: { release: Release }) {
               />
             </div>
             <div className="flex flex-col gap-2">
-              <h4 className="text-xs font-medium text-muted-foreground">
-                Error rate
-              </h4>
+              <Eyebrow as="h3">Error rate</Eyebrow>
               <RolloutChart
                 points={release.rollout}
                 domain={[0, "auto"]}
+                height={CHART_HEIGHT.md}
                 series={[
                   {
                     key: "errorRate",
@@ -779,17 +1081,57 @@ export function ReleaseRecord({ release: initial }: { release: Release }) {
             </AlertDialogTitle>
             <AlertDialogDescription>
               {dialog === "advance" &&
-                `Quality is ${formatDelta(release.health.qualityDelta, "", 1)} and error rate ${formatDelta(release.health.errorRateDelta, "pt", 2)} versus ${release.previousVersion}. The next step widens exposure for ${agent?.name}.`}
+                `${deltasText}. The next step widens exposure for ${agentName}. A release.canary.advanced event is appended to the audit log.`}
               {dialog === "pause" &&
                 (paused
                   ? "Traffic stays at the current step and automatic health checks resume."
-                  : "Traffic is held at the current step. No automatic promotion while paused.")}
+                  : `Traffic is held at ${release.traffic}%. No automatic promotion while paused.`)}
               {dialog === "rollback" &&
-                "All traffic returns to the previous version. The release is marked rolled back and the author is notified."}
+                `${deltasText}. All traffic returns to ${release.rollbackTarget} and the release is marked rolled back. A release.rolled_back event with your reason is appended to the audit log; approvers and the author are listed on the record for you to notify.`}
               {dialog === "promote" &&
-                `Skips the remaining canary steps. ${release.environment === "production" ? "All production users" : "Everyone on " + release.environment} get ${release.version} immediately.`}
+                `${deltasText}. Skips the remaining canary steps: ${release.environment === "production" ? "all production users" : "everyone on " + release.environment} get ${release.version} immediately.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {(dialog === "rollback" || dialog === "promote") && (
+            <Field
+              data-invalid={
+                dialog === "rollback" && touched && !reasonValid
+                  ? true
+                  : undefined
+              }
+            >
+              <FieldLabel htmlFor={`${release.id}-reason`}>
+                {dialog === "rollback" ? "Reason" : "Note (optional)"}
+              </FieldLabel>
+              <Textarea
+                id={`${release.id}-reason`}
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                onBlur={() => setTouched(true)}
+                aria-invalid={
+                  dialog === "rollback" && touched && !reasonValid
+                    ? true
+                    : undefined
+                }
+                placeholder={
+                  dialog === "rollback"
+                    ? "e.g. Error rate +0.6pt on the 25% step, drift signal drf-003"
+                    : "e.g. Canary held for the full window; skipping the last step"
+                }
+                className="min-h-20"
+                autoFocus
+              />
+              {dialog === "rollback" && touched && !reasonValid ? (
+                <FieldError>
+                  Give at least 10 characters; this becomes the audit reason.
+                </FieldError>
+              ) : (
+                <FieldDescription>
+                  Posted to the release activity and stored as the audit reason.
+                </FieldDescription>
+              )}
+            </Field>
+          )}
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
@@ -848,12 +1190,12 @@ function DiffValue({
   if (change.kind === "model")
     return <ModelChip modelId={v} className="text-xs" />
   if (change.kind === "tools") {
-    const added = change.before === "—"
+    const added = change.before === ""
     const present = added ? side === "after" : side === "before"
     return present ? (
       <code
         className={cn(
-          "rounded-sm px-1 py-0.5 font-mono text-[11px]",
+          "rounded-sm px-1 py-0.5 font-mono text-2xs",
           added && side === "after"
             ? "bg-success/10 text-success-text"
             : !added && side === "before"
@@ -864,7 +1206,7 @@ function DiffValue({
         {v}
       </code>
     ) : (
-      <span className="text-xs text-muted-foreground">—</span>
+      <span className="text-xs text-muted-foreground">n/a</span>
     )
   }
   return (

@@ -114,3 +114,33 @@ export const alertSeverities: AlertSeverity[] = [
   "Info",
   "Clear",
 ]
+
+/**
+ * Change Advisory Board meeting slot. One source of truth for every piece of
+ * copy that mentions the next CAB ("Thursday 09:00 UTC"). `weekday` follows
+ * `Date.getUTCDay()` (0 = Sunday).
+ */
+export const cabSchedule = {
+  weekday: 4,
+  hour: 9,
+  minute: 0,
+  timeZone: "UTC",
+  /** Short form for hints and badges. */
+  label: "Thursday 09:00 UTC",
+} as const
+
+/** Target for the SLA compliance KPI and sparkline baseline, percent. */
+export const slaComplianceTarget = 95
+
+/** Target for the change success rate KPI, percent. */
+export const changeSuccessTarget = 95
+
+/** On-hold incidents: reminder after N days, auto-resolve after M days. */
+export const onHoldReminderDays = 2
+export const onHoldAutoResolveDays = 5
+
+/** Days a resolved incident stays reopenable before it closes automatically. */
+export const incidentAutoCloseDays = 3
+
+/** Hours after an approval request before the approver is reminded. */
+export const approvalReminderHours = 18

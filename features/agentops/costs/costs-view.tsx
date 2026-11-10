@@ -1,46 +1,77 @@
 "use client"
 
+import * as React from "react"
+
+import { setQueryParam } from "@/hooks/use-query-param"
+import { CountPill } from "@/components/shared/count-pill"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { budgets, costByAgent, savingsOpportunities } from "@/lib/data/costs"
+import { costByAgent } from "@/lib/data/costs"
 import { BudgetsTable } from "./budgets-table"
 import { CostAllocationTable } from "./cost-allocation-table"
 import { CostsOverview } from "./costs-overview"
 import { SavingsPanel } from "./savings-panel"
+import { budgetStore, savingsStore } from "./store"
 
 export type CostsTabValue = "budgets" | "allocation" | "savings"
 
+const tabValues: CostsTabValue[] = ["budgets", "allocation", "savings"]
+
 export function CostsView({
   initialTab = "budgets",
+  initialAgentId,
+  initialBudgetId,
 }: {
   initialTab?: CostsTabValue
+  /** From `?agent=`: preselects the agent facet on Budgets and Allocation. */
+  initialAgentId?: string
+  /** From `?budget=`: opens that budget's sheet on load. */
+  initialBudgetId?: string
 }) {
+  const [tab, setTab] = React.useState<CostsTabValue>(initialTab)
+  const budgets = budgetStore.use()
+  const savings = savingsStore.use()
   const counts: Record<CostsTabValue, number> = {
     budgets: budgets.length,
     allocation: costByAgent.length,
-    savings: savingsOpportunities.filter((s) => s.status === "Open").length,
+    savings: savings.filter((s) => s.status === "Open").length,
   }
-  const tab = (value: CostsTabValue, label: string) => (
+  const trigger = (value: CostsTabValue, label: string) => (
     <TabsTrigger value={value}>
       {label}
-      <span className="ml-1 text-xs text-muted-foreground tabular-nums">
-        {counts[value]}
-      </span>
+      <CountPill
+        count={counts[value]}
+        tone={tab === value ? "inverse" : "muted"}
+        label={value === "savings" ? "open" : undefined}
+      />
     </TabsTrigger>
   )
   return (
     <div className="flex flex-col gap-6">
       <CostsOverview />
-      <Tabs defaultValue={initialTab} className="gap-4">
+      <Tabs
+        value={tab}
+        onValueChange={(v) => {
+          const next = tabValues.includes(v as CostsTabValue)
+            ? (v as CostsTabValue)
+            : "budgets"
+          setTab(next)
+          setQueryParam("tab", next === "budgets" ? null : next)
+        }}
+        className="gap-4"
+      >
         <TabsList>
-          {tab("budgets", "Budgets")}
-          {tab("allocation", "Allocation")}
-          {tab("savings", "Savings")}
+          {trigger("budgets", "Budgets")}
+          {trigger("allocation", "Allocation")}
+          {trigger("savings", "Savings")}
         </TabsList>
         <TabsContent value="budgets">
-          <BudgetsTable />
+          <BudgetsTable
+            initialAgentId={initialAgentId}
+            initialBudgetId={initialBudgetId}
+          />
         </TabsContent>
         <TabsContent value="allocation">
-          <CostAllocationTable />
+          <CostAllocationTable initialAgentId={initialAgentId} />
         </TabsContent>
         <TabsContent value="savings">
           <SavingsPanel />

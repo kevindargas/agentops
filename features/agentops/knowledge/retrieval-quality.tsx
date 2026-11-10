@@ -18,10 +18,10 @@ import {
   type DataTableFeatures,
   type FacetDef,
 } from "@/components/data-table"
-import { StateBadge, type Tone } from "@/components/shared/status-badge"
+import { StateBadge } from "@/components/shared/status-badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { deployedAgents, getDeployedAgent } from "@/lib/data"
+import { deployedAgents, getDeployedAgent } from "@/lib/data/agentops"
 import {
   getKnowledgeBase,
   knowledgeBases,
@@ -30,18 +30,19 @@ import {
   type LowRecallOutcome,
   type LowRecallQuery,
 } from "@/lib/data/knowledge"
-import { formatNumber } from "@/lib/format"
-import { AgentChip, ScoreBar, fmtMs } from "../shared"
+import { formatMs, formatNumber } from "@/lib/format"
+import { AgentChip, ScoreBar } from "../shared"
 import { KNOWLEDGE_PATH, pct } from "./shared"
 import { TestRetrievalPanel } from "./test-retrieval"
 
-const outcomeTone: Record<LowRecallOutcome, Tone> = {
-  "Fallback answer": "warning",
-  "Escalated to human": "info",
-  "Hallucination flagged": "danger",
-  "No answer": "muted",
-  "Answered from memory": "success",
-}
+/** Facet order; tones come from the shared `stateTone` map. */
+const outcomes: LowRecallOutcome[] = [
+  "Fallback answer",
+  "Escalated to human",
+  "Hallucination flagged",
+  "No answer",
+  "Answered from memory",
+]
 
 const col = createColumnHelper<DataTableFeatures, LowRecallQuery>()
 
@@ -82,7 +83,11 @@ const columns = col.columns([
   }),
   col.accessor("topScore", {
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Top score" />
+      <DataTableColumnHeader
+        column={column}
+        title="Top score"
+        hint="Best similarity among the retrieved chunks, 0 to 1, against the base's score threshold"
+      />
     ),
     cell: ({ getValue, row }) => (
       <ScoreBar
@@ -103,9 +108,7 @@ const columns = col.columns([
     header: ({ column }) => (
       <DataTableColumnHeader column={column} title="Outcome" />
     ),
-    cell: ({ getValue }) => (
-      <StateBadge state={getValue()} tone={outcomeTone[getValue()]} />
-    ),
+    cell: ({ getValue }) => <StateBadge state={getValue()} />,
     meta: { width: "w-44", label: "Outcome", skeleton: "w-24 rounded-full" },
   }),
   col.accessor("traceId", {
@@ -136,10 +139,7 @@ const facets: FacetDef<LowRecallQuery>[] = [
   {
     id: "outcome",
     title: "Outcome",
-    options: (Object.keys(outcomeTone) as LowRecallOutcome[]).map((v) => ({
-      value: v,
-      label: v,
-    })),
+    options: outcomes.map((v) => ({ value: v, label: v })),
     getValue: (r) => r.outcome,
   },
   {
@@ -156,7 +156,12 @@ const facets: FacetDef<LowRecallQuery>[] = [
   },
 ]
 
-export function RetrievalQualityTab() {
+export function RetrievalQualityTab({
+  agentId,
+}: {
+  /** From `?agent=`: pre-selects the Agent facet on the low-recall table. */
+  agentId?: string | null
+}) {
   const [latencyMetric, setLatencyMetric] = React.useState<"p50" | "p95">("p95")
 
   const trend = retrievalDaily.map((d) => ({
@@ -206,7 +211,7 @@ export function RetrievalQualityTab() {
         <ChartCard
           title="Chunks retrieved vs used"
           description="Chunks sent to the model each day, split by whether they were cited in the answer."
-          footer={`${usedShare}% of retrieved chunks were used today. Lower top_k or a higher threshold cuts the discarded share.`}
+          footer={`${usedShare}% of retrieved chunks were used today. A lower top k or a higher threshold cuts the discarded share.`}
         >
           <StackedBarChart
             data={chunks}
@@ -221,7 +226,7 @@ export function RetrievalQualityTab() {
         </ChartCard>
         <ChartCard
           title="Retrieval latency per knowledge base"
-          description="End-to-end retrieve + rerank time."
+          description="End-to-end retrieve plus rerank time."
           action={
             <ToggleGroup
               value={[latencyMetric]}
@@ -250,7 +255,7 @@ export function RetrievalQualityTab() {
             rowHeight={22}
             labelWidth={150}
             emphasize={slowest}
-            valueFormatter={(v) => fmtMs(v)}
+            valueFormatter={(v) => formatMs(v)}
           />
         </ChartCard>
       </div>
@@ -266,17 +271,20 @@ export function RetrievalQualityTab() {
         </CardHeader>
         <CardContent>
           <DataTable
+            key={agentId ?? "all"}
             columns={columns}
             data={lowRecallQueries}
             getRowId={(r) => r.id}
             getSearchText={(r) =>
               `${r.query} ${r.outcome} ${getDeployedAgent(r.agentId)?.name ?? ""} ${getKnowledgeBase(r.kbId)?.name ?? ""}`
             }
-            searchPlaceholder="Search queries…"
+            searchPlaceholder="Search queries"
             facets={facets}
+            initialFacets={agentId ? { agent: [agentId] } : undefined}
             initialSorting={[{ id: "topScore", desc: false }]}
             pageSize={10}
             totalLabel="queries"
+            caption="Low-recall queries from the last 48 hours with their best retrieval score and outcome"
             selectionLabel={(n) => (n === 1 ? "query" : "queries")}
             emptyTitle="No low-recall queries"
             emptyMessage="Every query in the window found a chunk above threshold."

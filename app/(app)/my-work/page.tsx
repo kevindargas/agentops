@@ -1,16 +1,12 @@
 import type { Metadata } from "next"
 import Link from "next/link"
-import {
-  AlertTriangleIcon,
-  CheckSquareIcon,
-  ClipboardCheckIcon,
-  RouteIcon,
-  ShieldCheckIcon,
-} from "lucide-react"
+import { ClipboardCheckIcon, RouteIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { PageHeader } from "@/components/shared/page-header"
+import { recordHref } from "@/components/shared/record-link"
 import { StatCard } from "@/components/shared/stat-card"
+import { StatGrid } from "@/components/shared/stat-grid"
 import { MyWorkBoard, type WorkItem } from "@/features/workspace/my-work-board"
 import {
   agentTraces,
@@ -96,7 +92,7 @@ export default function MyWorkPage() {
         title: e.name,
         type: "Experiment",
         state: e.status,
-        href: `/agentops/experiments?experiment=${e.id}`,
+        href: `/agentops/experiments?open=${e.id}`,
         updated: e.started,
         due: e.ends,
         meta: `${e.kind} · ${e.split}% to B · ${Math.round(e.significance * 100)}% significance`,
@@ -108,7 +104,7 @@ export default function MyWorkPage() {
   )
 
   const myApprovals: WorkItem[] = approvals
-    .filter((a) => a.approverId === me)
+    .filter((a) => a.approverId === me && a.state === "Requested")
     .map<WorkItem>((a) => ({
       number: a.recordNumber,
       title: a.shortDescription,
@@ -119,10 +115,7 @@ export default function MyWorkPage() {
             ? "Request"
             : "Knowledge",
       state: a.state,
-      href:
-        a.recordType === "Change"
-          ? `/itsm/changes/${a.recordNumber}`
-          : `/itsm/requests/${a.recordNumber}`,
+      href: recordHref(a.recordNumber),
       updated: a.requested,
       due: a.due,
       attention: new Date(a.due).getTime() - NOW.getTime() < 36 * 3_600_000,
@@ -223,7 +216,7 @@ export default function MyWorkPage() {
   return (
     <>
       <PageHeader
-        title="My Work"
+        nav="/my-work"
         description="Everything on your plate in one place: agent answers waiting for your review, experiments you own, records assigned to you and approvals waiting on your decision."
         actions={
           <>
@@ -231,22 +224,20 @@ export default function MyWorkPage() {
               <RouteIcon /> Explore traces
             </Button>
             <Button render={<Link href="/agentops/reviews" />}>
-              <ClipboardCheckIcon /> Open review queue
+              <ClipboardCheckIcon /> Open Review Queue
             </Button>
           </>
         }
       />
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <StatGrid columns={4}>
         <StatCard
           label="Assigned to me"
           value={assigned.length}
-          icon={<CheckSquareIcon />}
           hint={`${myReviews.length} reviews · ${assigned.filter((i) => i.type === "Incident").length} incidents · ${assigned.filter((i) => i.type === "Change").length} changes`}
         />
         <StatCard
           label="Reviews waiting"
           value={myReviews.length}
-          icon={<ClipboardCheckIcon />}
           href="/agentops/reviews"
           hint={`${myReviews.filter((r) => r.priority === 1).length} policy matches · ${openDrift} open drift signal${openDrift === 1 ? "" : "s"} fleet-wide`}
         />
@@ -254,13 +245,11 @@ export default function MyWorkPage() {
           label="Needs attention"
           value={attention}
           upIsGood={false}
-          icon={<AlertTriangleIcon />}
           hint="Policy matches, breached SLA, P1 or overdue"
         />
         <StatCard
           label="Pending approvals"
           value={myApprovals.length}
-          icon={<ShieldCheckIcon />}
           hint={
             <Link
               href="/approvals"
@@ -270,7 +259,7 @@ export default function MyWorkPage() {
             </Link>
           }
         />
-      </div>
+      </StatGrid>
       <MyWorkBoard
         sections={{ assigned, approvals: myApprovals, requested, recent }}
         nowIso={NOW.toISOString()}

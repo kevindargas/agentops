@@ -6,6 +6,7 @@ import {
   CalendarClockIcon,
   ClipboardListIcon,
   CoinsIcon,
+  FileClockIcon,
   FlaskRoundIcon,
   LibraryIcon,
   PlugZapIcon,
@@ -36,11 +37,22 @@ import {
   UsersIcon,
 } from "lucide-react"
 
+/**
+ * Live sidebar badges. Each key resolves to a count in `config/nav-counts.ts`
+ * (computed on the server from the data modules), so the sidebar never shows a
+ * literal that drifts from the page it points at.
+ */
+export type NavBadgeKey =
+  "approvals" | "reviews" | "recommendations" | "alerts" | "proposals"
+
+export type NavCounts = Record<NavBadgeKey, number>
+
 export interface NavItem {
   title: string
   href: string
   icon?: LucideIcon
-  badge?: string
+  /** Which live count to show next to the item. See `getNavCounts()`. */
+  badge?: NavBadgeKey
   description?: string
   /**
    * "Go to" chord shown in the sidebar tooltip and command menu, e.g. "G D".
@@ -58,8 +70,9 @@ export interface NavGroup {
 }
 
 /**
- * Application navigation. Grouped by module, mirroring how a modern ESM
- * platform organizes work: a personal workspace, then each product area.
+ * Application navigation. Grouped by module: a personal workspace, the agent
+ * operations layers (operate, build, govern), then the service-management and
+ * service-health surfaces the agents plug into.
  */
 export const navigation: NavGroup[] = [
   {
@@ -85,7 +98,7 @@ export const navigation: NavGroup[] = [
         title: "Approvals",
         href: "/approvals",
         icon: ShieldCheckIcon,
-        badge: "6",
+        badge: "approvals",
         shortcut: "G A",
         description: "Changes and requests awaiting your approval",
       },
@@ -130,7 +143,7 @@ export const navigation: NavGroup[] = [
         title: "Review Queue",
         href: "/agentops/reviews",
         icon: ClipboardCheckIcon,
-        badge: "11",
+        badge: "reviews",
         shortcut: "G R",
         keywords: ["human in the loop", "hitl", "feedback", "rubric"],
         description: "Sampled and flagged answers awaiting a human verdict",
@@ -154,7 +167,7 @@ export const navigation: NavGroup[] = [
         title: "Recommendations",
         href: "/agentops/recommendations",
         icon: LightbulbIcon,
-        badge: "4",
+        badge: "recommendations",
         keywords: ["model change", "cost", "deprecation", "upgrade"],
         description: "Evidence-backed model and configuration changes",
       },
@@ -249,7 +262,7 @@ export const navigation: NavGroup[] = [
         title: "Workflow Automations",
         href: "/ai",
         icon: WorkflowIcon,
-        badge: "6",
+        badge: "proposals",
         shortcut: "G X",
         keywords: [
           "ai control center",
@@ -259,7 +272,7 @@ export const navigation: NavGroup[] = [
           "guardrails",
         ],
         description:
-          "Internal workflow agents, approvals, guardrails and audit log",
+          "Internal workflow agents, proposals, approval queue and assistant guardrails",
       },
     ],
   },
@@ -313,6 +326,21 @@ export const navigation: NavGroup[] = [
         ],
         description:
           "Releases, canaries, environments and approvals for the agent fleet",
+      },
+      {
+        title: "Audit Log",
+        href: "/agentops/audit",
+        icon: FileClockIcon,
+        keywords: [
+          "audit",
+          "evidence",
+          "tamper",
+          "who changed",
+          "history",
+          "compliance",
+        ],
+        description:
+          "Append-only record of who changed what, when and under which approval",
       },
       {
         title: "Schedules & Triggers",
@@ -411,7 +439,7 @@ export const navigation: NavGroup[] = [
         description: "Plan, assess and authorize changes",
         items: [
           { title: "All changes", href: "/itsm/changes" },
-          { title: "Change calendar", href: "/itsm/changes/calendar" },
+          { title: "Change Calendar", href: "/itsm/changes/calendar" },
           { title: "CAB agenda", href: "/itsm/changes?view=cab" },
         ],
       },
@@ -419,7 +447,7 @@ export const navigation: NavGroup[] = [
         title: "Requests",
         href: "/itsm/requests",
         icon: PackageIcon,
-        shortcut: "G R",
+        shortcut: "G Q",
         keywords: ["ritm", "order"],
         description: "Service requests, requested items and tasks",
       },
@@ -454,7 +482,7 @@ export const navigation: NavGroup[] = [
         title: "Alerts",
         href: "/itom/alerts",
         icon: BellRingIcon,
-        badge: "12",
+        badge: "alerts",
         description: "Event management and alert correlation",
       },
     ],
@@ -484,14 +512,38 @@ export const flatNavigation: NavItem[] = navigation.flatMap((g) =>
   g.items.flatMap((i) => [i, ...(i.items ?? [])])
 )
 
+/** Nav item whose href (ignoring the query string) matches `href`. */
+export function findNavItem(href: string): NavItem | undefined {
+  const path = href.split("?")[0]
+  return (
+    flatNavigation.find((n) => n.href === href) ??
+    flatNavigation.find((n) => n.href.split("?")[0] === path)
+  )
+}
+
+/** Sidebar group that owns `href`; used for page eyebrows and breadcrumbs. */
+export function findNavGroup(href: string): NavGroup | undefined {
+  const path = href.split("?")[0]
+  return navigation.find((g) =>
+    g.items.some(
+      (i) =>
+        i.href.split("?")[0] === path ||
+        (i.items ?? []).some((s) => s.href.split("?")[0] === path)
+    )
+  )
+}
+
+type ShortcutItem = NavItem & { shortcut: string }
+
 /**
- * Lookup for "G + key" chords: lower-case second key → nav item.
- * e.g. goToShortcuts.d → Overview.
+ * Lookup for "G + key" chords: lower-case second key to nav item, e.g.
+ * goToShortcuts.d opens the Overview. `config/nav.test.ts` asserts every
+ * second key is unique so no page silently shadows another.
  */
 export const goToShortcuts: Record<string, NavItem> = Object.fromEntries(
   flatNavigation
-    .filter((i) => i.shortcut)
-    .map((i) => [i.shortcut!.split(" ")[1].toLowerCase(), i])
+    .filter((i): i is ShortcutItem => typeof i.shortcut === "string")
+    .map((i) => [i.shortcut.split(" ")[1].toLowerCase(), i])
 )
 
 export const quickCreateItems: NavItem[] = [

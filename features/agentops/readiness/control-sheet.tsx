@@ -7,11 +7,18 @@ import {
   AlertTriangleIcon,
   CheckCheckIcon,
   CheckCircle2Icon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
   ExternalLinkIcon,
   UsersIcon,
 } from "lucide-react"
 import { toast } from "sonner"
 
+import {
+  SheetBody,
+  SheetFooterActions,
+  sheetWidths,
+} from "@/components/shared/sheet-frame"
 import { StateBadge } from "@/components/shared/status-badge"
 import { UserChip } from "@/components/shared/user-chip"
 import { Button } from "@/components/ui/button"
@@ -144,9 +151,18 @@ export function StatusToggle({
 export function ControlSheet({
   controlId,
   onClose,
+  onNavigate,
+  navigationIds = [],
+  onSetup,
 }: {
   controlId: string | null
   onClose: () => void
+  /** Opens another control from the previous / next buttons. */
+  onNavigate?: (id: string) => void
+  /** Ordered control ids the previous / next buttons walk through. */
+  navigationIds?: string[]
+  /** Shown when a control is requested before an assessment exists. */
+  onSetup?: () => void
 }) {
   const { assessment, result, controlSet, respondent } = useReadiness()
   const entry =
@@ -156,10 +172,20 @@ export function ControlSheet({
   const domain = entry
     ? controlSet.domains.find((d) => d.id === entry.control.domain)
     : undefined
+  const index = controlId ? navigationIds.indexOf(controlId) : -1
+  const prevId = index > 0 ? navigationIds[index - 1] : null
+  const nextId =
+    index >= 0 && index < navigationIds.length - 1
+      ? navigationIds[index + 1]
+      : null
+  const inSet =
+    controlId !== null && controlSet.controls.some((c) => c.id === controlId)
 
   return (
     <Sheet open={controlId !== null} onOpenChange={(o) => !o && onClose()}>
-      <SheetContent className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
+      <SheetContent
+        className={cn(sheetWidths.editor, "flex flex-col gap-0 p-0")}
+      >
         {entry && assessment && domain ? (
           <ControlBody
             key={controlId}
@@ -168,16 +194,63 @@ export function ControlSheet({
             assessment={assessment}
             respondent={respondent}
           />
+        ) : assessment === null && inSet ? (
+          <SheetHeader className="border-b px-6 py-5">
+            <SheetTitle>No assessment yet</SheetTitle>
+            <SheetDescription>
+              {controlId} is in the active control set, but a control can only
+              be answered against a system profile. Complete Setup first; the
+              control opens from the Controls tab afterwards.
+            </SheetDescription>
+          </SheetHeader>
         ) : (
-          <SheetHeader className="px-6 py-5">
+          <SheetHeader className="border-b px-6 py-5">
             <SheetTitle>Control not found</SheetTitle>
             <SheetDescription>
               {controlId
-                ? `${controlId} is not part of the active control set.`
+                ? `${controlId} is not part of ${controlSet.name} v${controlSet.version}.`
                 : "Pick a control from the list."}
             </SheetDescription>
           </SheetHeader>
         )}
+        <SheetFooterActions
+          primary={
+            assessment === null && inSet && onSetup ? (
+              <Button onClick={onSetup}>Go to Setup</Button>
+            ) : undefined
+          }
+          tertiary={
+            entry && onNavigate && navigationIds.length > 1 ? (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!prevId}
+                  onClick={() => prevId && onNavigate(prevId)}
+                  aria-label={
+                    prevId ? `Previous control ${prevId}` : "Previous control"
+                  }
+                >
+                  <ChevronLeftIcon /> Previous
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!nextId}
+                  onClick={() => nextId && onNavigate(nextId)}
+                  aria-label={
+                    nextId ? `Next control ${nextId}` : "Next control"
+                  }
+                >
+                  Next <ChevronRightIcon />
+                </Button>
+                <span className="text-xs text-muted-foreground tabular-nums">
+                  {index + 1} of {navigationIds.length}
+                </span>
+              </>
+            ) : undefined
+          }
+        />
       </SheetContent>
     </Sheet>
   )
@@ -277,7 +350,7 @@ function ControlBody({
         </SheetDescription>
       </SheetHeader>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+      <SheetBody>
         <div className="flex flex-col gap-7">
           <Section title="What it is">
             <p className="text-sm leading-relaxed">{c.what}</p>
@@ -293,7 +366,7 @@ function ControlBody({
             <ol className="flex flex-col gap-2">
               {c.how.map((step, i) => (
                 <li key={i} className="flex gap-3 text-sm leading-relaxed">
-                  <span className="mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-muted font-mono text-[11px] font-semibold text-muted-foreground tabular-nums">
+                  <span className="mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-muted font-mono text-2xs font-semibold text-muted-foreground tabular-nums">
                     {i + 1}
                   </span>
                   <span className="min-w-0">{step}</span>
@@ -505,7 +578,7 @@ function ControlBody({
                           <Tooltip key={ref}>
                             <TooltipTrigger
                               render={
-                                <span className="inline-flex h-5 cursor-default items-center rounded-md border bg-card px-1.5 font-mono text-[11px]" />
+                                <span className="inline-flex h-5 cursor-default items-center rounded-md border bg-card px-1.5 font-mono text-2xs" />
                               }
                             >
                               {ref}
@@ -596,12 +669,12 @@ function ControlBody({
                   <li key={m.id} className="flex flex-col gap-1 px-3 py-2.5">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-sm font-medium">{m.name}</span>
-                      <span className="text-[11px] text-muted-foreground">
+                      <span className="text-2xs text-muted-foreground">
                         {m.direction === "higher-is-better"
                           ? "higher is better"
                           : "lower is better"}
                       </span>
-                      <span className="ml-auto font-mono text-[11px] tabular-nums">
+                      <span className="ml-auto font-mono text-2xs tabular-nums">
                         <span className="text-warning-text">
                           warn {m.warn}
                           {m.unit}
@@ -617,7 +690,7 @@ function ControlBody({
                       {m.formula}
                     </p>
                     {m.otel && (
-                      <p className="font-mono text-[11px] text-muted-foreground/80">
+                      <p className="font-mono text-2xs text-muted-foreground/80">
                         {m.otel}
                       </p>
                     )}
@@ -648,7 +721,7 @@ function ControlBody({
                     className="flex items-center gap-2 px-3 py-2 text-sm"
                   >
                     <span className="min-w-0 flex-1 truncate">{s.title}</span>
-                    <span className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+                    <span className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-2xs text-muted-foreground">
                       {s.language}
                     </span>
                   </li>
@@ -716,7 +789,7 @@ function ControlBody({
                           <UsersIcon className="size-3.5 text-muted-foreground" />
                           {name}
                           {name === respondentName && (
-                            <span className="text-[11px] text-muted-foreground">
+                            <span className="text-2xs text-muted-foreground">
                               you
                             </span>
                           )}
@@ -759,7 +832,7 @@ function ControlBody({
                     onChange={(e) =>
                       readinessActions.setRespondent(e.target.value)
                     }
-                    placeholder="e.g. Amara"
+                    placeholder="e.g. Amara Okafor"
                     autoComplete="off"
                   />
                 </div>
@@ -804,9 +877,8 @@ function ControlBody({
               </ul>
             </Section>
           )}
-          <div className="h-2" />
         </div>
-      </div>
+      </SheetBody>
     </>
   )
 }

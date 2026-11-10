@@ -58,7 +58,7 @@ export const catalogItems: CatalogItem[] = [
     id: "cat-005",
     name: "Wireless Headset",
     category: "Hardware",
-    description: "Jabra Evolve2 65 — certified for Teams and Zoom.",
+    description: "Jabra Evolve2 65, certified for Teams and Zoom.",
     price: 229,
     deliveryDays: 2,
     icon: "headphones",
@@ -391,7 +391,7 @@ export const knowledgeArticles: KnowledgeArticle[] = [
   },
   {
     number: "KB0010455",
-    title: "Wi-Fi drops intermittently on HQ floors 3–5",
+    title: "Wi-Fi drops intermittently on HQ floors 3-5",
     summary:
       "Workaround while controller firmware is upgraded under CHG0031122.",
     knowledgeBase: "IT",
@@ -470,7 +470,7 @@ export const knowledgeArticles: KnowledgeArticle[] = [
     number: "KB0010122",
     title: "Mapping network drives (legacy fileshare)",
     summary:
-      "Retired — legacy fileshare decommissioned. Use SharePoint instead.",
+      "Retired: legacy fileshare decommissioned. Use SharePoint instead.",
     knowledgeBase: "IT",
     category: "Storage",
     state: "Retired",

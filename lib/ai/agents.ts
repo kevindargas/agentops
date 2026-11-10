@@ -2,21 +2,35 @@ import { daysAgo, hoursAgo } from "@/lib/data/seed"
 
 export type Autonomy = "suggest" | "approve" | "autonomous"
 
+export type AiAgentModule =
+  "ITSM" | "ITOM" | "AgentOps" | "Knowledge" | "Change"
+
 export interface AiAgent {
   id: string
   name: string
   description: string
-  module: "ITSM" | "ITOM" | "AgentOps" | "Knowledge" | "Change"
+  module: AiAgentModule
   autonomy: Autonomy
   enabled: boolean
   tools: string[]
   trigger: string
   runs24h: number
   actions24h: number
+  /** Model tokens consumed by the agent's runs in the last 24 hours. */
+  tokens24h: number
   acceptanceRate: number
   avgSavedMinutes: number
   lastRun: string
   health: "Healthy" | "Degraded" | "Paused"
+}
+
+/** Display names for `AiAgent.module`, matching the shell's group labels. */
+export const moduleLabel: Record<AiAgentModule, string> = {
+  ITSM: "Service Management",
+  ITOM: "Service Health",
+  AgentOps: "Agent Operations",
+  Knowledge: "Knowledge",
+  Change: "Change Management",
 }
 
 export const agents: AiAgent[] = [
@@ -37,6 +51,7 @@ export const agents: AiAgent[] = [
     trigger: "On incident created",
     runs24h: 142,
     actions24h: 131,
+    tokens24h: 612_400,
     acceptanceRate: 96,
     avgSavedMinutes: 4,
     lastRun: hoursAgo(0.1),
@@ -54,6 +69,7 @@ export const agents: AiAgent[] = [
     trigger: "Every 60 seconds",
     runs24h: 1440,
     actions24h: 38,
+    tokens24h: 4_140_000,
     acceptanceRate: 91,
     avgSavedMinutes: 12,
     lastRun: hoursAgo(0.02),
@@ -76,6 +92,7 @@ export const agents: AiAgent[] = [
     trigger: "On change moved to Assess",
     runs24h: 9,
     actions24h: 9,
+    tokens24h: 98_600,
     acceptanceRate: 88,
     avgSavedMinutes: 25,
     lastRun: hoursAgo(2.5),
@@ -98,6 +115,7 @@ export const agents: AiAgent[] = [
     trigger: "On incident resolved",
     runs24h: 27,
     actions24h: 6,
+    tokens24h: 381_000,
     acceptanceRate: 74,
     avgSavedMinutes: 35,
     lastRun: hoursAgo(1.2),
@@ -120,6 +138,7 @@ export const agents: AiAgent[] = [
     trigger: "Nightly and on prompt publish",
     runs24h: 8,
     actions24h: 3,
+    tokens24h: 112_800,
     acceptanceRate: 89,
     avgSavedMinutes: 20,
     lastRun: hoursAgo(0.6),
@@ -137,6 +156,7 @@ export const agents: AiAgent[] = [
     trigger: "Hourly",
     runs24h: 24,
     actions24h: 2,
+    tokens24h: 93_500,
     acceptanceRate: 78,
     avgSavedMinutes: 30,
     lastRun: hoursAgo(0.4),
@@ -154,6 +174,7 @@ export const agents: AiAgent[] = [
     trigger: "Every 15 minutes",
     runs24h: 96,
     actions24h: 5,
+    tokens24h: 1_210_000,
     acceptanceRate: 92,
     avgSavedMinutes: 25,
     lastRun: hoursAgo(0.2),
@@ -171,6 +192,7 @@ export const agents: AiAgent[] = [
     trigger: "Weekly and on new tool grant",
     runs24h: 2,
     actions24h: 1,
+    tokens24h: 14_600,
     acceptanceRate: 85,
     avgSavedMinutes: 15,
     lastRun: hoursAgo(3),
@@ -188,6 +210,7 @@ export const agents: AiAgent[] = [
     trigger: "Every 30 min during P1",
     runs24h: 0,
     actions24h: 0,
+    tokens24h: 0,
     acceptanceRate: 90,
     avgSavedMinutes: 15,
     lastRun: daysAgo(3),
@@ -226,7 +249,7 @@ export const proposals: AgentProposal[] = [
     agentId: "kb",
     recordNumber: "INC0010069",
     recordHref: "/itsm/incidents/INC0010069",
-    action: "Publish draft article “Windows update loop on reboot — fix”",
+    action: "Publish draft article “Windows update loop on reboot: fix”",
     rationale:
       "Resolved 4 times this month with the same fix. No existing article covers it. Draft generated from resolution notes.",
     confidence: 0.81,
@@ -240,7 +263,7 @@ export const proposals: AgentProposal[] = [
     recordHref: "/agentops/recommendations",
     action: "Route simple intents on Support Triage to Claude Haiku 5.5",
     rationale:
-      "61% of Support Triage traffic is password, access and status intents. Shadow evals on Haiku 5.5 match quality within 0.4 points at 39% lower cost — about $2.4K/month.",
+      "61% of Support Triage traffic is password, access and status intents. Shadow evals on Haiku 5.5 match quality within 0.4 points at 39% lower cost, about $2.4K/month.",
     confidence: 0.82,
     created: hoursAgo(1.8),
     impact: "medium",
@@ -274,13 +297,19 @@ export const proposals: AgentProposal[] = [
     agentId: "prompt-hygiene",
     recordNumber: "agt-it-helpdesk",
     recordHref: "/agentops/agents/agt-it-helpdesk",
-    action: "Retire prompt p-27 on IT Helpdesk Copilot and pin p-30",
+    action: "Re-run the helpdesk golden set on p-27 for IT Helpdesk Copilot",
     rationale:
-      "p-27 is three versions behind the approved prompt and scores 6 points lower on the helpdesk golden set. It is also the version live during the current topic-mix drift.",
+      "p-27 is the production version and has been live through the current topic-mix drift on IT Helpdesk Copilot. Its eval score predates the drift window; re-scoring it on the helpdesk golden set shows whether the prompt or the traffic moved.",
     confidence: 0.9,
     created: hoursAgo(5),
     impact: "medium",
-    diff: [{ field: "Prompt version", from: "p-27", to: "p-30" }],
+    diff: [
+      {
+        field: "Eval status",
+        from: "scored before drift",
+        to: "re-run on golden set",
+      },
+    ],
   },
   {
     id: "p6",
@@ -324,7 +353,7 @@ export const agentActivity: AgentActivity[] = [
     id: "a2",
     agentId: "prompt-hygiene",
     summary:
-      "Flagged prompt p-27 on IT Helpdesk Copilot as stale · 3 versions behind p-30",
+      "Flagged prompt p-27 on IT Helpdesk Copilot: eval score predates the open topic-mix drift",
     recordNumber: "agt-it-helpdesk",
     recordHref: "/agentops/agents/agt-it-helpdesk",
     outcome: "suggested",
@@ -366,7 +395,7 @@ export const agentActivity: AgentActivity[] = [
     id: "a6",
     agentId: "kb",
     summary:
-      "Proposed merging two VPN articles — rejected as content differs by OS",
+      "Proposed merging two VPN articles; rejected as content differs by OS",
     recordNumber: "KB0010231",
     recordHref: "/itsm/knowledge/KB0010231",
     outcome: "rejected",
@@ -387,7 +416,7 @@ export const agentActivity: AgentActivity[] = [
     id: "a8",
     agentId: "triage",
     summary:
-      "Set P2 on a how-to inquiry — reverted by agent after caller clarified",
+      "Set P2 on a how-to inquiry; reverted by agent after caller clarified",
     recordNumber: "INC0010011",
     recordHref: "/itsm/incidents/INC0010011",
     outcome: "undone",
@@ -420,7 +449,7 @@ export interface AgentRun {
   tokens: number
 }
 
-/** Recent individual agent runs — one row per invocation, newest first. */
+/** Recent individual agent runs, one row per invocation, newest first. */
 export const agentRuns: AgentRun[] = [
   {
     id: "r1",
@@ -522,7 +551,7 @@ export const agentRuns: AgentRun[] = [
     outcome: "needs-approval",
     trigger: "Nightly prompt review",
     summary:
-      "p-27 on IT Helpdesk Copilot 3 versions behind; retirement proposed",
+      "p-27 on IT Helpdesk Copilot scored before the open drift; re-evaluation proposed",
     recordNumber: "agt-it-helpdesk",
     recordHref: "/agentops/agents/agt-it-helpdesk",
     toolCalls: 7,
@@ -801,6 +830,30 @@ export const toolCatalog = [
     risk: "high",
   },
 ] as const
+
+export type ToolCatalogId = (typeof toolCatalog)[number]["id"]
+
+/**
+ * Maps a scripted tool-call name (`read_incident`, `search_knowledge`,
+ * `update_tool_permissions`) onto the allowed-tools category it belongs to, so
+ * the Guardrails tab's "Allowed tools" list can gate assistant runs.
+ */
+export function toolCategoryFor(toolName: string): ToolCatalogId {
+  if (toolName.startsWith("search_knowledge")) return "search_knowledge"
+  if (toolName.startsWith("send_")) return "send_notifications"
+  if (toolName.startsWith("close_") || toolName.startsWith("retire_"))
+    return "close_records"
+  if (
+    toolName.startsWith("update_tool") ||
+    toolName.startsWith("propose_model") ||
+    toolName.startsWith("retire_prompt")
+  )
+    return "change_agent_config"
+  if (toolName.startsWith("update_")) return "update_fields"
+  if (toolName.startsWith("create_") || toolName.startsWith("open_"))
+    return "create_records"
+  return "read_records"
+}
 
 export function getAgent(id: string) {
   return agents.find((a) => a.id === id)

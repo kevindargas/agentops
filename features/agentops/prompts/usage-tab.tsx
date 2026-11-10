@@ -6,10 +6,10 @@ import { ActivityIcon, FlaskConicalIcon } from "lucide-react"
 
 import { EmptyState } from "@/components/shared/empty-state"
 import { StateBadge } from "@/components/shared/status-badge"
-import { experiments } from "@/lib/data"
+import { experiments } from "@/lib/data/agentops"
 import { agentsUsingVersion, type PromptVersion } from "@/lib/data/prompts"
-import { formatNumber } from "@/lib/format"
-import { AgentChip, fmtCost } from "../shared"
+import { formatCost, formatNumber } from "@/lib/format"
+import { AgentChip } from "../shared"
 import { LabelBadge, VersionTag } from "./shared"
 
 export function UsageTab({
@@ -44,7 +44,10 @@ export function UsageTab({
   return (
     <div className="overflow-x-auto rounded-lg border">
       <table className="w-full min-w-[48rem] text-sm">
-        <thead className="bg-muted/40 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+        <caption className="sr-only">
+          Traffic and references per prompt version
+        </caption>
+        <thead className="bg-muted/40 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
           <tr>
             <th className="px-3 py-2 text-left font-medium">Version</th>
             <th className="px-3 py-2 text-left font-medium">Requests · 24h</th>
@@ -88,10 +91,10 @@ export function UsageTab({
                 </td>
                 <td className="w-32 px-3 py-3 text-right tabular-nums">
                   <span className="font-medium">
-                    {share ? `${Math.round(share * 100)}%` : "—"}
+                    {share ? `${Math.round(share * 100)}%` : "None"}
                   </span>
-                  <span className="block text-[11px] text-muted-foreground">
-                    {v.cost24h ? fmtCost(v.cost24h) : "no spend"}
+                  <span className="block text-2xs text-muted-foreground">
+                    {v.cost24h ? formatCost(v.cost24h) : "no spend"}
                   </span>
                 </td>
                 <td className="px-3 py-3">

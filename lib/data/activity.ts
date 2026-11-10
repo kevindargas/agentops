@@ -26,7 +26,7 @@ export function buildActivity(
       timestamp: hoursAgo(1.1),
       fieldChanges: [
         { field: "State", from: "New", to: "In Progress" },
-        { field: "Assigned to", from: "—", to: "Self" },
+        { field: "Assigned to", from: "Unassigned", to: "Self" },
       ],
     },
     {
@@ -60,7 +60,7 @@ export const notifications: Notification[] = [
   {
     id: "n1",
     title: "P1 Major Incident declared",
-    body: "INC0010078 — Payments API returning 5xx. You are on the bridge.",
+    body: "INC0010078: Payments API returning 5xx. You are on the bridge.",
     timestamp: hoursAgo(0.7),
     read: false,
     type: "sla",
@@ -69,7 +69,7 @@ export const notifications: Notification[] = [
   {
     id: "n2",
     title: "Approval requested",
-    body: "CHG0031104 — Scale eks-prod-east node group. CAB review Thursday.",
+    body: "CHG0031104: Scale eks-prod-east node group. CAB review Thursday.",
     timestamp: hoursAgo(2),
     read: false,
     type: "approval",
@@ -78,7 +78,7 @@ export const notifications: Notification[] = [
   {
     id: "n3",
     title: "Assigned to you",
-    body: "REQ0020335 — New Hire Account Setup for Liam O'Connor.",
+    body: "REQ0020335: New Hire Account Setup for Liam O'Connor.",
     timestamp: hoursAgo(5),
     read: false,
     type: "assignment",
@@ -111,7 +111,56 @@ export const notifications: Notification[] = [
     type: "system",
     href: "/agentops/drift",
   },
+  // Operator items from the AgentOps modules. Record ids are literals so this
+  // module stays light enough for the header; lib/data/integrity.test.ts
+  // asserts every one of them resolves.
+  {
+    id: "n7",
+    title: "Release approval requested",
+    body: "Change Risk Advisor rel-1021 is waiting on your sign-off as platform lead.",
+    timestamp: hoursAgo(3),
+    read: false,
+    type: "approval",
+    href: "/agentops/deployments/rel-1021",
+  },
+  {
+    id: "n8",
+    title: "Release approval requested",
+    body: "Knowledge Curator rel-1033 failed its eval gate; the owner is asking for an exception.",
+    timestamp: hoursAgo(7),
+    read: false,
+    type: "approval",
+    href: "/agentops/deployments/rel-1033",
+  },
+  {
+    id: "n9",
+    title: "Budget exceeded",
+    body: "Ops Analyst daily cap (bud-004) is over its limit; model downgrade is armed.",
+    timestamp: hoursAgo(1.2),
+    read: false,
+    type: "sla",
+    href: "/agentops/costs?tab=budgets&budget=bud-004",
+  },
+  {
+    id: "n10",
+    title: "API key expiring",
+    body: "gateway-prod-openai (key-002) expires soon. Rotate it before the grace window closes.",
+    timestamp: hoursAgo(9),
+    read: true,
+    type: "system",
+    href: "/agentops/providers?tab=keys",
+  },
 ]
+
+/** Unread notifications (header bell badge). */
+export function unreadNotificationCount(list: Notification[] = notifications) {
+  return list.filter((n) => !n.read).length
+}
+
+/** Items in the approvals inbox waiting on the current user. */
+export function pendingApprovalCount(list: Approval[] = approvals) {
+  return list.filter((a) => a.state === "Requested").length
+}
 
 export const approvals: Approval[] = [
   ...changes

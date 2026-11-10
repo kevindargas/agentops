@@ -1,11 +1,9 @@
 "use client"
 
 import { createColumnHelper } from "@tanstack/react-table"
-import { PlusIcon, ThumbsUpIcon } from "lucide-react"
-import { toast } from "sonner"
+import { ThumbsUpIcon } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import {
   DataTable,
   DataTableColumnHeader,
@@ -18,9 +16,9 @@ import {
 import { RecordLink } from "@/components/shared/record-link"
 import { StateBadge } from "@/components/shared/status-badge"
 import { UserChip } from "@/components/shared/user-chip"
-import { knowledgeArticles } from "@/lib/data"
 import { formatNumber } from "@/lib/format"
 import type { KnowledgeArticle } from "@/lib/types"
+import { knowledgeStore } from "./knowledge-store"
 
 const col = createColumnHelper<DataTableFeatures, KnowledgeArticle>()
 
@@ -73,7 +71,11 @@ const columns = col.columns([
   col.accessor((row) => helpfulPct(row), {
     id: "helpful",
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Helpful" />
+      <DataTableColumnHeader
+        column={column}
+        title="Helpful"
+        hint="Share of readers who voted the article helpful"
+      />
     ),
     cell: ({ getValue, row }) => (
       <span
@@ -123,11 +125,13 @@ const facets: FacetDef<KnowledgeArticle>[] = [
   },
 ]
 
+/** Article list. Reads `knowledgeStore` so a draft created from the sheet appears. */
 export function KnowledgeTable() {
+  const articles = knowledgeStore.use()
   return (
     <DataTable
       columns={columns}
-      data={knowledgeArticles}
+      data={articles}
       getRowId={(r) => r.number}
       getSearchText={(r) =>
         `${r.number} ${r.title} ${r.summary} ${r.tags.join(" ")}`
@@ -137,14 +141,7 @@ export function KnowledgeTable() {
       initialSorting={[{ id: "views", desc: true }]}
       rowHref={(r) => `/itsm/knowledge/${r.number}`}
       totalLabel="articles"
-      toolbar={
-        <Button
-          size="sm"
-          onClick={() => toast.success("Draft KB0010481 created")}
-        >
-          <PlusIcon /> New article
-        </Button>
-      }
+      caption="Knowledge articles"
     />
   )
 }

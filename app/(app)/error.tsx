@@ -4,6 +4,7 @@ import * as React from "react"
 import Link from "next/link"
 import { ArrowLeftIcon, RotateCcwIcon, TriangleAlertIcon } from "lucide-react"
 
+import { Eyebrow } from "@/components/shared/eyebrow"
 import { Button } from "@/components/ui/button"
 import {
   Empty,
@@ -26,7 +27,7 @@ export default function AppError({
   reset: () => void
 }) {
   React.useEffect(() => {
-    // Replace with your error reporter (Sentry, Datadog…). Kept as a console
+    // Replace with your error reporter (Sentry, Datadog). Kept as a console
     // call so the template works without any backend.
     console.error(error)
   }, [error])
@@ -43,9 +44,7 @@ export default function AppError({
         >
           <TriangleAlertIcon />
         </EmptyMedia>
-        <p className="font-mono text-[11px] font-medium tracking-widest text-muted-foreground uppercase">
-          Something went wrong
-        </p>
+        <Eyebrow mono>Something went wrong</Eyebrow>
         <EmptyTitle className="text-base">
           This page could not be displayed
         </EmptyTitle>
@@ -56,7 +55,7 @@ export default function AppError({
             <>
               {" "}
               Reference{" "}
-              <code className="rounded-sm bg-muted px-1 py-0.5 font-mono text-[11px]">
+              <code className="rounded-sm bg-muted px-1 py-0.5 font-mono text-2xs">
                 {error.digest}
               </code>
             </>
@@ -73,7 +72,7 @@ export default function AppError({
           </Button>
         </div>
         {process.env.NODE_ENV !== "production" && (
-          <pre className="mt-4 max-h-48 max-w-2xl overflow-auto rounded-lg border bg-muted/40 p-3 text-left font-mono text-[11px] leading-relaxed text-muted-foreground">
+          <pre className="mt-4 max-h-48 max-w-2xl overflow-auto rounded-lg border bg-muted/40 p-3 text-left font-mono text-2xs leading-relaxed text-muted-foreground">
             {error.message}
           </pre>
         )}

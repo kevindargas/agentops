@@ -2,10 +2,17 @@
 
 import * as React from "react"
 import { cn } from "cn"
-import { ClipboardListIcon, ExternalLinkIcon } from "lucide-react"
+import {
+  ClipboardListIcon,
+  ExternalLinkIcon,
+  FileSpreadsheetIcon,
+  FileTextIcon,
+} from "lucide-react"
 
 import { AvailabilityBar } from "@/components/charts/availability-bar"
+import { EmptyValue } from "@/components/data-table"
 import { EmptyState } from "@/components/shared/empty-state"
+import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Tooltip,
@@ -20,6 +27,7 @@ import type {
   FrameworkDef,
   FrameworkId,
 } from "@/lib/readiness/types"
+import { csvCell, downloadText, slug } from "./download"
 import { ControlStatusBadge, scoreTone, useReadiness } from "./shared"
 
 type ItemCoverage = "covered" | "partial" | "open" | "unmapped"
@@ -29,7 +37,7 @@ interface ItemRow {
   title: string
   controls: ControlEval[]
   applicable: ControlEval[]
-  /** Weighted average credit of applicable mapped controls, 0–100. */
+  /** Weighted average credit of applicable mapped controls, 0 to 100. */
   score: number
   coverage: ItemCoverage
 }
@@ -82,6 +90,56 @@ function mapFramework(fw: FrameworkDef, controls: ControlEval[]) {
   return { items, unmapped }
 }
 
+/** One row per framework item, for the compliance export. */
+function frameworkCsv(fw: FrameworkDef, items: ItemRow[]) {
+  const header = [
+    "framework",
+    "item_id",
+    "item_title",
+    "coverage",
+    "score",
+    "mapped_controls",
+    "applicable_controls",
+    "control_statuses",
+  ]
+  const rows = items.map((i) =>
+    [
+      fw.short,
+      i.id,
+      i.title,
+      i.coverage,
+      i.coverage === "unmapped" ? "" : i.score,
+      i.controls.map((e) => e.control.id).join(" "),
+      i.applicable.length,
+      i.controls.map((e) => `${e.control.id}=${e.response.status}`).join(" "),
+    ]
+      .map(csvCell)
+      .join(",")
+  )
+  return [header.join(","), ...rows].join("\n")
+}
+
+function frameworkMarkdown(
+  fw: FrameworkDef,
+  items: ItemRow[],
+  assessmentName: string
+) {
+  const lines = [
+    `# ${fw.name}: coverage for ${assessmentName}`,
+    "",
+    `Reference: ${fw.url}`,
+    "",
+    "| Item | Title | Coverage | Score | Mapped controls |",
+    "|---|---|---|---:|---|",
+    ...items.map(
+      (i) =>
+        `| ${i.id} | ${i.title} | ${i.coverage === "unmapped" ? "No applicable control" : coverageLabel[i.coverage]} | ${i.coverage === "unmapped" ? "" : i.score} | ${i.controls.map((e) => `${e.control.id} (${e.response.status})`).join(", ")} |`
+    ),
+    "",
+  ]
+  return lines.join("\n")
+}
+
 export function FrameworksTab({ onOpen }: { onOpen: (id: string) => void }) {
   const { assessment, result } = useReadiness()
   const [active, setActive] = React.useState<FrameworkId>(frameworks[0].id)
@@ -111,7 +169,12 @@ export function FrameworksTab({ onOpen }: { onOpen: (id: string) => void }) {
       </TabsList>
       {frameworks.map((fw) => (
         <TabsContent key={fw.id} value={fw.id}>
-          <FrameworkPanel fw={fw} controls={result.controls} onOpen={onOpen} />
+          <FrameworkPanel
+            fw={fw}
+            controls={result.controls}
+            assessmentName={assessment.name}
+            onOpen={onOpen}
+          />
         </TabsContent>
       ))}
     </Tabs>
@@ -121,10 +184,12 @@ export function FrameworksTab({ onOpen }: { onOpen: (id: string) => void }) {
 function FrameworkPanel({
   fw,
   controls,
+  assessmentName,
   onOpen,
 }: {
   fw: FrameworkDef
   controls: ControlEval[]
+  assessmentName: string
   onOpen: (id: string) => void
 }) {
   const { items, unmapped } = React.useMemo(
@@ -148,18 +213,51 @@ function FrameworkPanel({
             <Stat value={items.length - withControls} /> with no control mapped
           </p>
         </div>
-        <a
-          href={fw.url}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline print:hidden"
-        >
-          Reference <ExternalLinkIcon className="size-3" />
-        </a>
+        <div className="flex flex-wrap items-center gap-2 print:hidden">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              downloadText(
+                `${slug(assessmentName)}-${slug(fw.short)}-coverage.csv`,
+                frameworkCsv(fw, items),
+                "text/csv"
+              )
+            }
+          >
+            <FileSpreadsheetIcon /> CSV
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              downloadText(
+                `${slug(assessmentName)}-${slug(fw.short)}-coverage.md`,
+                frameworkMarkdown(fw, items, assessmentName),
+                "text/markdown"
+              )
+            }
+          >
+            <FileTextIcon /> Markdown
+          </Button>
+          <a
+            href={fw.url}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+          >
+            Reference <ExternalLinkIcon className="size-3" />
+          </a>
+        </div>
       </div>
 
       <div className="overflow-x-auto rounded-lg border bg-card">
         <table className="w-full min-w-[44rem] text-sm">
+          <caption className="sr-only">
+            {fw.short} items with coverage and mapped controls
+          </caption>
           <thead className="bg-muted/40 text-xs font-medium text-muted-foreground">
             <tr className="[&>th]:px-3 [&>th]:py-2 [&>th]:text-left [&>th]:font-medium">
               <th className="pl-4">Item</th>
@@ -180,7 +278,7 @@ function FrameworkPanel({
                 </td>
                 <td className="px-3 py-2.5">
                   {item.coverage === "unmapped" ? (
-                    <span className="text-xs text-muted-foreground">—</span>
+                    <EmptyValue />
                   ) : (
                     <AvailabilityBar
                       size="sm"
@@ -238,8 +336,8 @@ function FrameworkPanel({
                 </button>{" "}
                 <span className="font-mono">({u.refs.join(", ")})</span>
               </React.Fragment>
-            ))}{" "}
-            — these ids are not in the {fw.short} item list. Check the control
+            ))}
+            . These ids are not in the {fw.short} item list; check the control
             set for typos or a framework version mismatch.
           </>
         )}

@@ -1,11 +1,12 @@
 /**
- * Evals & Datasets — the regression-testing layer for prompts, models and
+ * Evals & Datasets: the regression-testing layer for prompts, models and
  * agents. Runs, datasets, evaluators and release gates are built once at
  * import time from a seeded RNG; the per-run test-case grid is generated
  * lazily in `getEvalCases()` with its own seed per run id and memoised so
  * 50 runs × 80 cases are never materialised for the whole set.
  */
 import { agentTraces, deployedAgents, getDeployedAgent } from "./agentops"
+import { getPromptForAgent } from "./prompts"
 import {
   chance,
   createRng,
@@ -34,7 +35,7 @@ export type EvaluatorType =
   | "Regex"
   | "Custom code"
   | "Human"
-export type EvaluatorScale = "0–1" | "1–5" | "pass/fail"
+export type EvaluatorScale = "0-1" | "1-5" | "pass/fail"
 export type EvaluatorMeasure =
   | "Faithfulness"
   | "Answer relevance"
@@ -62,9 +63,9 @@ export interface Evaluator {
   prompt: string
   /** USD per evaluated case. */
   costPerCase: number
-  /** Agreement with human labels, 0–100. */
+  /** Agreement with human labels, 0 to 100. */
   humanAgreement: number
-  /** 12 weekly agreement readings, 0–100. */
+  /** 12 weekly agreement readings, 0 to 100. */
   calibration: number[]
   usedInDatasetIds: string[]
   ownerId: string
@@ -116,11 +117,11 @@ export interface EvalRun {
   datasetId: string
   trigger: EvalTrigger
   status: EvalRunStatus
-  /** Weighted composite of evaluator scores, 0–100. */
+  /** Weighted composite of evaluator scores, 0 to 100. */
   composite: number
-  /** Mean score per evaluator, normalised 0–1. */
+  /** Mean score per evaluator, normalised 0 to 1. */
   scores: Record<string, number>
-  /** Share of cases that passed every evaluator, 0–100. */
+  /** Share of cases that passed every evaluator, 0 to 100. */
   passRate: number
   /** Composite delta vs the baseline run, in points. */
   delta: number | null
@@ -147,7 +148,7 @@ export interface EvalCase {
   input: string
   expected: string
   actual: string
-  /** Per-evaluator score, normalised 0–1. */
+  /** Per-evaluator score, normalised 0 to 1. */
   scores: Record<string, number>
   /** Judge explanation per evaluator. */
   rationales: Record<string, string>
@@ -202,7 +203,7 @@ export const evaluators: Evaluator[] = [
     type: "LLM-as-judge",
     modelId: "anthropic/claude-sonnet-5.5",
     measures: "Faithfulness",
-    scale: "0–1",
+    scale: "0-1",
     description:
       "Checks every claim in the answer against the retrieved context and the expected output. Penalises unsupported statements, invented record numbers and stale articles.",
     prompt: `You are grading an AI assistant's answer for FAITHFULNESS.
@@ -246,16 +247,16 @@ Return JSON: {"score": <0-1>, "unsupported": [..], "rationale": "<1-2 sentences>
     type: "LLM-as-judge",
     modelId: "openai/gpt-5.4-mini",
     measures: "Answer relevance",
-    scale: "1–5",
+    scale: "1-5",
     description:
       "Does the answer address what the user actually asked, at the right level of detail, without padding or deflection?",
-    prompt: `Rate how well the ANSWER addresses the QUESTION on a 1–5 scale.
+    prompt: `Rate how well the ANSWER addresses the QUESTION on a 1-5 scale.
 
-5 — fully answers the question, nothing missing, no filler
-4 — answers the question with minor omissions or slight verbosity
-3 — partially answers; user would need to ask a follow-up
-2 — mostly off-target or generic
-1 — does not address the question / deflects without reason
+5: fully answers the question, nothing missing, no filler
+4: answers the question with minor omissions or slight verbosity
+3: partially answers; user would need to ask a follow-up
+2: mostly off-target or generic
+1: does not address the question / deflects without reason
 
 QUESTION: {{input}}
 ANSWER: {{actual}}
@@ -279,10 +280,10 @@ Return JSON: {"score": <1-5>, "rationale": "<one sentence>"}`,
     type: "Rubric",
     modelId: "anthropic/claude-haiku-5.5",
     measures: "Policy compliance",
-    scale: "1–5",
+    scale: "1-5",
     description:
       "Five-point rubric for mandatory hand-offs, disclaimers and redaction rules. Sensitive HR and security topics must escalate to a human.",
-    prompt: `Rubric — Policy compliance (score each line 0/1, sum = 1–5)
+    prompt: `Rubric: Policy compliance (score each line 0/1, sum = 1-5)
 
 [ ] Mandatory hand-off: sensitive topics (harassment, medical, legal,
     compensation disputes) end with an offer to open a confidential case.
@@ -311,10 +312,10 @@ Return JSON: {"score": <1-5>, "failed": ["<line>", ...], "rationale": "…"}`,
     type: "LLM-as-judge",
     modelId: "google/gemini-3-flash-preview",
     measures: "Tone",
-    scale: "1–5",
+    scale: "1-5",
     description:
       "Clarity and register for the audience: concise for employees, warmer for customers, neutral for CAB notes.",
-    prompt: `Score the TONE of the answer for the audience "{{audience}}" (1–5).
+    prompt: `Score the TONE of the answer for the audience "{{audience}}" (1-5).
 
 Consider: directness, empathy where the user is blocked, absence of blame,
 no corporate boilerplate, reading level ≈ grade 8.
@@ -449,7 +450,7 @@ score = Pass() if normalise(actual.field) == normalise(expected.field) else Fail
     name: "Embedding similarity",
     type: "Embedding similarity",
     measures: "Semantic match",
-    scale: "0–1",
+    scale: "0-1",
     description:
       "Cosine similarity between the answer and the gold answer using text-embedding-3-large. Cheap first-pass signal; never used as the only gate.",
     prompt: `model: openai/text-embedding-3-large
@@ -537,14 +538,14 @@ score = Pass() if trace.cost <= budget_usd else Fail(f"$" + f"{trace.cost:.3f} >
     name: "Human review",
     type: "Human",
     measures: "Overall quality",
-    scale: "1–5",
+    scale: "1-5",
     description:
       "Reviewer rubric from the review queue (accuracy, grounding, tone, safety). Used to calibrate the LLM judges, not as a CI gate.",
-    prompt: `Reviewer rubric (each 1–5, overall = mean)
-- Accuracy   — facts and steps are correct
-- Grounding  — claims trace back to retrieved sources
-- Tone       — clear, appropriate for the audience
-- Safety     — no PII leak, policy respected
+    prompt: `Reviewer rubric (each 1-5, overall = mean)
+- Accuracy: facts and steps are correct
+- Grounding: claims trace back to retrieved sources
+- Tone: clear, appropriate for the audience
+- Safety: no PII leak, policy respected
 
 Reviewers: Service Desk leads + agent owner. ~25 cases / week.`,
     costPerCase: 1.8,
@@ -857,7 +858,7 @@ export const evalDatasets: EvalDataset[] = [
     id: "finance-sql-v1",
     name: "finance-sql-v1",
     description:
-      "Spend, cost-center and vendor questions with gold SQL over the finance semantic layer. Still small — staging only.",
+      "Spend, cost-center and vendor questions with gold SQL over the finance semantic layer. Still small; staging only.",
     cases: 64,
     sources: ["Human-authored", "Synthetic"],
     version: "v1",
@@ -957,7 +958,7 @@ export const evalDatasets: EvalDataset[] = [
     id: "tool-call-accuracy-v3",
     name: "tool-call-accuracy-v3",
     description:
-      "Cross-agent set of tasks with the exact tool plan expected — names, arguments, ordering constraints and forbidden side effects.",
+      "Cross-agent set of tasks with the exact tool plan expected: names, arguments, ordering constraints and forbidden side effects.",
     cases: 182,
     sources: ["Production traces", "Human-authored"],
     version: "v3",
@@ -1034,8 +1035,20 @@ const altModels: Record<string, string[]> = {
   "openai/gpt-5.5": ["anthropic/claude-sonnet-5.5"],
 }
 
-const bumpPrompt = (p: string, by: number) =>
-  `p-${Number(p.replace("p-", "")) + by}`
+/**
+ * Candidate prompt versions an eval can test for an agent: the staging and
+ * draft versions of the agent's own system prompt, newest first. Empty when
+ * the agent has nothing beyond production, in which case candidate runs test
+ * a model swap instead.
+ */
+function candidatePromptVersions(agentId: string): string[] {
+  const prompt = getPromptForAgent(agentId)
+  if (!prompt) return []
+  return prompt.versions
+    .filter((v) => v.label === "staging" || v.label === "draft")
+    .sort((a, b) => b.number - a.number)
+    .map((v) => v.id)
+}
 
 /** Automated judge cost per case; human review is billed elsewhere. */
 function judgeCost(evaluatorId: string) {
@@ -1076,11 +1089,16 @@ function buildRuns(): EvalRun[] {
       ["Manual", 2],
     ])
     const candidate = trigger === "Pre-deploy" || chance(rng, 0.25)
-    const promptVersion = candidate
-      ? bumpPrompt(agent.promptVersion, int(rng, 1, 2))
-      : agent.promptVersion
+    const candidates = candidatePromptVersions(agent.id)
+    // The draw is kept even when unused so the rest of the stream is stable.
+    const candidateIndex = int(rng, 1, 2) - 1
+    const promptVersion =
+      candidate && candidates.length
+        ? candidates[candidateIndex % candidates.length]
+        : agent.promptVersion
+    // Without a candidate prompt the run has to test a model swap instead.
     const modelId =
-      candidate && chance(rng, 0.4)
+      candidate && (promptVersion === agent.promptVersion || chance(rng, 0.4))
         ? pick(rng, altModels[agent.modelId] ?? [agent.modelId])
         : agent.modelId
 
@@ -1252,7 +1270,7 @@ const supportPool: Pool = [
   {
     input: "How do I export my invoices for last quarter?",
     expected:
-      "Billing → Statements → Export with the Jul 1–Sep 30 range; CSV in about a minute; 'Include documents' for PDFs.",
+      "Billing → Statements → Export with the Jul 1 to Sep 30 range; CSV in about a minute; 'Include documents' for PDFs.",
     bad: "Points to Settings → Downloads, which does not exist, and claims PDFs are e-mailed within 24 hours.",
     tags: ["billing", "how-to"],
   },
@@ -1260,7 +1278,7 @@ const supportPool: Pool = [
     input:
       "I was charged twice for invoice {inv}. I want a refund today or I'm cancelling.",
     expected:
-      "Acknowledges the frustration, confirms the duplicate charge from account context, opens a refund request with the 3–5 day SLA, and offers a human callback.",
+      "Acknowledges the frustration, confirms the duplicate charge from account context, opens a refund request with the 3-5 day SLA, and offers a human callback.",
     bad: "Promises the refund will land today and does not create a request record.",
     tags: ["refunds", "escalation"],
   },
@@ -1383,7 +1401,7 @@ const toolPool: Pool = [
     tags: ["freeze-window"],
   },
   {
-    input: "[scheduled] Correlate alerts window {hh}:20–{hh}:25",
+    input: "[scheduled] Correlate alerts window {hh}:20-{hh}:25",
     expected:
       "Groups the three sw-core-east-01 alerts into one incident with root CI sw-core-east-01; suppresses duplicates.",
     bad: "Creates three separate incidents and calls create_incident without grouping.",
@@ -1410,7 +1428,7 @@ const policyPool: Pool = [
   {
     input: "Can my manager see my therapy appointments in the calendar?",
     expected:
-      "No — private entries show as Busy; offers a confidential HR case.",
+      "No: private entries show as Busy; offers a confidential HR case.",
     bad: "Explains how to check calendar permissions but never offers a confidential hand-off.",
     tags: ["privacy", "handoff"],
   },
@@ -1691,7 +1709,7 @@ export function getEvalCases(runId: string): EvalCase[] {
         : "same"
     const baselinePassed =
       change === "regression" ? true : change === "improvement" ? false : passed
-    // Which evaluators fail on a failed case: 1–2 of them.
+    // Which evaluators fail on a failed case: 1 to 2 of them.
     const culprits = passed
       ? new Set<string>()
       : new Set(
@@ -1797,14 +1815,14 @@ function buildGates(): ReleaseGate[] {
         id: "composite",
         label: "Composite score",
         requirement: "≥ 85",
-        current: latest ? String(latest.composite) : "—",
+        current: latest ? String(latest.composite) : "n/a",
         pass: (latest?.composite ?? 0) >= 85,
       },
       {
         id: "regressions",
         label: "No regressions on golden set",
         requirement: "= 0",
-        current: latest ? String(latest.regressions) : "—",
+        current: latest ? String(latest.regressions) : "n/a",
         pass: (latest?.regressions ?? 1) === 0,
       },
       {
@@ -1825,7 +1843,7 @@ function buildGates(): ReleaseGate[] {
         id: "cost",
         label: "Cost per case",
         requirement: `≤ $${budget.cost.toFixed(2)}`,
-        current: latest ? `$${costPerCase.toFixed(3)}` : "—",
+        current: latest ? `$${costPerCase.toFixed(3)}` : "n/a",
         pass: costPerCase <= budget.cost,
       },
     ]

@@ -1,12 +1,8 @@
 import type { Metadata } from "next"
 import {
   AlertTriangleIcon,
-  BellIcon,
-  BookMarkedIcon,
   ClockIcon,
-  GitBranchIcon,
   LightbulbIcon,
-  LinkIcon,
   SearchIcon,
   ServerIcon,
   UserIcon,
@@ -15,7 +11,6 @@ import {
 } from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Button } from "@/components/ui/button"
 import { ActivityStream } from "@/components/record/activity-stream"
 import { LifecycleTracker } from "@/components/record/lifecycle-tracker"
 import { MetaItem, RecordHeader } from "@/components/record/record-header"
@@ -28,13 +23,17 @@ import { RelatedRecordCard } from "@/components/record/related-record-card"
 import { DetailList } from "@/components/shared/detail-list"
 import { PriorityBadge, StateBadge } from "@/components/shared/status-badge"
 import { GroupChip, UserChip } from "@/components/shared/user-chip"
+import {
+  ProblemActions,
+  ProblemBadges,
+} from "@/features/problems/problem-actions"
 import { problemStates } from "@/lib/constants"
 import {
   buildActivity,
   changes,
   getCi,
   getProblem,
-  incidents,
+  incidentsForProblem,
 } from "@/lib/data"
 import { formatDate, formatDateTime, timeAgo } from "@/lib/format"
 
@@ -63,9 +62,7 @@ export default async function ProblemPage({
       />
     )
   const ci = getCi(problem.ciId)
-  const linkedIncidents = incidents.filter(
-    (i) => i.problemId === problem.number
-  )
+  const linkedIncidents = incidentsForProblem(problem.number)
   const openLinked = linkedIncidents.filter(
     (i) => !["Resolved", "Closed", "Canceled"].includes(i.state)
   )
@@ -84,12 +81,7 @@ export default async function ProblemPage({
         badges={
           <>
             <PriorityBadge priority={problem.priority} />
-            <StateBadge state={problem.state} />
-            {problem.knownError && (
-              <span className="inline-flex h-5 items-center gap-1 rounded-full border border-warning/40 bg-warning/15 px-2 text-xs font-medium text-warning-text">
-                <BookMarkedIcon className="size-3" /> Known error
-              </span>
-            )}
+            <ProblemBadges problem={problem} />
           </>
         }
         meta={
@@ -108,53 +100,11 @@ export default async function ProblemPage({
               icon={<AlertTriangleIcon />}
               tone={openLinked.length > 0 ? "warning" : "default"}
             >
-              {problem.relatedIncidents} linked · {openLinked.length} open
+              {linkedIncidents.length} linked · {openLinked.length} open
             </MetaItem>
           </>
         }
-        actions={
-          <>
-            <Button variant="outline" disabled={problem.knownError}>
-              <LightbulbIcon />{" "}
-              {problem.knownError
-                ? "Known error published"
-                : "Publish known error"}
-            </Button>
-            <Button disabled={closed}>
-              <GitBranchIcon /> Create change
-            </Button>
-          </>
-        }
-        overflow={[
-          {
-            label: "Link incident",
-            icon: <LinkIcon />,
-            href: "/itsm/incidents",
-          },
-          {
-            label: "Request RCA review",
-            icon: <SearchIcon />,
-            message: "RCA review requested from the problem board",
-          },
-          {
-            label: "Follow",
-            icon: <BellIcon />,
-            message: `You now follow ${problem.number}`,
-            separatorBefore: true,
-          },
-          {
-            label: "Close problem",
-            destructive: true,
-            separatorBefore: true,
-            disabled: closed,
-            confirm: {
-              title: `Close ${problem.number}?`,
-              description: `${openLinked.length} linked incident${openLinked.length === 1 ? "" : "s"} still open. Closing the problem will not resolve them.`,
-              actionLabel: "Close problem",
-            },
-            message: `${problem.number} closed`,
-          },
-        ]}
+        actions={<ProblemActions problem={problem} />}
       />
 
       <RecordLayout
@@ -183,7 +133,7 @@ export default async function ProblemPage({
               contentClassName="flex flex-col gap-2"
             >
               <SummaryRow label="Linked incidents">
-                {problem.relatedIncidents}
+                {linkedIncidents.length}
               </SummaryRow>
               <SummaryRow label="Still open">{openLinked.length}</SummaryRow>
               <SummaryRow label="P1 / P2">
@@ -196,7 +146,7 @@ export default async function ProblemPage({
 
             {ci && (
               <RecordSection
-                title="Configuration item"
+                title="Affected service"
                 icon={<ServerIcon />}
                 size="sm"
                 contentClassName="flex flex-col gap-3"
@@ -205,6 +155,7 @@ export default async function ProblemPage({
                   number={ci.id.toUpperCase()}
                   type={ci.class}
                   title={ci.name}
+                  href="/itom/health"
                   state={ci.status}
                   icon={<ServerIcon />}
                   meta={`${ci.environment} · ${ci.businessCriticality}`}
@@ -246,7 +197,7 @@ export default async function ProblemPage({
                 <p className="text-sm leading-relaxed">{problem.rootCause}</p>
               ) : (
                 <p className="text-sm text-muted-foreground italic">
-                  Not yet identified — analysis in progress.
+                  Not yet identified. Analysis in progress.
                 </p>
               )}
             </div>
@@ -265,18 +216,11 @@ export default async function ProblemPage({
           </div>
         </RecordSection>
 
-        <RecordSection
-          title="Details"
-          action={
-            <Button variant="ghost" size="xs" disabled={closed}>
-              Edit
-            </Button>
-          }
-        >
+        <RecordSection title="Details">
           <DetailList
             items={[
               {
-                label: "Configuration item",
+                label: "Affected service",
                 value: ci ? (
                   <span className="inline-flex items-center gap-1.5">
                     {ci.name}
@@ -289,7 +233,7 @@ export default async function ProblemPage({
               {
                 label: "Known error",
                 value: problem.knownError
-                  ? "Yes — published to the knowledge base"
+                  ? "Yes, published to the knowledge base"
                   : "No",
               },
               {
@@ -378,12 +322,15 @@ export default async function ProblemPage({
               content: (
                 <RelatedList
                   title="Related changes"
-                  description="Changes on the same configuration item."
+                  description="Changes on the same service."
                   rows={linkedChanges}
                   getKey={(c) => c.number}
                   getHref={(c) => `/itsm/changes/${c.number}`}
-                  emptyMessage="No changes scheduled for this CI."
-                  action={{ label: "Create change", href: "/itsm/changes" }}
+                  emptyMessage="No changes scheduled for this service."
+                  action={{
+                    label: "Create change",
+                    href: "/itsm/changes?new=1",
+                  }}
                   columns={[
                     {
                       header: "Number",

@@ -84,7 +84,7 @@ export function TemplateMenu() {
       <aside
         role="dialog"
         aria-label="Agentic templates"
-        className="absolute inset-y-0 left-0 z-20 flex w-[320px] max-w-[90%] animate-in flex-col border-r bg-background shadow-2xl duration-200 fade-in-0 slide-in-from-left-6"
+        className="absolute inset-y-0 left-0 z-20 flex w-[320px] max-w-[90%] animate-in flex-col border-r bg-background shadow-overlay duration-200 fade-in-0 slide-in-from-left-6"
       >
         <div className="flex items-center gap-2 border-b px-3 py-2.5">
           <span className="flex size-7 items-center justify-center rounded-md bg-muted text-muted-foreground">
@@ -92,7 +92,7 @@ export function TemplateMenu() {
           </span>
           <div className="min-w-0 flex-1 leading-tight">
             <p className="text-sm font-semibold">Agentic templates</p>
-            <p className="text-[11px] text-muted-foreground">
+            <p className="text-2xs text-muted-foreground">
               Multi-step runs with a plan you can review
             </p>
           </div>
@@ -113,7 +113,7 @@ export function TemplateMenu() {
               autoFocus
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search templates…"
+              placeholder="Search templates"
               className="h-8 pl-8 text-sm"
               aria-label="Search templates"
             />
@@ -154,7 +154,7 @@ export function TemplateMenu() {
           </div>
         </ScrollArea>
 
-        <div className="border-t px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
+        <div className="border-t px-3 py-2 text-2xs leading-relaxed text-muted-foreground">
           Templates run with your current model. Steps that change records are
           queued for approval.
         </div>
@@ -186,14 +186,14 @@ function TemplateGroup({
         {highlight && <SparklesIcon className="size-3 text-brand" />}
         <p
           className={cn(
-            "text-[11px] font-medium tracking-wide uppercase",
+            "text-2xs font-medium tracking-wide uppercase",
             highlight ? "text-brand" : "text-muted-foreground"
           )}
         >
           {title}
         </p>
         {hint && (
-          <span className="font-mono text-[10px] text-muted-foreground">
+          <span className="font-mono text-3xs text-muted-foreground">
             {hint}
           </span>
         )}
@@ -251,7 +251,7 @@ function TemplateCard({
             {t.writes && (
               <Badge
                 variant="outline"
-                className="h-4 gap-0.5 px-1 text-[9px] font-medium text-muted-foreground"
+                className="h-4 gap-0.5 px-1 text-3xs font-medium text-muted-foreground"
               >
                 <PenLineIcon className="size-2.5" /> Writes
               </Badge>
@@ -260,7 +260,7 @@ function TemplateCard({
           <span className="mt-0.5 line-clamp-2 block text-xs leading-snug text-muted-foreground">
             {t.description}
           </span>
-          <span className="mt-1.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
+          <span className="mt-1.5 flex items-center gap-1.5 text-3xs text-muted-foreground">
             <span className="tabular-nums">{t.steps.length} steps</span>
             <span aria-hidden>·</span>
             <span className="truncate">
@@ -272,7 +272,7 @@ function TemplateCard({
       </TooltipTrigger>
       <TooltipContent side="right" align="start" className="max-w-64 p-0">
         <div className="px-2.5 py-2">
-          <p className="text-[11px] font-medium opacity-70">Plan</p>
+          <p className="text-2xs font-medium opacity-70">Plan</p>
           <ol className="mt-1 flex flex-col gap-0.5 text-xs">
             {t.steps.map((s, i) => (
               <li key={s} className="flex gap-1.5">
@@ -283,7 +283,7 @@ function TemplateCard({
               </li>
             ))}
           </ol>
-          <p className="mt-1.5 border-t border-current/15 pt-1.5 text-[11px] opacity-70">
+          <p className="mt-1.5 border-t border-current/15 pt-1.5 text-2xs opacity-70">
             “{templatePrompt(t, context)}”
           </p>
         </div>

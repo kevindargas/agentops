@@ -2,7 +2,11 @@
 
 import * as React from "react"
 import { cn } from "cn"
-import { AlertCircleIcon, ChevronDownIcon } from "lucide-react"
+import {
+  AlertCircleIcon,
+  ArrowRightLeftIcon,
+  ChevronDownIcon,
+} from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import {
@@ -10,8 +14,14 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
+import {
+  formatCost,
+  formatMs,
+  formatTokens,
+  modelDisplayName,
+} from "@/lib/format"
 import type { TraceSpan } from "@/lib/types"
-import { fmtCost, fmtMs, fmtTokens, modelDisplayName, nodeMeta } from "./shared"
+import { finishReasonLabel, nodeMeta } from "./shared"
 
 const barTone: Record<TraceSpan["type"], string> = {
   router: "bg-chart-4",
@@ -41,23 +51,23 @@ export function TraceWaterfall({
   )
   const ticks = [0, 0.25, 0.5, 0.75, 1]
   return (
-    <div className={cn("overflow-hidden rounded-xl border", className)}>
-      <div className="grid grid-cols-[minmax(12rem,1.2fr)_3fr_auto] items-center gap-3 border-b bg-muted/40 px-3 py-2 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+    <div className={cn("overflow-x-auto rounded-xl border", className)}>
+      <div className="grid min-w-[36rem] grid-cols-[minmax(12rem,1.2fr)_3fr_auto] items-center gap-3 border-b bg-muted/40 px-3 py-2 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
         <span>Span</span>
         <span className="relative h-3">
           {ticks.map((t) => (
             <span
               key={t}
-              className="absolute top-0 -translate-x-1/2 font-mono text-[10px] normal-case tabular-nums"
+              className="absolute top-0 -translate-x-1/2 font-mono text-3xs normal-case tabular-nums"
               style={{ left: `${t * 100}%` }}
             >
-              {fmtMs(totalMs * t)}
+              {formatMs(totalMs * t)}
             </span>
           ))}
         </span>
         <span className="w-20 text-right">Duration</span>
       </div>
-      <ol className="divide-y">
+      <ol className="min-w-[36rem] divide-y">
         {spans.map((s) => {
           const meta = nodeMeta[s.type]
           const Icon = meta.icon
@@ -76,7 +86,7 @@ export function TraceWaterfall({
                     <button
                       type="button"
                       className="grid w-full grid-cols-[minmax(12rem,1.2fr)_3fr_auto] items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-muted/40 data-[panel-open]:bg-muted/30"
-                      aria-label={`${s.name}, ${fmtMs(s.durationMs)}, ${s.status}`}
+                      aria-label={`${s.name}, ${formatMs(s.durationMs)}, ${s.status}`}
                     />
                   }
                 >
@@ -105,6 +115,30 @@ export function TraceWaterfall({
                         aria-label="error"
                       />
                     )}
+                    {s.finishReason && s.finishReason !== "stop" && (
+                      <Badge
+                        variant="outline"
+                        className={cn(
+                          "hidden h-4 shrink-0 px-1 font-mono text-3xs font-normal md:inline-flex",
+                          s.finishReason === "error" ||
+                            s.finishReason === "content_filter"
+                            ? "border-destructive/30 text-danger-text"
+                            : s.finishReason === "length"
+                              ? "border-warning/40 text-warning-text"
+                              : "text-muted-foreground"
+                        )}
+                      >
+                        {finishReasonLabel[s.finishReason]}
+                      </Badge>
+                    )}
+                    {s.responseModelId &&
+                      s.requestedModelId &&
+                      s.responseModelId !== s.requestedModelId && (
+                        <ArrowRightLeftIcon
+                          className="size-3.5 shrink-0 text-info-text"
+                          aria-label="Model alias resolved to a different model"
+                        />
+                      )}
                   </span>
                   <span className="relative h-5">
                     {ticks.slice(1, -1).map((t) => (
@@ -126,14 +160,14 @@ export function TraceWaterfall({
                     />
                   </span>
                   <span className="w-20 text-right font-mono text-xs text-muted-foreground tabular-nums">
-                    {fmtMs(s.durationMs)}
+                    {formatMs(s.durationMs)}
                   </span>
                 </CollapsibleTrigger>
                 <CollapsibleContent>
                   <div className="grid gap-3 border-t bg-muted/20 px-3 py-3 pl-10 text-xs lg:grid-cols-[1fr_1fr_14rem]">
                     <Field label="Input">
                       {s.input ?? (
-                        <span className="text-muted-foreground">—</span>
+                        <span className="text-muted-foreground">None</span>
                       )}
                     </Field>
                     <Field
@@ -141,21 +175,49 @@ export function TraceWaterfall({
                       tone={s.status === "error" ? "danger" : undefined}
                     >
                       {s.output ?? (
-                        <span className="text-muted-foreground">—</span>
+                        <span className="text-muted-foreground">None</span>
                       )}
                     </Field>
                     <div className="flex flex-col gap-2">
                       <Field label="Timing">
                         <span className="font-mono tabular-nums">
-                          {fmtMs(s.startMs)} → {fmtMs(s.startMs + s.durationMs)}
+                          {formatMs(s.startMs)} →{" "}
+                          {formatMs(s.startMs + s.durationMs)}
                         </span>
                       </Field>
                       {s.modelId && (
                         <Field label="Model">
-                          {modelDisplayName(s.modelId)} ·{" "}
-                          {fmtTokens(s.tokensIn ?? 0)} in /{" "}
-                          {fmtTokens(s.tokensOut ?? 0)} out ·{" "}
-                          {fmtCost(s.cost ?? 0, 3)}
+                          {s.requestedModelId &&
+                          s.responseModelId &&
+                          s.responseModelId !== s.requestedModelId ? (
+                            <span className="block font-mono text-2xs leading-snug">
+                              <span className="text-muted-foreground">
+                                {s.requestedModelId}
+                              </span>
+                              <span aria-hidden> → </span>
+                              <span className="text-info-text">
+                                {s.responseModelId}
+                              </span>
+                            </span>
+                          ) : (
+                            <span className="block">
+                              {modelDisplayName(s.modelId)}
+                            </span>
+                          )}
+                          <span className="block">
+                            {formatTokens(s.tokensIn ?? 0)} in /{" "}
+                            {formatTokens(s.tokensOut ?? 0)} out ·{" "}
+                            {formatCost(s.cost ?? 0, 3)}
+                            {s.finishReason && (
+                              <>
+                                {" "}
+                                · finish{" "}
+                                <span className="font-mono">
+                                  {finishReasonLabel[s.finishReason]}
+                                </span>
+                              </>
+                            )}
+                          </span>
                         </Field>
                       )}
                       {s.attributes && (
@@ -165,7 +227,7 @@ export function TraceWaterfall({
                               <Badge
                                 key={k}
                                 variant="outline"
-                                className="h-5 gap-1 px-1.5 font-mono text-[10px] font-normal text-muted-foreground"
+                                className="h-5 gap-1 px-1.5 font-mono text-3xs font-normal text-muted-foreground"
                               >
                                 {k}=
                                 <span className="text-foreground">
@@ -199,7 +261,7 @@ function Field({
 }) {
   return (
     <div className="min-w-0">
-      <p className="mb-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+      <p className="mb-1 text-3xs font-medium tracking-wide text-muted-foreground uppercase">
         {label}
       </p>
       <div

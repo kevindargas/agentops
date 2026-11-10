@@ -4,7 +4,9 @@
  * https://openrouter.ai/api/v1/models
  */
 
-export const OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
+/** Override with `OPENROUTER_MODELS_URL` to point the catalog at a gateway or mirror. */
+export const OPENROUTER_MODELS_URL =
+  process.env.OPENROUTER_MODELS_URL ?? "https://openrouter.ai/api/v1/models"
 
 /** Raw response item (only the fields we read). */
 export interface RawModel {
@@ -239,7 +241,7 @@ export function formatPrice(perM: number | null) {
 
 /** 262144 → "262K", 1048576 → "1M". */
 export function formatContext(tokens: number) {
-  if (!tokens) return "—"
+  if (!tokens) return "n/a"
   if (tokens >= 1_000_000)
     return `${(tokens / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`
   return `${Math.round(tokens / 1000)}K`

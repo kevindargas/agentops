@@ -9,6 +9,8 @@ const TRANSITION_MS = 320
 /**
  * Adds `html.theme-transition` for the duration of a light/dark flip so every
  * surface cross-fades together (CSS in globals.css). Safe to call repeatedly.
+ * The `D` hotkey that toggles the theme lives in
+ * `components/layout/command-menu.tsx` with the other single-key shortcuts.
  */
 export function withThemeTransition(apply: () => void) {
   if (typeof document === "undefined") return apply()
@@ -36,39 +38,10 @@ function ThemeProvider({
       enableSystem
       {...props}
     >
-      <ThemeHotkey />
       <ThemeCrossfade />
       {children}
     </NextThemesProvider>
   )
-}
-
-function isTypingTarget(target: EventTarget | null) {
-  if (!(target instanceof HTMLElement)) return false
-  return (
-    target.isContentEditable ||
-    ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) ||
-    target.closest("[cmdk-root]") !== null
-  )
-}
-
-/** Press "d" anywhere (outside inputs) to toggle dark mode. */
-function ThemeHotkey() {
-  const { resolvedTheme, setTheme } = useTheme()
-  React.useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.defaultPrevented || event.repeat) return
-      if (event.metaKey || event.ctrlKey || event.altKey) return
-      if (event.key.toLowerCase() !== "d") return
-      if (isTypingTarget(event.target)) return
-      withThemeTransition(() =>
-        setTheme(resolvedTheme === "dark" ? "light" : "dark")
-      )
-    }
-    window.addEventListener("keydown", onKeyDown)
-    return () => window.removeEventListener("keydown", onKeyDown)
-  }, [resolvedTheme, setTheme])
-  return null
 }
 
 /**

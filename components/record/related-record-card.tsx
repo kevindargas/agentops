@@ -39,7 +39,7 @@ export function RelatedRecordCard({
           {state && (
             <StateBadge
               state={state}
-              className="ml-auto h-4 px-1.5 text-[10px]"
+              className="ml-auto h-4 px-1.5 text-3xs"
               dot={false}
             />
           )}

@@ -1,5 +1,6 @@
 "use client"
 
+import * as React from "react"
 import { createColumnHelper } from "@tanstack/react-table"
 import { PauseIcon, PlayIcon } from "lucide-react"
 import { toast } from "sonner"
@@ -14,15 +15,36 @@ import {
   type DataTableFeatures,
   type FacetDef,
 } from "@/components/data-table"
+import { StatCard } from "@/components/shared/stat-card"
+import { StatGrid } from "@/components/shared/stat-grid"
 import { StateBadge } from "@/components/shared/status-badge"
 import { UserChip } from "@/components/shared/user-chip"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
-import { deployedAgents } from "@/lib/data"
-import { formatNumber } from "@/lib/format"
+import { deployedAgents, openDriftSeverity } from "@/lib/data/agentops"
+import { formatCost, formatMs, formatNumber } from "@/lib/format"
 import type { DeployedAgent } from "@/lib/types"
-import { fmtCost, fmtMs, FrameworkBadge, ModelChip, ScoreBar } from "./shared"
+import { FrameworkBadge, ModelChip, ScoreBar } from "./shared"
+import { agentStore } from "./stores"
 
 const col = createColumnHelper<DataTableFeatures, DeployedAgent>()
+
+/** Colour for the Drift cell: open signal severity first, then PSI thresholds. */
+function driftClass(agent: DeployedAgent) {
+  const open = openDriftSeverity(agent.id)
+  if (open === "Critical" || agent.driftScore >= 0.25) return "text-danger-text"
+  if (open === "Warning" || agent.driftScore >= 0.1) return "text-warning-text"
+  return "text-muted-foreground"
+}
 
 export const agentColumns = col.columns([
   col.accessor("name", {
@@ -42,7 +64,14 @@ export const agentColumns = col.columns([
     header: ({ column }) => (
       <DataTableColumnHeader column={column} title="Health" />
     ),
-    cell: ({ getValue }) => <StateBadge state={getValue()} />,
+    cell: ({ getValue, row }) =>
+      row.original.paused ? (
+        <span title={row.original.pausedReason}>
+          <StateBadge state="Paused" icon={<PauseIcon className="size-3" />} />
+        </span>
+      ) : (
+        <StateBadge state={getValue()} />
+      ),
     meta: { width: "w-28", label: "Health", skeleton: "w-20 rounded-full" },
   }),
   col.accessor("framework", {
@@ -83,7 +112,11 @@ export const agentColumns = col.columns([
   col.accessor((r) => r.metrics.quality, {
     id: "quality",
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Quality" />
+      <DataTableColumnHeader
+        column={column}
+        title="Quality"
+        hint="Traffic-weighted evaluator composite, 0 to 100, with the 14-day trend."
+      />
     ),
     cell: ({ getValue, row }) => (
       <span className="flex items-center justify-end gap-2">
@@ -102,10 +135,14 @@ export const agentColumns = col.columns([
   col.accessor((r) => r.metrics.p95Ms, {
     id: "p95",
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="p95" />
+      <DataTableColumnHeader
+        column={column}
+        title="p95"
+        hint="95th percentile run latency over the last 24 hours: 1 in 20 runs is slower than this."
+      />
     ),
     cell: ({ getValue }) => (
-      <NumericCell value={getValue() || null} format={fmtMs} />
+      <NumericCell value={getValue() || null} format={formatMs} />
     ),
     meta: {
       width: "w-24",
@@ -135,19 +172,17 @@ export const agentColumns = col.columns([
   }),
   col.accessor("driftScore", {
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Drift" />
+      <DataTableColumnHeader
+        column={column}
+        title="Drift"
+        hint="Population stability index of inputs against the 28-day baseline. Amber from 0.10, red from 0.25 or when the agent has an open drift signal of that severity."
+      />
     ),
-    cell: ({ getValue }) => (
+    cell: ({ getValue, row }) => (
       <NumericCell
         value={getValue()}
         format={(n) => n.toFixed(2)}
-        className={
-          getValue() >= 0.25
-            ? "text-danger-text"
-            : getValue() >= 0.1
-              ? "text-warning-text"
-              : "text-muted-foreground"
-        }
+        className={driftClass(row.original)}
       />
     ),
     meta: {
@@ -163,7 +198,7 @@ export const agentColumns = col.columns([
       <DataTableColumnHeader column={column} title="Cost · day" />
     ),
     cell: ({ getValue }) => (
-      <NumericCell value={getValue()} format={(n) => fmtCost(n, 0)} />
+      <NumericCell value={getValue()} format={(n) => formatCost(n, 0)} />
     ),
     meta: {
       width: "w-28",
@@ -195,7 +230,7 @@ const facets: FacetDef<DeployedAgent>[] = [
       value: v,
       label: v,
     })),
-    getValue: (r) => r.health,
+    getValue: (r) => (r.paused ? "Paused" : r.health),
   },
   {
     id: "framework",
@@ -225,54 +260,168 @@ const facets: FacetDef<DeployedAgent>[] = [
   },
 ]
 
-export function AgentsTable({
-  data = deployedAgents,
-}: {
-  data?: DeployedAgent[]
-}) {
+/** Stat row for the Agents page, read from the same store as the table. */
+export function AgentStats() {
+  const agents = agentStore.use()
+  const prod = agents.filter((a) => a.environment === "production")
+  const byFramework = (f: DeployedAgent["framework"]) =>
+    agents.filter((a) => a.framework === f).length
+  const attention = agents.filter(
+    (a) => a.paused || a.health === "Drifting" || a.health === "Degraded"
+  ).length
   return (
-    <DataTable
-      columns={agentColumns}
-      data={data}
-      getRowId={(r) => r.id}
-      getSearchText={(r) =>
-        `${r.name} ${r.team} ${r.modelId} ${r.framework} ${r.tools.join(" ")}`
-      }
-      searchPlaceholder="Search agents, teams, models…"
-      facets={facets}
-      initialSorting={[{ id: "requests", desc: true }]}
-      initialColumnVisibility={{ ownerId: false, lastDeployed: false }}
-      rowHref={(r) => `/agentops/agents/${r.id}`}
-      totalLabel="agents"
-      selectionLabel={(n) => (n === 1 ? "agent" : "agents")}
-      bulkActions={(rows, clear) => (
-        <>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              toast(
-                `${rows.length} agent${rows.length === 1 ? "" : "s"} paused`
-              )
-              clear()
-            }}
-          >
-            <PauseIcon /> Pause
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              toast.success(
-                `${rows.length} agent${rows.length === 1 ? "" : "s"} resumed`
-              )
-              clear()
-            }}
-          >
-            <PlayIcon /> Resume
-          </Button>
-        </>
-      )}
-    />
+    <StatGrid columns={4}>
+      <StatCard
+        label="Deployed"
+        value={agents.length}
+        hint={`${prod.length} production · ${agents.length - prod.length} staging`}
+      />
+      <StatCard
+        label="LangGraph"
+        value={byFramework("LangGraph")}
+        hint={`${byFramework("LangChain")} LangChain · ${byFramework("Custom")} custom`}
+      />
+      <StatCard
+        label="Requests · 24h"
+        value={formatNumber(
+          prod.reduce((s, a) => s + a.metrics.requests24h, 0),
+          true
+        )}
+        hint="Across production agents"
+      />
+      <StatCard
+        label="Needs attention"
+        value={attention}
+        upIsGood={false}
+        hint="Drifting, degraded or paused"
+      />
+    </StatGrid>
   )
 }
+
+export function AgentsTable() {
+  const agents = agentStore.use()
+  const [pendingPause, setPendingPause] = React.useState<DeployedAgent[]>([])
+
+  const pause = (list: DeployedAgent[]) => {
+    for (const a of list)
+      agentStore.patch(a.id, {
+        paused: true,
+        pausedReason: "Paused from the agents list",
+      })
+    toast(`${plural(list)} paused`, {
+      description:
+        "No new runs are accepted; in-flight runs finish and schedules are skipped.",
+      action: {
+        label: "Undo",
+        onClick: () => {
+          for (const a of list)
+            agentStore.patch(a.id, {
+              paused: a.paused,
+              pausedReason: a.pausedReason,
+            })
+        },
+      },
+      duration: 6000,
+    })
+  }
+  const resume = (list: DeployedAgent[]) => {
+    for (const a of list)
+      agentStore.patch(a.id, { paused: false, pausedReason: undefined })
+    toast.success(`${plural(list)} resumed`, {
+      description: "New runs are accepted again.",
+    })
+  }
+
+  return (
+    <>
+      <DataTable
+        columns={agentColumns}
+        data={agents}
+        getRowId={(r) => r.id}
+        getSearchText={(r) =>
+          `${r.name} ${r.team} ${r.modelId} ${r.framework} ${r.tools.join(" ")} ${r.paused ? "paused" : ""}`
+        }
+        searchPlaceholder="Search agents, teams, models…"
+        facets={facets}
+        initialSorting={[{ id: "requests", desc: true }]}
+        initialColumnVisibility={{ ownerId: false, lastDeployed: false }}
+        rowHref={(r) => `/agentops/agents/${r.id}`}
+        totalLabel="agents"
+        caption="Deployed agents"
+        selectionLabel={(n) => (n === 1 ? "agent" : "agents")}
+        bulkActions={(rows, clear) => {
+          const selected = rows.map((r) => r.original)
+          const running = selected.filter((r) => !r.paused)
+          const paused = selected.filter((r) => r.paused)
+          return (
+            <>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={running.length === 0}
+                onClick={() => {
+                  setPendingPause(running)
+                  clear()
+                }}
+              >
+                <PauseIcon /> Pause
+                {running.length > 0 && running.length < rows.length && (
+                  <span className="text-muted-foreground tabular-nums">
+                    {running.length}
+                  </span>
+                )}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={paused.length === 0}
+                onClick={() => {
+                  resume(paused)
+                  clear()
+                }}
+              >
+                <PlayIcon /> Resume
+                {paused.length > 0 && paused.length < rows.length && (
+                  <span className="text-muted-foreground tabular-nums">
+                    {paused.length}
+                  </span>
+                )}
+              </Button>
+            </>
+          )
+        }}
+      />
+      <AlertDialog
+        open={pendingPause.length > 0}
+        onOpenChange={(o) => !o && setPendingPause([])}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Pause {plural(pendingPause)}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingPause.map((a) => a.name).join(", ")} will stop accepting
+              new runs. In-flight runs finish normally, schedules and triggers
+              are skipped until you resume.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                pause(pendingPause)
+                setPendingPause([])
+              }}
+            >
+              Pause
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  )
+}
+
+const plural = (xs: DeployedAgent[]) =>
+  `${xs.length} agent${xs.length === 1 ? "" : "s"}`

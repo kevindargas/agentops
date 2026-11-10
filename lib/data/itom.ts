@@ -208,6 +208,9 @@ const alertTemplates: {
   },
 ]
 
+/** Operators who acknowledge alerts: the SRE and infrastructure on-call pool. */
+const acknowledgers = ["u-018", "u-003", "u-010", "u-006"]
+
 function buildAlerts(): Alert[] {
   const rng = createRng(7777)
   const list: Alert[] = []
@@ -241,7 +244,7 @@ function buildAlerts(): Alert[] {
             ? `INC${pad(int(rng, 10001, 10071))}`
             : undefined,
       acknowledged: i < 3 ? true : chance(rng, 0.45),
-      acknowledgedById: i < 3 ? "u-018" : undefined,
+      acknowledgedById: undefined,
       count: i < 2 ? int(rng, 40, 120) : int(rng, 1, 25),
       opened: hoursAgo(openedHours),
       updated: hoursAgo(Math.min(openedHours, rng() * 2)),
@@ -278,10 +281,30 @@ function buildAlerts(): Alert[] {
       updated: hoursAgo(int(rng, 1, openedHours)),
     })
   }
-  return list
+  // Every acknowledged alert names who acknowledged it; the three headline
+  // alerts are credited to the SRE on the bridge.
+  const ack = createRng(7778)
+  return list.map((a, i) =>
+    a.acknowledged
+      ? { ...a, acknowledgedById: i < 3 ? "u-018" : pick(ack, acknowledgers) }
+      : a
+  )
 }
 
 export const alerts: Alert[] = buildAlerts()
+
+/** Availability SLO every business service is measured against, percent. */
+export const availabilitySlo = 99.9
+
+/** Alerts that are not closed (sidebar badge, "Open alerts" stat). */
+export function openAlertCount(list: Alert[] = alerts) {
+  return list.filter((a) => a.state !== "Closed").length
+}
+
+/** Open alerts nobody has acknowledged yet. */
+export function unacknowledgedAlertCount(list: Alert[] = alerts) {
+  return list.filter((a) => a.state !== "Closed" && !a.acknowledged).length
+}
 
 export const serviceHealth: ServiceHealth[] = configurationItems
   .filter((c) => c.class === "Business Service")

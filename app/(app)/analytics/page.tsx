@@ -16,6 +16,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import {
   Table,
   TableBody,
+  TableCaption,
   TableCell,
   TableHead,
   TableHeader,
@@ -26,6 +27,7 @@ import {
   toneForScore,
 } from "@/components/charts/availability-bar"
 import { ChartCard } from "@/components/charts/chart-card"
+import { CHART_HEIGHT } from "@/components/charts/chart-primitives"
 import { DonutChart } from "@/components/charts/donut-chart"
 import { HorizontalBarChart } from "@/components/charts/horizontal-bar-chart"
 import { IncidentTrendChart } from "@/components/charts/incident-trend-chart"
@@ -33,8 +35,12 @@ import { resolvePeriod } from "@/components/charts/period"
 import { PeriodSelect } from "@/components/charts/period-select"
 import { Sparkline } from "@/components/charts/sparkline"
 import { StackedBarChart } from "@/components/charts/stacked-bar-chart"
+import { Eyebrow } from "@/components/shared/eyebrow"
 import { PageHeader, Section } from "@/components/shared/page-header"
 import { StatCard } from "@/components/shared/stat-card"
+import { StatGrid } from "@/components/shared/stat-grid"
+import { toneClasses } from "@/components/shared/status-badge"
+import { changeSuccessTarget } from "@/lib/constants"
 import {
   changes,
   createRng,
@@ -43,6 +49,11 @@ import {
   incidents,
   NOW,
 } from "@/lib/data"
+import {
+  countInWindows,
+  mean,
+  meanTimeToResolveHours,
+} from "@/lib/data/metrics"
 import { formatPercent } from "@/lib/format"
 
 export const metadata: Metadata = { title: "Analytics" }
@@ -60,10 +71,10 @@ function Insight({
 }) {
   const toneClass =
     tone === "good"
-      ? "bg-success/10 text-success-text"
+      ? toneClasses.success.soft
       : tone === "warn"
-        ? "bg-warning/15 text-warning-text"
-        : "bg-muted text-muted-foreground"
+        ? toneClasses.warning.soft
+        : toneClasses.muted.soft
   return (
     <li className="flex gap-3">
       <span
@@ -252,25 +263,102 @@ export default async function AnalyticsPage({
     (c) => c.cabRequired && c.state === "Authorize"
   ).length
 
-  // KPI sparklines (12 points) for the tiles.
-  const spark = (start: number, drift: number, noise: number) => {
-    let v = start
-    return Array.from(
-      { length: 12 },
-      () => ((v += drift + (rng() - 0.5) * noise), Math.round(v * 10) / 10)
+  // KPIs for the window versus the window before it, derived from records.
+  const DAY = 86_400_000
+  const mttr = meanTimeToResolveHours(days)
+  const prevResolved = incidents.filter((i) => {
+    if (!i.resolved) return false
+    const t = new Date(i.resolved).getTime()
+    return t >= NOW.getTime() - 2 * days * DAY && t < NOW.getTime() - days * DAY
+  })
+  const prevMttr =
+    Math.round(
+      mean(
+        prevResolved.map(
+          (i) =>
+            (new Date(i.resolved as string).getTime() -
+              new Date(i.opened).getTime()) /
+            3_600_000
+        )
+      ) * 10
+    ) / 10
+  const mttrDelta = prevResolved.length
+    ? Math.round((mttr - prevMttr) * 10) / 10
+    : undefined
+
+  const resolvedIn = countInWindows(
+    incidents.filter((i) => i.resolved),
+    (i) => i.resolved,
+    days
+  )
+  const reopenedIn = countInWindows(
+    incidents.filter((i) => i.resolved && i.reopenCount > 0),
+    (i) => i.resolved,
+    days
+  )
+  const pct = (part: number, whole: number) =>
+    whole ? Math.round((part / whole) * 100) : 0
+  const reopenRate = pct(reopenedIn.current, resolvedIn.current)
+  const reopenDelta = resolvedIn.previous
+    ? reopenRate - pct(reopenedIn.previous, resolvedIn.previous)
+    : undefined
+
+  const closedIn = countInWindows(
+    changes.filter((c) => c.state === "Closed"),
+    (c) => c.updated,
+    days
+  )
+  const canceledIn = countInWindows(
+    changes.filter((c) => c.state === "Canceled"),
+    (c) => c.updated,
+    days
+  )
+  const successIn = (closedN: number, canceledN: number) =>
+    closedN + canceledN
+      ? Math.round(
+          ((closedN - Math.round(closedN * 0.06)) / (closedN + canceledN)) * 100
+        )
+      : undefined
+  const prevSuccess = successIn(closedIn.previous, canceledIn.previous)
+  const successDelta =
+    prevSuccess === undefined ? undefined : changeSuccess - prevSuccess
+
+  const openedIn = countInWindows(incidents, (i) => i.opened, days)
+  const selfServiceIn = countInWindows(
+    incidents.filter((i) => ["Self-service", "Chat"].includes(i.channel)),
+    (i) => i.opened,
+    days
+  )
+  const selfDelta = openedIn.previous
+    ? selfServicePct - pct(selfServiceIn.previous, openedIn.previous)
+    : undefined
+
+  // KPI sparklines (12 points) for the tiles, anchored on the current value.
+  const spark = (end: number, drift: number, noise: number) => {
+    const steps = Array.from(
+      { length: 11 },
+      () => drift + (rng() - 0.5) * noise
     )
+    let v = end - steps.reduce((a, b) => a + b, 0)
+    const points = [Math.round(v * 10) / 10]
+    for (const step of steps) {
+      v += step
+      points.push(Math.round(v * 10) / 10)
+    }
+    points[points.length - 1] = end
+    return points
   }
   const sparks = {
-    mttr: spark(7.4, -0.08, 0.6),
-    fcr: spark(56, 0.4, 2),
-    success: spark(changeSuccess - 3, 0.25, 1.2),
-    self: spark(selfServicePct - 6, 0.5, 2),
+    mttr: spark(mttr, -0.08, 0.6),
+    reopen: spark(reopenRate, -0.2, 1.5),
+    success: spark(changeSuccess, 0.25, 1.2),
+    self: spark(selfServicePct, 0.5, 2),
   }
 
   return (
     <>
       <PageHeader
-        title="Analytics"
+        nav="/analytics"
         description={`Performance across incident, change and request management. Figures cover the ${period.label.toLowerCase()} unless noted.`}
         actions={
           <Suspense fallback={<Skeleton className="h-8 w-40 rounded-lg" />}>
@@ -279,49 +367,55 @@ export default async function AnalyticsPage({
         }
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <StatGrid columns={4}>
         <StatCard
           label="Mean time to resolve"
-          value="6.4h"
-          delta={-11}
+          value={mttr}
+          unit="h"
+          delta={mttrDelta}
+          deltaUnit="h"
           upIsGood={false}
           deltaLabel="vs previous period"
-          hint="P1–P3 incidents"
+          hint={`${resolvedIn.current} incident${resolvedIn.current === 1 ? "" : "s"} resolved in the window`}
         >
           <Sparkline data={sparks.mttr} className="h-9 w-full" />
         </StatCard>
         <StatCard
-          label="First contact resolution"
-          value="61%"
-          delta={4}
+          label="Reopen rate"
+          value={`${reopenRate}%`}
+          delta={reopenDelta}
+          deltaUnit="pt"
+          upIsGood={false}
           deltaLabel="vs previous period"
-          hint="Resolved by Service Desk on first touch"
+          hint="Resolved incidents reopened at least once"
         >
-          <Sparkline data={sparks.fcr} className="h-9 w-full" />
+          <Sparkline data={sparks.reopen} className="h-9 w-full" />
         </StatCard>
         <StatCard
           label="Change success rate"
           value={`${changeSuccess}%`}
-          delta={2}
+          delta={successDelta}
+          deltaUnit="pt"
           deltaLabel="vs previous period"
-          hint="Closed without backout"
+          hint={`Closed without backout · target ${changeSuccessTarget}%`}
         >
           <Sparkline
             data={sparks.success}
             className="h-9 w-full"
-            baseline={95}
+            baseline={changeSuccessTarget}
           />
         </StatCard>
         <StatCard
           label="Self-service adoption"
           value={`${selfServicePct}%`}
-          delta={7}
+          delta={selfDelta}
+          deltaUnit="pt"
           deltaLabel="vs previous period"
           hint="Incidents via portal or chat"
         >
           <Sparkline data={sparks.self} className="h-9 w-full" />
         </StatCard>
-      </div>
+      </StatGrid>
 
       <Section
         title="Incident flow"
@@ -342,13 +436,13 @@ export default async function AnalyticsPage({
               </Button>
             }
           >
-            <IncidentTrendChart data={trend} height={272} />
+            <IncidentTrendChart data={trend} height={CHART_HEIGHT.lg} />
           </ChartCard>
           <Card className="h-full">
             <CardContent className="flex h-full flex-col gap-4">
-              <p className="flex items-center gap-1.5 text-xs font-medium tracking-wide text-muted-foreground uppercase">
+              <Eyebrow className="flex items-center gap-1.5">
                 <LightbulbIcon className="size-3.5" /> Insights
-              </p>
+              </Eyebrow>
               <ul className="flex flex-col gap-4">
                 <Insight
                   icon={net <= 0 ? <TrendingDownIcon /> : <TrendingUpIcon />}
@@ -452,14 +546,14 @@ export default async function AnalyticsPage({
                 {emergencyShare}% of {changeTotal} changes were emergency
                 changes{" "}
                 {emergencyShare <= 10
-                  ? "— within the 10% target"
-                  : "— above the 10% target"}
+                  ? "(within the 10% target)"
+                  : "(above the 10% target)"}
               </span>
             }
           >
             <StackedBarChart
               data={weekly}
-              height={260}
+              height={CHART_HEIGHT.lg}
               series={[
                 { key: "standard", label: "Standard", color: "var(--chart-1)" },
                 { key: "normal", label: "Normal", color: "var(--chart-2)" },
@@ -479,7 +573,7 @@ export default async function AnalyticsPage({
             <DonutChart
               data={pipeline}
               centerLabel="changes"
-              height={176}
+              height={CHART_HEIGHT.sm}
               legend="bottom"
             />
           </ChartCard>
@@ -501,6 +595,9 @@ export default async function AnalyticsPage({
         >
           <div className="overflow-hidden rounded-lg border">
             <Table>
+              <TableCaption className="sr-only">
+                SLA attainment by assignment group
+              </TableCaption>
               <TableHeader className="bg-muted/50">
                 <TableRow className="hover:bg-transparent">
                   <TableHead className="text-xs">Group</TableHead>

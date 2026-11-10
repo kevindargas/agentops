@@ -1,7 +1,10 @@
 "use client"
 
+import * as React from "react"
 import { cn } from "cn"
 
+import { useQueryParam } from "@/hooks/use-query-param"
+import { CountPill } from "@/components/shared/count-pill"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 export interface RecordTab {
@@ -13,21 +16,75 @@ export interface RecordTab {
   content: React.ReactNode
 }
 
-/** Underline tabs with counts for the lower half of a record form. */
-export function RecordTabs({
-  tabs,
-  defaultValue,
-  className,
-  contentClassName,
-}: {
+export interface RecordTabsProps {
   tabs: RecordTab[]
   defaultValue?: string
   className?: string
   contentClassName?: string
+  /**
+   * Query parameter that mirrors the active tab (`?tab=...`) so record tabs
+   * are shareable. Pass `null` to keep the selection local.
+   */
+  syncParam?: string | null
+}
+
+/** Underline tabs with counts for the lower half of a record form. */
+export function RecordTabs({ syncParam = "tab", ...props }: RecordTabsProps) {
+  if (syncParam === null) return <RecordTabsView {...props} />
+  return (
+    <React.Suspense fallback={<RecordTabsView {...props} />}>
+      <SyncedRecordTabs param={syncParam} {...props} />
+    </React.Suspense>
+  )
+}
+
+function SyncedRecordTabs({
+  param,
+  tabs,
+  defaultValue,
+  ...rest
+}: Omit<RecordTabsProps, "syncParam"> & { param: string }) {
+  const [fromUrl, setParam] = useQueryParam(param)
+  const initial =
+    fromUrl && tabs.some((t) => t.value === fromUrl && !t.disabled)
+      ? fromUrl
+      : (defaultValue ?? tabs[0]?.value)
+  const [value, setValue] = React.useState(initial)
+
+  function onValueChange(next: string) {
+    setValue(next)
+    // Written without a navigation so the URL stays shareable.
+    setParam(next)
+  }
+
+  return (
+    <RecordTabsView
+      tabs={tabs}
+      value={value}
+      onValueChange={onValueChange}
+      {...rest}
+    />
+  )
+}
+
+function RecordTabsView({
+  tabs,
+  defaultValue,
+  value,
+  onValueChange,
+  className,
+  contentClassName,
+}: Omit<RecordTabsProps, "syncParam"> & {
+  value?: string
+  onValueChange?: (value: string) => void
 }) {
   return (
     <Tabs
-      defaultValue={defaultValue ?? tabs[0]?.value}
+      defaultValue={
+        value === undefined ? (defaultValue ?? tabs[0]?.value) : undefined
+      }
+      value={value}
+      onValueChange={onValueChange}
       className={cn("gap-4", className)}
     >
       <div className="-mx-4 overflow-x-auto px-4 lg:-mx-6 lg:px-6">
@@ -49,9 +106,10 @@ export function RecordTabs({
               )}
               {t.label}
               {t.count !== undefined && (
-                <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground tabular-nums transition-colors group-data-active/tab:bg-foreground group-data-active/tab:text-background">
-                  {t.count}
-                </span>
+                <CountPill
+                  count={t.count}
+                  className="transition-colors group-data-active/tab:bg-foreground group-data-active/tab:text-background"
+                />
               )}
             </TabsTrigger>
           ))}

@@ -13,9 +13,11 @@ import {
   PlayIcon,
   PlusIcon,
   SaveIcon,
+  Trash2Icon,
 } from "lucide-react"
 import { toast } from "sonner"
 
+import { setQueryParam } from "@/hooks/use-query-param"
 import { Sparkline } from "@/components/charts/sparkline"
 import {
   DataTable,
@@ -27,7 +29,24 @@ import {
   type FacetDef,
 } from "@/components/data-table"
 import { DetailList } from "@/components/shared/detail-list"
+import { EmptyState } from "@/components/shared/empty-state"
+import { MetricTile } from "@/components/shared/metric-tile"
+import {
+  SheetBody,
+  SheetFooterActions,
+  sheetWidths,
+} from "@/components/shared/sheet-frame"
 import { UserChip } from "@/components/shared/user-chip"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -48,31 +67,31 @@ import {
   Sheet,
   SheetContent,
   SheetDescription,
-  SheetFooter,
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
 import { Switch } from "@/components/ui/switch"
-import { deployedAgents, getDeployedAgent, NOW } from "@/lib/data"
+import { deployedAgents, getDeployedAgent } from "@/lib/data/agentops"
 import {
   describeCron,
   nextRun,
-  scheduledRuns,
-  schedules as seed,
   timezones,
   type ConcurrencyPolicy,
   type Schedule,
 } from "@/lib/data/schedules"
-import { fmtCost } from "../format"
+import { NOW } from "@/lib/data/seed"
+import { currentUser } from "@/lib/data/users"
+import { formatCost, formatDurationMs, formatUntil } from "@/lib/format"
 import { AgentChip } from "../shared"
 import {
   AgentDot,
   Mono,
   RunStatusBadge,
+  TargetPausedBadge,
   TraceLink,
-  fmtRunDuration,
-  fmtUntil,
 } from "./shared"
+import { runScheduleNow, toggleSchedule } from "./actions"
+import { nextLocalId, runStore, scheduleStore } from "./store"
 
 const col = createColumnHelper<DataTableFeatures, Schedule>()
 
@@ -96,11 +115,19 @@ function buildColumns(onToggle: (id: string, on: boolean) => void) {
       cell: ({ row }) => (
         <span className="flex items-start gap-2">
           <AgentDot agentId={row.original.agentId} className="mt-1.5" />
-          <TwoLineCell
-            primary={row.original.name}
-            secondary={row.original.description}
-            className={cn(!row.original.enabled && "opacity-60")}
-          />
+          <span className="flex min-w-0 flex-col gap-1">
+            <TwoLineCell
+              primary={row.original.name}
+              secondary={row.original.description}
+              className={cn(!row.original.enabled && "opacity-60")}
+            />
+            {row.original.enabled && (
+              <TargetPausedBadge
+                agentId={row.original.agentId}
+                className="w-fit"
+              />
+            )}
+          </span>
         </span>
       ),
       enableHiding: false,
@@ -118,7 +145,13 @@ function buildColumns(onToggle: (id: string, on: boolean) => void) {
       meta: { width: "w-44", label: "Agent", skeleton: "w-28" },
     }),
     col.accessor("cron", {
-      header: "Cron",
+      header: ({ column }) => (
+        <DataTableColumnHeader
+          column={column}
+          title="Cron"
+          hint="Five-field cron expression (minute, hour, day of month, month, weekday) evaluated in the schedule's timezone."
+        />
+      ),
       cell: ({ row }) => (
         <TwoLineCell
           primary={
@@ -149,7 +182,7 @@ function buildColumns(onToggle: (id: string, on: boolean) => void) {
           return <span className="text-xs text-muted-foreground">Paused</span>
         return (
           <TwoLineCell
-            primary={<span className="tabular-nums">{fmtUntil(v, NOW)}</span>}
+            primary={<span className="tabular-nums">{formatUntil(v)}</span>}
             secondary={<DateCell value={v} mode="datetime" />}
           />
         )
@@ -175,7 +208,7 @@ function buildColumns(onToggle: (id: string, on: boolean) => void) {
         return (
           <span className="flex flex-col gap-0.5">
             <RunStatusBadge status={lr.status} size="sm" />
-            <DateCell value={lr.at} className="text-[11px]" />
+            <DateCell value={lr.at} className="text-2xs" />
           </span>
         )
       },
@@ -187,7 +220,11 @@ function buildColumns(onToggle: (id: string, on: boolean) => void) {
         <DataTableColumnHeader column={column} title="Avg duration" />
       ),
       cell: ({ getValue }) => (
-        <NumericCell value={getValue()} format={fmtRunDuration} muted />
+        <NumericCell
+          value={getValue() || null}
+          format={formatDurationMs}
+          muted
+        />
       ),
       meta: {
         width: "w-28",
@@ -197,11 +234,17 @@ function buildColumns(onToggle: (id: string, on: boolean) => void) {
       },
     }),
     col.accessor("concurrency", {
-      header: "Concurrency",
+      header: ({ column }) => (
+        <DataTableColumnHeader
+          column={column}
+          title="Concurrency"
+          hint="What happens when an occurrence fires while the previous run is still active: Forbid skips it, Allow overlaps, Replace cancels the active run."
+        />
+      ),
       cell: ({ getValue }) => (
         <Badge
           variant="outline"
-          className="text-[11px] text-muted-foreground"
+          className="text-2xs text-muted-foreground"
           title={concurrencyHint[getValue()]}
         >
           {getValue()}
@@ -212,7 +255,13 @@ function buildColumns(onToggle: (id: string, on: boolean) => void) {
     }),
     col.accessor((r) => retryLabel(r), {
       id: "retry",
-      header: "Retry",
+      header: ({ column }) => (
+        <DataTableColumnHeader
+          column={column}
+          title="Retry"
+          hint="Attempts after a failed run and the backoff between them."
+        />
+      ),
       cell: ({ getValue }) => (
         <span className="text-xs text-muted-foreground">{getValue()}</span>
       ),
@@ -221,10 +270,14 @@ function buildColumns(onToggle: (id: string, on: boolean) => void) {
     }),
     col.accessor("budgetPerRunUsd", {
       header: ({ column }) => (
-        <DataTableColumnHeader column={column} title="Budget / run" />
+        <DataTableColumnHeader
+          column={column}
+          title="Budget / run"
+          hint="Hard USD cap for one run. The run stops when the cap is reached."
+        />
       ),
       cell: ({ getValue }) => (
-        <NumericCell value={getValue()} format={(n) => fmtCost(n, 2)} />
+        <NumericCell value={getValue()} format={(n) => formatCost(n, 2)} />
       ),
       meta: {
         width: "w-28",
@@ -246,7 +299,7 @@ function buildColumns(onToggle: (id: string, on: boolean) => void) {
           size="sm"
           checked={row.original.enabled}
           onCheckedChange={(on) => onToggle(row.original.id, on)}
-          aria-label={`${row.original.enabled ? "Disable" : "Enable"} ${row.original.name}`}
+          aria-label={`${row.original.enabled ? "Pause" : "Resume"} ${row.original.name}`}
         />
       ),
       enableSorting: false,
@@ -282,35 +335,43 @@ const facets: FacetDef<Schedule>[] = [
   },
 ]
 
-export function SchedulesTable({ agentId }: { agentId?: string }) {
-  const [items, setItems] = React.useState<Schedule[]>(seed)
-  const [openId, setOpenId] = React.useState<string | null>(null)
-  const [editId, setEditId] = React.useState<string | null>(null)
+/* ------------------------------------------------------------------------ */
+/* Table                                                                     */
+/* ------------------------------------------------------------------------ */
 
-  const patch = React.useCallback(
-    (id: string, p: Partial<Schedule>) =>
-      setItems((prev) => prev.map((s) => (s.id === id ? { ...s, ...p } : s))),
-    []
+export function SchedulesTable({
+  agentId,
+  initialAgentId,
+  initialOpenId,
+}: {
+  /** Hard filter: hides the agent facet (agent record pages). */
+  agentId?: string
+  /** Preselects the agent facet (`?agent=` on the list page). */
+  initialAgentId?: string
+  /** Opens this schedule's sheet on load (`?schedule=`). */
+  initialOpenId?: string
+}) {
+  const items = scheduleStore.use()
+  const [openId, setOpenIdState] = React.useState<string | null>(() =>
+    initialOpenId && scheduleStore.get().some((s) => s.id === initialOpenId)
+      ? initialOpenId
+      : null
   )
-  const toggle = React.useCallback(
-    (id: string, on: boolean) => {
-      patch(id, { enabled: on })
-      const s = seed.find((x) => x.id === id)
-      toast(on ? "Schedule enabled" : "Schedule paused", {
-        description: s
-          ? on
-            ? `${s.name} next runs ${fmtUntil(nextRun(s.cron, NOW, s.timezone), NOW)}.`
-            : `${s.name} will not run until re-enabled.`
-          : undefined,
-      })
-    },
-    [patch]
-  )
-  const columns = React.useMemo(() => buildColumns(toggle), [toggle])
+  const [editId, setEditId] = React.useState<string | null>(null)
+  const [createOpen, setCreateOpen] = React.useState(false)
+  const [deleteId, setDeleteId] = React.useState<string | null>(null)
+
+  const setOpenId = React.useCallback((id: string | null) => {
+    setOpenIdState(id)
+    setQueryParam("schedule", id)
+  }, [])
+
+  const columns = React.useMemo(() => buildColumns(toggleSchedule), [])
 
   const data = agentId ? items.filter((s) => s.agentId === agentId) : items
   const open = items.find((s) => s.id === openId) ?? null
   const editing = items.find((s) => s.id === editId) ?? null
+  const deleting = items.find((s) => s.id === deleteId) ?? null
 
   return (
     <>
@@ -323,6 +384,9 @@ export function SchedulesTable({ agentId }: { agentId?: string }) {
         }
         searchPlaceholder="Search schedules…"
         facets={agentId ? facets.filter((f) => f.id !== "agent") : facets}
+        initialFacets={
+          initialAgentId && !agentId ? { agent: [initialAgentId] } : undefined
+        }
         initialSorting={[{ id: "nextRun", desc: false }]}
         initialColumnVisibility={{
           retry: false,
@@ -331,19 +395,13 @@ export function SchedulesTable({ agentId }: { agentId?: string }) {
         }}
         onRowClick={(r) => setOpenId(r.id)}
         totalLabel="schedules"
+        caption="Cron schedules with next run, last run and budget"
         selectionLabel={(n) => (n === 1 ? "schedule" : "schedules")}
         emptyTitle="No schedules"
         emptyMessage="Create a schedule to run an agent on a cadence."
         emptyIcon={<CalendarClockIcon />}
         toolbar={
-          <Button
-            size="sm"
-            onClick={() =>
-              toast("New schedule", {
-                description: "Pick an agent, a cadence and a budget.",
-              })
-            }
-          >
+          <Button size="sm" onClick={() => setCreateOpen(true)}>
             <PlusIcon /> New schedule
           </Button>
         }
@@ -351,19 +409,71 @@ export function SchedulesTable({ agentId }: { agentId?: string }) {
       <ScheduleSheet
         schedule={open}
         onClose={() => setOpenId(null)}
-        onToggle={toggle}
-        onEdit={() => {
-          setEditId(openId)
+        onEdit={() => setEditId(openId)}
+        onDelete={() => setDeleteId(openId)}
+      />
+      <EditScheduleSheet
+        open={editing !== null}
+        schedule={editing}
+        defaultAgentId={initialAgentId ?? agentId}
+        onClose={() => setEditId(null)}
+        onSave={(next) => {
+          scheduleStore.patch(next.id, next)
+          setEditId(null)
+          toast.success("Schedule saved", {
+            description: `${next.name} · ${describeCron(next.cron)} (${next.timezone})`,
+          })
         }}
       />
       <EditScheduleSheet
-        schedule={editing}
-        onClose={() => setEditId(null)}
-        onSave={(p) => {
-          if (editId) patch(editId, p)
-          setEditId(null)
+        open={createOpen}
+        schedule={null}
+        defaultAgentId={initialAgentId ?? agentId}
+        onClose={() => setCreateOpen(false)}
+        onSave={(next) => {
+          scheduleStore.add(next, "start")
+          setCreateOpen(false)
+          toast.success("Schedule created", {
+            description: `${next.name} · ${describeCron(next.cron)} (${next.timezone}) · first run ${formatUntil(nextRun(next.cron, NOW, next.timezone))}`,
+          })
         }}
       />
+      <AlertDialog
+        open={deleting !== null}
+        onOpenChange={(o) => !o && setDeleteId(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {deleting?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Removes the schedule and its future occurrences from the calendar.
+              Past runs stay in Run history.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                if (!deleting) return
+                const removed = deleting
+                scheduleStore.remove(removed.id)
+                setDeleteId(null)
+                setOpenId(null)
+                toast("Schedule deleted", {
+                  description: removed.name,
+                  action: {
+                    label: "Undo",
+                    onClick: () => scheduleStore.add(removed, "start"),
+                  },
+                })
+              }}
+            >
+              <Trash2Icon /> Delete schedule
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   )
 }
@@ -375,27 +485,28 @@ export function SchedulesTable({ agentId }: { agentId?: string }) {
 function ScheduleSheet({
   schedule: s,
   onClose,
-  onToggle,
   onEdit,
+  onDelete,
 }: {
   schedule: Schedule | null
   onClose: () => void
-  onToggle: (id: string, on: boolean) => void
   onEdit: () => void
+  onDelete: () => void
 }) {
-  const runs = s
-    ? scheduledRuns.filter((r) => r.sourceId === s.id).slice(0, 8)
-    : []
+  const runs = runStore.use()
+  const recent = s ? runs.filter((r) => r.sourceId === s.id).slice(0, 8) : []
   return (
     <Sheet open={s !== null} onOpenChange={(o) => !o && onClose()}>
-      <SheetContent className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-xl">
+      <SheetContent
+        className={cn(sheetWidths.detail, "flex flex-col gap-0 p-0")}
+      >
         {s && (
           <>
             <SheetHeader className="gap-3 border-b px-6 py-5">
               <div className="flex flex-wrap items-center gap-2">
                 <Badge
                   variant="outline"
-                  className="font-mono text-[11px] text-muted-foreground"
+                  className="font-mono text-2xs text-muted-foreground"
                 >
                   {s.id}
                 </Badge>
@@ -405,11 +516,12 @@ function ScheduleSheet({
                 {!s.enabled && (
                   <Badge
                     variant="outline"
-                    className="text-[11px] text-warning-text"
+                    className="text-2xs text-warning-text"
                   >
                     Paused
                   </Badge>
                 )}
+                {s.enabled && <TargetPausedBadge agentId={s.agentId} />}
                 <span className="ml-auto">
                   <AgentChip agentId={s.agentId} size="sm" />
                 </span>
@@ -422,71 +534,80 @@ function ScheduleSheet({
               </SheetDescription>
             </SheetHeader>
 
-            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+            <SheetBody>
               <div className="flex flex-col gap-6">
-                <section className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
-                  <Fact label="Cadence">
-                    <span className="font-mono text-xs">{s.cron}</span>
-                    <span className="block text-xs text-muted-foreground">
-                      {describeCron(s.cron)} · {s.timezone}
-                    </span>
-                  </Fact>
-                  <Fact label="Next run">
-                    {s.enabled ? (
-                      <>
-                        <span className="tabular-nums">
-                          {fmtUntil(nextRun(s.cron, NOW, s.timezone), NOW)}
-                        </span>
-                        <span className="block text-xs text-muted-foreground">
-                          <DateCell
-                            value={nextRun(s.cron, NOW, s.timezone)}
-                            mode="datetime"
-                          />
-                        </span>
-                      </>
-                    ) : (
-                      <span className="text-muted-foreground">Paused</span>
-                    )}
-                  </Fact>
-                  <Fact label="Budget / run">
-                    <span className="tabular-nums">
-                      {fmtCost(s.budgetPerRunUsd, 2)}
-                    </span>
-                    <span className="block text-xs text-muted-foreground">
-                      avg {fmtRunDuration(s.avgDurationMs)}
-                    </span>
-                  </Fact>
+                <section className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <MetricTile
+                    label="Cadence"
+                    value={<span className="font-mono text-sm">{s.cron}</span>}
+                    hint={`${describeCron(s.cron)} · ${s.timezone}`}
+                  />
+                  <MetricTile
+                    label="Next run"
+                    value={
+                      s.enabled
+                        ? formatUntil(nextRun(s.cron, NOW, s.timezone))
+                        : "Paused"
+                    }
+                    tone={s.enabled ? undefined : "muted"}
+                    hint={
+                      s.enabled ? (
+                        <DateCell
+                          value={nextRun(s.cron, NOW, s.timezone)}
+                          mode="datetime"
+                        />
+                      ) : (
+                        "Resume to put it back on the calendar"
+                      )
+                    }
+                  />
+                  <MetricTile
+                    label="Budget / run"
+                    value={formatCost(s.budgetPerRunUsd, 2)}
+                    hint={`avg ${formatDurationMs(s.avgDurationMs)}`}
+                  />
                 </section>
 
                 <section className="flex flex-col gap-2">
                   <div className="flex items-baseline justify-between">
                     <h3 className="text-sm font-semibold">Run durations</h3>
                     <span className="text-xs text-muted-foreground">
-                      last 14 runs
+                      last {s.history.length} runs
                     </span>
                   </div>
-                  <div className="rounded-lg border bg-muted/30 p-3">
-                    <Sparkline
-                      data={s.history.map((ms) => Math.round(ms / 1000))}
-                      className="h-14 w-full"
-                      color="var(--chart-1)"
-                      baseline={Math.round(s.avgDurationMs / 1000)}
+                  {s.history.length === 0 ? (
+                    <EmptyState
+                      size="sm"
+                      title="No runs recorded"
+                      description="The duration trend appears after the first completed run."
                     />
-                    <p className="mt-1 text-[11px] text-muted-foreground">
-                      Seconds per run · hairline is the average
-                    </p>
-                  </div>
+                  ) : (
+                    <div className="rounded-lg border bg-muted/30 p-3">
+                      <Sparkline
+                        data={s.history.map((ms) => Math.round(ms / 1000))}
+                        className="h-14 w-full"
+                        color="var(--chart-1)"
+                        baseline={Math.round(s.avgDurationMs / 1000)}
+                      />
+                      <p className="mt-1 text-2xs text-muted-foreground">
+                        Seconds per run · hairline is the average
+                      </p>
+                    </div>
+                  )}
                 </section>
 
                 <section className="flex flex-col gap-2">
                   <h3 className="text-sm font-semibold">Recent runs</h3>
-                  {runs.length === 0 ? (
-                    <p className="rounded-lg border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">
-                      No runs in the last 7 days.
-                    </p>
+                  {recent.length === 0 ? (
+                    <EmptyState
+                      size="sm"
+                      bare
+                      title="No runs in the last 7 days"
+                      description="Use Run now to start one outside the cadence."
+                    />
                   ) : (
                     <ul className="divide-y rounded-lg border text-sm">
-                      {runs.map((r) => (
+                      {recent.map((r) => (
                         <li
                           key={r.id}
                           className="flex items-center gap-3 px-3 py-2"
@@ -498,7 +619,9 @@ function ScheduleSheet({
                             tone="default"
                           />
                           <span className="ml-auto text-xs text-muted-foreground tabular-nums">
-                            {fmtRunDuration(r.durationMs)}
+                            {r.durationMs
+                              ? formatDurationMs(r.durationMs)
+                              : "running"}
                           </span>
                           <TraceLink traceId={r.traceId} />
                         </li>
@@ -509,9 +632,18 @@ function ScheduleSheet({
 
                 <section className="flex flex-col gap-2">
                   <h3 className="text-sm font-semibold">Parameters</h3>
-                  <pre className="overflow-x-auto rounded-lg border bg-muted/40 p-3 font-mono text-xs leading-relaxed">
-                    {JSON.stringify(s.parameters, null, 2)}
-                  </pre>
+                  {Object.keys(s.parameters).length === 0 ? (
+                    <EmptyState
+                      size="sm"
+                      bare
+                      title="No parameters"
+                      description="The agent runs with its default configuration."
+                    />
+                  ) : (
+                    <pre className="overflow-x-auto rounded-lg border bg-muted/40 p-3 font-mono text-xs leading-relaxed">
+                      {JSON.stringify(s.parameters, null, 2)}
+                    </pre>
+                  )}
                 </section>
 
                 <section className="flex flex-col gap-2">
@@ -540,7 +672,7 @@ function ScheduleSheet({
                   !s.notifications.email?.length &&
                   !s.notifications.pagerduty ? (
                     <p className="text-xs text-muted-foreground">
-                      Silent — failures only appear in run history.
+                      Silent: failures only appear in run history.
                     </p>
                   ) : (
                     <ul className="flex flex-col gap-1.5 text-sm">
@@ -575,38 +707,47 @@ function ScheduleSheet({
                   )}
                 </section>
               </div>
-            </div>
+            </SheetBody>
 
-            <SheetFooter className="flex-row flex-wrap items-center justify-end gap-2 border-t px-6 py-4">
-              <Button variant="outline" size="sm" onClick={onEdit}>
-                <PencilIcon /> Edit
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => onToggle(s.id, !s.enabled)}
-              >
-                {s.enabled ? (
-                  <>
-                    <PauseIcon /> Pause
-                  </>
-                ) : (
-                  <>
-                    <PlayIcon /> Resume
-                  </>
-                )}
-              </Button>
-              <Button
-                size="sm"
-                onClick={() =>
-                  toast.success("Run queued", {
-                    description: `${s.name} starts within a minute on ${getDeployedAgent(s.agentId)?.name}.`,
-                  })
-                }
-              >
-                <PlayIcon /> Run now
-              </Button>
-            </SheetFooter>
+            <SheetFooterActions
+              tertiary={
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-danger-text hover:text-danger-text"
+                  onClick={onDelete}
+                >
+                  <Trash2Icon /> Delete
+                </Button>
+              }
+              secondary={
+                <>
+                  <Button variant="outline" size="sm" onClick={onEdit}>
+                    <PencilIcon /> Edit
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => toggleSchedule(s.id, !s.enabled)}
+                  >
+                    {s.enabled ? (
+                      <>
+                        <PauseIcon /> Pause
+                      </>
+                    ) : (
+                      <>
+                        <PlayIcon /> Resume
+                      </>
+                    )}
+                  </Button>
+                </>
+              }
+              primary={
+                <Button size="sm" onClick={() => runScheduleNow(s)}>
+                  <PlayIcon /> Run now
+                </Button>
+              }
+            />
           </>
         )}
       </SheetContent>
@@ -615,7 +756,7 @@ function ScheduleSheet({
 }
 
 /* ------------------------------------------------------------------------ */
-/* Edit sheet with cron builder                                              */
+/* Edit / create sheet with cron builder                                     */
 /* ------------------------------------------------------------------------ */
 
 type Frequency =
@@ -644,6 +785,9 @@ const concurrencyItems = (
   ["Forbid", "Allow", "Replace"] as ConcurrencyPolicy[]
 ).map((c) => ({ value: c, label: c }))
 
+const agentItems = deployedAgents.map((a) => ({ value: a.id, label: a.name }))
+const tzItems = timezones.map((t) => ({ value: t, label: t }))
+
 interface CronDraft {
   frequency: Frequency
   interval: number
@@ -653,16 +797,18 @@ interface CronDraft {
   dayOfMonth: number
 }
 
+const defaultDraft: CronDraft = {
+  frequency: "daily",
+  interval: 15,
+  hour: 9,
+  minute: 0,
+  weekday: "1",
+  dayOfMonth: 1,
+}
+
 function draftFromCron(cron: string): CronDraft {
   const [m, h, dom, , dow] = cron.split(" ")
-  const base: CronDraft = {
-    frequency: "daily",
-    interval: 15,
-    hour: 9,
-    minute: 0,
-    weekday: "1",
-    dayOfMonth: 1,
-  }
+  const base = defaultDraft
   if (m.startsWith("*/"))
     return { ...base, frequency: "minutes", interval: Number(m.slice(2)) }
   const minute = Number(m) || 0
@@ -706,22 +852,29 @@ function cronFromDraft(d: CronDraft) {
 }
 
 function EditScheduleSheet({
+  open,
   schedule,
+  defaultAgentId,
   onClose,
   onSave,
 }: {
+  open: boolean
+  /** Null creates a new schedule. */
   schedule: Schedule | null
+  defaultAgentId?: string
   onClose: () => void
-  onSave: (p: Partial<Schedule>) => void
+  onSave: (s: Schedule) => void
 }) {
   return (
-    <Sheet open={schedule !== null} onOpenChange={(o) => !o && onClose()}>
-      <SheetContent className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-lg">
-        {schedule && (
+    <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
+      <SheetContent
+        className={cn(sheetWidths.editor, "flex flex-col gap-0 p-0")}
+      >
+        {open && (
           <EditScheduleForm
-            key={schedule.id}
+            key={schedule?.id ?? "new"}
             schedule={schedule}
-            onClose={onClose}
+            defaultAgentId={defaultAgentId}
             onSave={onSave}
           />
         )}
@@ -732,26 +885,37 @@ function EditScheduleSheet({
 
 function EditScheduleForm({
   schedule: s,
-  onClose,
+  defaultAgentId,
   onSave,
 }: {
-  schedule: Schedule
-  onClose: () => void
-  onSave: (p: Partial<Schedule>) => void
+  schedule: Schedule | null
+  defaultAgentId?: string
+  onSave: (s: Schedule) => void
 }) {
-  const [name, setName] = React.useState(s.name)
+  const creating = s === null
+  const [name, setName] = React.useState(s?.name ?? "")
+  const [description, setDescription] = React.useState(s?.description ?? "")
+  const [agentId, setAgentId] = React.useState(
+    s?.agentId ??
+      (defaultAgentId && getDeployedAgent(defaultAgentId)
+        ? defaultAgentId
+        : deployedAgents[0].id)
+  )
   const [draft, setDraft] = React.useState<CronDraft>(() =>
-    draftFromCron(s.cron)
+    s ? draftFromCron(s.cron) : defaultDraft
   )
-  const [timezone, setTimezone] = React.useState(s.timezone)
+  const [timezone, setTimezone] = React.useState(s?.timezone ?? "UTC")
   const [concurrency, setConcurrency] = React.useState<ConcurrencyPolicy>(
-    s.concurrency
+    s?.concurrency ?? "Forbid"
   )
-  const [budget, setBudget] = React.useState(String(s.budgetPerRunUsd))
+  const [budget, setBudget] = React.useState(
+    s ? String(s.budgetPerRunUsd) : "5"
+  )
   const cron = cronFromDraft(draft)
   const preview = describeCron(cron)
   const next = nextRun(cron, NOW, timezone)
-  const tzItems = timezones.map((t) => ({ value: t, label: t }))
+  const valid = name.trim().length >= 3 && Number(budget) >= 0
+  const formId = `schedule-form-${s?.id ?? "new"}`
   const set = <K extends keyof CronDraft>(k: K, v: CronDraft[K]) =>
     setDraft((d) => ({ ...d, [k]: v }))
   const clamp = (v: string, min: number, max: number) =>
@@ -760,28 +924,53 @@ function EditScheduleForm({
   return (
     <>
       <SheetHeader className="gap-1 border-b px-6 py-5">
-        <SheetTitle>Edit schedule</SheetTitle>
+        <SheetTitle>{creating ? "New schedule" : "Edit schedule"}</SheetTitle>
         <SheetDescription>
-          Changes apply to the next run. Runs already queued keep the old
-          settings.
+          {creating
+            ? "Pick an agent, a cadence and a per-run budget. The schedule is enabled as soon as it is created."
+            : "Changes apply to the next run. Runs already queued keep the old settings."}
         </SheetDescription>
       </SheetHeader>
       <form
+        id={formId}
         className="min-h-0 flex-1 overflow-y-auto px-6 py-5"
         onSubmit={(e) => {
           e.preventDefault()
+          if (!valid) return
+          const budgetPerRunUsd = Number(budget)
+          if (s) {
+            onSave({
+              ...s,
+              name: name.trim(),
+              description: description.trim(),
+              agentId,
+              cron,
+              timezone,
+              concurrency,
+              budgetPerRunUsd,
+            })
+            return
+          }
           onSave({
-            name,
+            id: nextLocalId("sch"),
+            name: name.trim(),
+            description:
+              description.trim() ||
+              `${preview} on ${getDeployedAgent(agentId)?.name ?? agentId}.`,
+            agentId,
             cron,
             timezone,
+            enabled: true,
+            avgDurationMs: 0,
             concurrency,
-            budgetPerRunUsd: Number(budget) || s.budgetPerRunUsd,
-          })
-          toast.success("Schedule saved", {
-            description: `${name} · ${preview} (${timezone})`,
+            retry: { attempts: 0, backoff: "none", delaySec: 0 },
+            budgetPerRunUsd,
+            ownerId: currentUser.id,
+            parameters: {},
+            notifications: {},
+            history: [],
           })
         }}
-        id={`edit-${s.id}`}
       >
         <FieldGroup>
           <Field>
@@ -790,9 +979,49 @@ function EditScheduleForm({
               id="sch-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
+              placeholder="Nightly backlog triage"
               required
             />
           </Field>
+
+          {creating && (
+            <>
+              <Field>
+                <FieldLabel htmlFor="sch-description">Description</FieldLabel>
+                <Input
+                  id="sch-description"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="What the run does and who reads the result"
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="sch-agent">Agent</FieldLabel>
+                <Select
+                  value={agentId}
+                  onValueChange={(v) => v && setAgentId(String(v))}
+                  items={agentItems}
+                >
+                  <SelectTrigger id="sch-agent" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {agentItems.map((a) => (
+                      <SelectItem key={a.value} value={a.value}>
+                        {a.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {getDeployedAgent(agentId)?.paused && (
+                  <FieldDescription className="text-warning-text">
+                    This agent is paused. Runs are not accepted until it is
+                    resumed.
+                  </FieldDescription>
+                )}
+              </Field>
+            </>
+          )}
 
           <Field>
             <FieldLabel htmlFor="sch-frequency">Frequency</FieldLabel>
@@ -814,7 +1043,7 @@ function EditScheduleForm({
             </Select>
           </Field>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {draft.frequency === "minutes" && (
               <Field>
                 <FieldLabel htmlFor="sch-interval">Every (minutes)</FieldLabel>
@@ -920,12 +1149,12 @@ function EditScheduleForm({
               <span className="text-xs text-muted-foreground">{preview}</span>
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Next run {fmtUntil(next, NOW)} ·{" "}
+              Next run {formatUntil(next)} ·{" "}
               <DateCell value={next} mode="datetime" />
             </p>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Field>
               <FieldLabel htmlFor="sch-concurrency">Concurrency</FieldLabel>
               <Select
@@ -967,31 +1196,21 @@ function EditScheduleForm({
           </div>
         </FieldGroup>
       </form>
-      <SheetFooter className="flex-row items-center justify-end gap-2 border-t px-6 py-4">
-        <Button variant="outline" size="sm" type="button" onClick={onClose}>
-          Cancel
-        </Button>
-        <Button size="sm" type="submit" form={`edit-${s.id}`}>
-          <SaveIcon /> Save schedule
-        </Button>
-      </SheetFooter>
+      <SheetFooterActions
+        primary={
+          <Button type="submit" form={formId} disabled={!valid}>
+            {creating ? (
+              <>
+                <PlusIcon /> Create schedule
+              </>
+            ) : (
+              <>
+                <SaveIcon /> Save schedule
+              </>
+            )}
+          </Button>
+        }
+      />
     </>
-  )
-}
-
-function Fact({
-  label,
-  children,
-}: {
-  label: string
-  children: React.ReactNode
-}) {
-  return (
-    <div className="rounded-lg border bg-muted/30 px-3 py-2">
-      <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-        {label}
-      </p>
-      <div className="mt-1 text-sm">{children}</div>
-    </div>
   )
 }

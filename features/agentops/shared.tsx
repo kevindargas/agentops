@@ -1,12 +1,10 @@
-"use client"
-
 import Link from "next/link"
 import { cn } from "cn"
 import {
   BotIcon,
-  BracesIcon,
   DatabaseIcon,
   GitForkIcon,
+  OctagonXIcon,
   ShieldCheckIcon,
   SplitIcon,
   UserRoundIcon,
@@ -15,6 +13,7 @@ import {
 } from "lucide-react"
 
 import { ModelSelectorLogo } from "@/components/ai-elements/model-selector"
+import { StateBadge, type BadgeSize } from "@/components/shared/status-badge"
 import { Badge } from "@/components/ui/badge"
 import {
   Tooltip,
@@ -22,11 +21,17 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { providerLabel, providerLogo } from "@/lib/ai/openrouter"
-import { modelDisplayName } from "./format"
-import { getDeployedAgent } from "@/lib/data"
-import type { AgentFramework, GraphNodeType } from "@/lib/types"
+import { getDeployedAgent } from "@/lib/data/agentops"
+import { modelDisplayName } from "@/lib/format"
+import type {
+  AgentFramework,
+  BoundHit,
+  FinishReason,
+  GraphNodeType,
+  TraceOutcome,
+} from "@/lib/types"
 
-export { fmtCost, fmtMs, fmtTokens, modelDisplayName } from "./format"
+export { fmtCost, fmtMs, fmtTokens, modelDisplayName } from "@/lib/format"
 
 /* ------------------------------------------------------------------------ */
 /* Chips                                                                     */
@@ -94,7 +99,7 @@ export function FrameworkBadge({
     <Badge
       variant="outline"
       className={cn(
-        "h-5 px-1.5 text-[11px] font-medium",
+        "h-5 px-1.5 text-2xs font-medium",
         frameworkTone[framework],
         className
       )}
@@ -139,6 +144,89 @@ export function AgentChip({
 }
 
 /* ------------------------------------------------------------------------ */
+/* Trace outcomes and run bounds                                             */
+/* ------------------------------------------------------------------------ */
+
+/** Display labels; each one has a tone in `stateTone` (status-badge.tsx). */
+export const outcomeLabel: Record<TraceOutcome, string> = {
+  completed: "Completed",
+  partial: "Partial",
+  refused: "Refused",
+  invalid_output: "Invalid output",
+  tool_error: "Tool error",
+  timeout: "Timeout",
+  rate_limited: "Rate limited",
+  abandoned: "Abandoned",
+}
+
+export const outcomeOrder: TraceOutcome[] = [
+  "completed",
+  "partial",
+  "refused",
+  "invalid_output",
+  "tool_error",
+  "timeout",
+  "rate_limited",
+  "abandoned",
+]
+
+const boundHitLabel: Record<BoundHit, string> = {
+  max_steps: "Max steps",
+  deadline: "Deadline",
+  cost_budget: "Cost budget",
+  no_progress: "No progress",
+}
+
+export const finishReasonLabel: Record<FinishReason, string> = {
+  stop: "stop",
+  length: "length",
+  tool_calls: "tool_calls",
+  content_filter: "content_filter",
+  error: "error",
+}
+
+export function OutcomeBadge({
+  outcome,
+  size,
+  className,
+}: {
+  outcome: TraceOutcome
+  size?: BadgeSize
+  className?: string
+}) {
+  return (
+    <StateBadge
+      state={outcomeLabel[outcome]}
+      size={size}
+      className={className}
+    />
+  )
+}
+
+/** Small "bound hit" marker shown next to an outcome. */
+export function BoundHitFlag({
+  bound,
+  className,
+}: {
+  bound: BoundHit
+  className?: string
+}) {
+  return (
+    <Badge
+      variant="outline"
+      className={cn(
+        "h-5 gap-1 border-warning/40 bg-warning/10 px-1.5 text-3xs text-warning-text",
+        className
+      )}
+      title={`Run stopped by the ${boundHitLabel[bound].toLowerCase()} limit`}
+    >
+      <OctagonXIcon className="size-3" />
+      {boundHitLabel[bound]}
+    </Badge>
+  )
+}
+
+/* ------------------------------------------------------------------------ */
 /* Scores                                                                    */
 /* ------------------------------------------------------------------------ */
 
@@ -161,7 +249,7 @@ const toneText: Record<"success" | "warning" | "danger", string> = {
   danger: "text-danger-text",
 }
 
-/** Compact 0–100 score with a tinted bar underneath. */
+/** Compact 0 to 100 score with a tinted bar underneath. */
 export function ScoreBar({
   value,
   max = 100,
@@ -238,15 +326,4 @@ export const nodeMeta: Record<
     icon: GitForkIcon,
     className: "bg-muted text-muted-foreground border-border",
   },
-}
-
-export function NodeTypeIcon({
-  type,
-  className,
-}: {
-  type: GraphNodeType
-  className?: string
-}) {
-  const Icon = nodeMeta[type]?.icon ?? BracesIcon
-  return <Icon className={className} />
 }

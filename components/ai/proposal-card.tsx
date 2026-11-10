@@ -31,7 +31,7 @@ const impactMeta: Record<
   high: { label: "High impact", tone: "danger" },
 }
 
-/** Thin confidence bar with a label — green ≥ 85 %, brand ≥ 70 %, amber below. */
+/** Thin confidence bar with a label: green at or above 85%, brand at or above 70%, amber below. */
 export function ConfidenceMeter({
   value,
   className,
@@ -46,7 +46,7 @@ export function ConfidenceMeter({
   return (
     <div className={cn("flex items-center gap-2", className)}>
       {!compact && (
-        <span className="text-[11px] text-muted-foreground">Confidence</span>
+        <span className="text-2xs text-muted-foreground">Confidence</span>
       )}
       <div
         role="meter"
@@ -64,7 +64,7 @@ export function ConfidenceMeter({
           style={{ width: `${pct}%` }}
         />
       </div>
-      <span className="text-[11px] font-medium tabular-nums">{pct}%</span>
+      <span className="text-2xs font-medium tabular-nums">{pct}%</span>
     </div>
   )
 }
@@ -80,11 +80,11 @@ export function ProposedChanges({
   return (
     <div
       className={cn(
-        "overflow-hidden rounded-lg border font-mono text-[11px]",
+        "overflow-hidden rounded-lg border font-mono text-2xs",
         className
       )}
     >
-      <div className="flex items-center justify-between border-b bg-muted/40 px-2.5 py-1 font-sans text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+      <div className="flex items-center justify-between border-b bg-muted/40 px-2.5 py-1 font-sans text-3xs font-medium tracking-wide text-muted-foreground uppercase">
         Proposed change
         <span className="tabular-nums">
           {diff.length} field{diff.length === 1 ? "" : "s"}
@@ -96,11 +96,11 @@ export function ProposedChanges({
             key={d.field}
             className="grid grid-cols-[minmax(0,5.5rem)_1fr] gap-x-2 px-2.5 py-1.5"
           >
-            <span className="truncate pt-px font-sans text-[11px] font-medium text-muted-foreground">
+            <span className="truncate pt-px font-sans text-2xs font-medium text-muted-foreground">
               {d.field}
             </span>
             <div className="flex min-w-0 flex-col gap-0.5">
-              <span className="flex items-center gap-1.5 rounded-sm bg-destructive/8 px-1.5 py-0.5 text-destructive/90">
+              <span className="flex items-center gap-1.5 rounded-sm bg-destructive/8 px-1.5 py-0.5 text-danger-text">
                 <MinusIcon className="size-3 shrink-0" />
                 <span className="truncate line-through decoration-destructive/40">
                   {d.from}
@@ -162,7 +162,7 @@ export function ProposalCard({
           state={impact.label}
           tone={impact.tone}
           dot={false}
-          className="h-[18px] px-1.5 text-[10px]"
+          className="h-[18px] px-1.5 text-3xs"
         />
       </header>
 
@@ -201,7 +201,7 @@ export function ProposalCard({
           <Button
             size={btn}
             variant="ghost"
-            className="text-muted-foreground hover:text-destructive"
+            className="text-muted-foreground hover:text-danger-text"
             onClick={() => onDecide(proposal.id, "reject")}
           >
             <XIcon /> Reject

@@ -1,6 +1,7 @@
 import Link from "next/link"
 import { ArrowLeftIcon, CompassIcon } from "lucide-react"
 
+import { Eyebrow } from "@/components/shared/eyebrow"
 import { Button } from "@/components/ui/button"
 import {
   Empty,
@@ -23,9 +24,7 @@ export default function RootNotFound() {
           >
             <CompassIcon />
           </EmptyMedia>
-          <p className="font-mono text-[11px] font-medium tracking-widest text-muted-foreground uppercase">
-            Error 404
-          </p>
+          <Eyebrow mono>Error 404</Eyebrow>
           <EmptyTitle className="text-base">Page not found</EmptyTitle>
           <EmptyDescription>
             This address does not exist in {siteConfig.name}. It may have been

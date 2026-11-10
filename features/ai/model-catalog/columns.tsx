@@ -1,5 +1,3 @@
-"use client"
-
 import { createColumnHelper } from "@tanstack/react-table"
 import {
   AudioLinesIcon,
@@ -81,7 +79,11 @@ export function ModalityChips({
             <Tooltip key={m}>
               <TooltipTrigger
                 render={
-                  <span className="inline-flex size-6 items-center justify-center rounded-md border bg-muted/40 text-muted-foreground" />
+                  <span
+                    role="img"
+                    aria-label={`${modalityMeta[m]} input`}
+                    className="inline-flex size-6 items-center justify-center rounded-md border bg-muted/40 text-muted-foreground"
+                  />
                 }
               >
                 <Icon className="size-3.5" />
@@ -96,10 +98,11 @@ export function ModalityChips({
 
 export function CapabilityChips({
   capabilities,
-  dense = true,
+  compact = true,
 }: {
   capabilities: Capability[]
-  dense?: boolean
+  /** Table cells use the small chips; the sheet uses regular badges. */
+  compact?: boolean
 }) {
   const list = tableCapabilities.filter((c) => capabilities.includes(c))
   if (list.length === 0) return <EmptyValue />
@@ -114,8 +117,8 @@ export function CapabilityChips({
                 <Badge
                   variant="outline"
                   className={
-                    dense
-                      ? "h-5 gap-1 px-1.5 text-[10px] font-medium text-muted-foreground"
+                    compact
+                      ? "h-5 gap-1 px-1.5 text-3xs font-medium text-muted-foreground"
                       : "gap-1"
                   }
                 />
@@ -164,14 +167,14 @@ export const catalogColumns = col.columns([
               {m.isFree && (
                 <Badge
                   variant="outline"
-                  className="h-4 border-success/30 bg-success/10 px-1 text-[10px] font-medium text-success-text"
+                  className="h-4 border-success/30 bg-success/10 px-1 text-3xs font-medium text-success-text"
                 >
                   Free
                 </Badge>
               )}
             </span>
             <span
-              className="block truncate font-mono text-[11px] text-muted-foreground"
+              className="block truncate font-mono text-2xs text-muted-foreground"
               title={m.id}
             >
               {m.id}
@@ -195,7 +198,11 @@ export const catalogColumns = col.columns([
   }),
   col.accessor("contextLength", {
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Context" />
+      <DataTableColumnHeader
+        column={column}
+        title="Context"
+        hint="Context window in tokens: prompt plus retrieved content plus output"
+      />
     ),
     cell: ({ getValue }) => (
       <NumericCell value={getValue() || null} format={formatContext} />
@@ -218,7 +225,11 @@ export const catalogColumns = col.columns([
   }),
   col.accessor("promptPrice", {
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Input $/1M" />
+      <DataTableColumnHeader
+        column={column}
+        title="Input $/1M"
+        hint="USD per million prompt tokens"
+      />
     ),
     cell: ({ getValue }) => <PriceCell value={getValue()} />,
     sortUndefined: "last",
@@ -231,7 +242,11 @@ export const catalogColumns = col.columns([
   }),
   col.accessor("completionPrice", {
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Output $/1M" />
+      <DataTableColumnHeader
+        column={column}
+        title="Output $/1M"
+        hint="USD per million completion tokens"
+      />
     ),
     cell: ({ getValue }) => <PriceCell value={getValue()} />,
     sortUndefined: "last",

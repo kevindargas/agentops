@@ -1,5 +1,5 @@
 /**
- * AgentOps — domain model. The Agent Operations section (bottom of the file)
+ * AgentOps domain model. The Agent Operations section (bottom of the file)
  * is the product; the ITSM / ITOM records above it are the service-management
  * layer the agents plug into.
  */
@@ -248,7 +248,7 @@ export interface CiRelationship {
 
 /**
  * A system or business service the agents plug into (servers, databases,
- * clusters, business services). Internal data source only — there is no
+ * clusters, business services). Internal data source only; there is no
  * user-facing inventory page; records reference these by `ciId`.
  */
 export interface ConfigurationItem {
@@ -347,7 +347,22 @@ export interface Approval {
 /* -------------------------------------------------------------------------- */
 
 export type AgentFramework = "LangGraph" | "LangChain" | "Custom"
-export type AgentEnvironment = "production" | "staging"
+/**
+ * Where a release can land. `AgentEnvironment` is the subset a deployed agent
+ * record can currently point at; `KeyEnvironment` (providers) reuses it.
+ */
+export type DeploymentEnvironment =
+  "production" | "staging" | "development" | "shadow"
+export type AgentEnvironment = Extract<
+  DeploymentEnvironment,
+  "production" | "staging"
+>
+/** Connection health of an external dependency (model provider, MCP server). */
+export type ConnectionStatus = "Connected" | "Degraded" | "Disconnected"
+/** Shared three-level severity for drift signals and guardrail violations. */
+export type Severity = "Info" | "Warning" | "Critical"
+/** A/B experiment arm. */
+export type VariantKey = "A" | "B"
 export type AgentHealth = "Healthy" | "Degraded" | "Drifting" | "Paused"
 export type GraphNodeType =
   "router" | "llm" | "retriever" | "tool" | "human" | "guard" | "chain"
@@ -364,15 +379,15 @@ export interface AgentMetrics {
   requests24h: number
   p50Ms: number
   p95Ms: number
-  /** 0–100 */
+  /** 0 to 100 */
   errorRate: number
-  /** Composite evaluator score, 0–100. */
+  /** Composite evaluator score, 0 to 100. */
   quality: number
-  /** 0–100, share of answers marked unhelpful. */
+  /** 0 to 100, share of answers marked unhelpful. */
   thumbsDownRate: number
   costPerDay: number
   tokens24h: number
-  /** Share of traffic sampled into the human review queue, 0–100. */
+  /** Share of traffic sampled into the human review queue, 0 to 100. */
   reviewRate: number
 }
 
@@ -384,9 +399,9 @@ export type ReasoningEffort = "none" | "low" | "medium" | "high"
  * versions, the playground and experiments so one editor can configure all.
  */
 export interface ModelParams {
-  /** 0–2; sampling temperature. */
+  /** 0 to 2; sampling temperature. */
   temperature: number
-  /** 0–1; nucleus sampling. */
+  /** 0 to 1; nucleus sampling. */
   topP: number
   maxOutputTokens: number
   reasoningEffort: ReasoningEffort
@@ -402,6 +417,42 @@ export interface ModelParams {
   /** Hard cap on tool calls per run (agent-loop budget). */
   maxToolCalls: number
   maxRetries: number
+}
+
+/** Hard bounds on a single agent run; the loop stops when any is hit. */
+export interface RunLimits {
+  maxSteps: number
+  deadlineMs: number
+  costBudgetUsd: number
+  /** Consecutive steps without new tool output or state change before abort. */
+  noProgressSteps: number
+}
+
+/** Fleet-wide emergency controls, toggled from the fleet overview. */
+export interface FleetControls {
+  /** Stops every agent from accepting new runs. */
+  killSwitch: boolean
+  /** Agents keep answering but every write-capable tool is blocked. */
+  writesDisabled: boolean
+  changedAt: string
+  changedBy: string
+}
+
+/** SLO targets per agent. Availability / quality / safeCompletion are 0 to 100. */
+export interface AgentSlo {
+  availability: number
+  p95Ms: number
+  quality: number
+  safeCompletion: number
+}
+
+export interface ErrorBudget {
+  /** Share of the error budget still unspent, 0 to 1. */
+  remaining: number
+  /** Burn rate over the last hour; 1 = spending exactly on pace. */
+  burnRate1h: number
+  burnRate6h: number
+  window: "28d"
 }
 
 export interface DeployedAgent {
@@ -424,7 +475,7 @@ export interface DeployedAgent {
   qualityTrend: number[]
   /** 14-day request volume history. */
   trafficTrend: number[]
-  /** Population stability index of inputs vs the baseline window, 0–1. */
+  /** Population stability index of inputs vs the baseline window, 0 to 1. */
   driftScore: number
   lastDeployed: string
   evalDataset: string
@@ -433,9 +484,17 @@ export interface DeployedAgent {
   promptVersion: string
   /** Generation and agent-loop parameters currently deployed. */
   params: ModelParams
+  limits: RunLimits
+  /** Manually paused: no new runs are accepted until resumed. */
+  paused: boolean
+  pausedReason?: string
+  slo: AgentSlo
+  errorBudget: ErrorBudget
 }
 
 export type SpanStatus = "ok" | "error" | "skipped"
+export type FinishReason =
+  "stop" | "length" | "tool_calls" | "content_filter" | "error"
 
 export interface TraceSpan {
   id: string
@@ -447,6 +506,12 @@ export interface TraceSpan {
   durationMs: number
   status: SpanStatus
   modelId?: string
+  /** Why the model stopped generating (LLM spans only). */
+  finishReason?: FinishReason
+  /** Model alias the agent asked for, e.g. `anthropic/claude-sonnet`. */
+  requestedModelId?: string
+  /** Concrete model the provider served; differs when an alias resolved. */
+  responseModelId?: string
   tokensIn?: number
   tokensOut?: number
   cost?: number
@@ -458,12 +523,51 @@ export interface TraceSpan {
 export type TraceStatus = "Succeeded" | "Failed" | "Needs review" | "Reviewed"
 export type TraceChannel = "Web" | "Slack" | "Teams" | "API" | "Email"
 
+/**
+ * What actually happened to the run, finer than `TraceStatus`, which is the
+ * review-workflow state. `refused` and `partial` are still "ok" runs.
+ */
+export type TraceOutcome =
+  | "completed"
+  | "partial"
+  | "refused"
+  | "invalid_output"
+  | "tool_error"
+  | "timeout"
+  | "rate_limited"
+  | "abandoned"
+
+/** Which `RunLimits` bound ended the run, when one did. */
+export type BoundHit = "max_steps" | "deadline" | "cost_budget" | "no_progress"
+
+/** Everything needed to reproduce a run exactly. */
+export interface TraceLineage {
+  codeSha: string
+  promptVersion: string
+  paramsHash: string
+  indexBuildId?: string
+  toolSchemaVersions?: Record<string, string>
+  policyVersion: string
+}
+
+export interface TraceStreaming {
+  /** Time to first token. */
+  ttftMs: number
+  tokensPerSec: number
+  /** Client went away before the stream finished. */
+  disconnected: boolean
+  /** Stream was cut short (length limit, disconnect or kill switch). */
+  truncated: boolean
+}
+
 export interface AgentTrace {
   id: string
   agentId: string
   startedAt: string
   durationMs: number
   status: TraceStatus
+  outcome: TraceOutcome
+  boundHit?: BoundHit
   channel: TraceChannel
   sessionId: string
   userQuery: string
@@ -474,12 +578,15 @@ export interface AgentTrace {
   modelId: string
   version: string
   userFeedback?: "up" | "down"
-  /** Evaluator scores, 0–1. */
+  /** Evaluator scores, 0 to 1. */
   evals: { grounded: number; helpful: number; safe: number }
   flags: string[]
   spans: TraceSpan[]
+  lineage: TraceLineage
+  /** Present for channels that stream the answer (Web, Slack, Teams). */
+  streaming?: TraceStreaming
   experimentId?: string
-  variant?: "A" | "B"
+  variant?: VariantKey
 }
 
 export type ReviewReason =
@@ -513,7 +620,7 @@ export interface ReviewItem {
 }
 
 export type DriftKind = "input" | "output" | "quality" | "tool" | "cost"
-export type DriftSeverity = "Info" | "Warning" | "Critical"
+export type DriftSeverity = Severity
 export type DriftState = "Open" | "Acknowledged" | "Resolved"
 
 export interface DriftSignal {
@@ -538,7 +645,7 @@ export type ExperimentStatus =
 export type ExperimentMetric = "quality" | "cost" | "latency"
 
 export interface ExperimentVariant {
-  key: "A" | "B"
+  key: VariantKey
   label: string
   modelId?: string
   promptVersion?: string
@@ -557,16 +664,16 @@ export interface Experiment {
   hypothesis: string
   kind: ExperimentKind
   status: ExperimentStatus
-  /** Share of traffic routed to variant B, 0–100. */
+  /** Share of traffic routed to variant B, 0 to 100. */
   split: number
   primaryMetric: ExperimentMetric
   started: string
   ends?: string
   ownerId: string
   variants: [ExperimentVariant, ExperimentVariant]
-  /** Probability that B beats A on the primary metric, 0–1. */
+  /** Probability that B beats A on the primary metric, 0 to 1. */
   significance: number
-  winner?: "A" | "B"
+  winner?: VariantKey
   /** Daily primary-metric readings for each variant. */
   daily: { name: string; A: number; B: number }[]
 }
@@ -584,7 +691,7 @@ export interface ModelRecommendation {
   fromModelId: string
   toModelId: string
   evidence: { metric: string; from: string; to: string; good: boolean }[]
-  /** 0–1 */
+  /** 0 to 1 */
   confidence: number
   savingsPerMonth?: number
   status: RecommendationStatus

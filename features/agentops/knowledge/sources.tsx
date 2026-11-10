@@ -16,6 +16,7 @@ import {
   NotebookIcon,
   PauseIcon,
   PlayIcon,
+  PlusIcon,
   RefreshCwIcon,
   TriangleAlertIcon,
   type LucideIcon,
@@ -32,25 +33,53 @@ import {
   type DataTableFeatures,
   type FacetDef,
 } from "@/components/data-table"
+import { useQueryParam } from "@/hooks/use-query-param"
+import { CountPill } from "@/components/shared/count-pill"
 import { EmptyState } from "@/components/shared/empty-state"
+import {
+  SheetBody,
+  SheetFooterActions,
+  sheetWidths,
+} from "@/components/shared/sheet-frame"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field"
+import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet"
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import {
-  getKnowledgeBase,
   ingestionJobs,
-  kbSources as seed,
   type IngestionJob,
   type KbSource,
   type KbSourceType,
 } from "@/lib/data/knowledge"
+import { NOW } from "@/lib/data/seed"
 import { formatNumber, timeAgo } from "@/lib/format"
-import { KbStateBadge, KNOWLEDGE_PATH, useQueryParam } from "./shared"
+import { KbStateBadge, KNOWLEDGE_PATH, sourceTypeLabel } from "./shared"
+import { kbStore, sourceStore } from "./store"
 
 const typeIcon: Record<KbSourceType, LucideIcon> = {
   Confluence: BookOpenIcon,
@@ -66,6 +95,7 @@ const typeIcon: Record<KbSourceType, LucideIcon> = {
 const col = createColumnHelper<DataTableFeatures, KbSource>()
 
 function buildColumns(
+  kbName: (id: string) => string,
   act: (id: string, action: "sync" | "pause" | "resume") => void
 ) {
   return col.columns([
@@ -101,7 +131,7 @@ function buildColumns(
                   row.original.name
                 )
               }
-              secondary={row.original.type}
+              secondary={sourceTypeLabel[row.original.type]}
               className="min-w-0"
             />
           </span>
@@ -130,20 +160,20 @@ function buildColumns(
           onClick={(e) => e.stopPropagation()}
           className="font-mono text-xs hover:underline"
         >
-          {getKnowledgeBase(getValue())?.name ?? getValue()}
+          {kbName(getValue())}
         </Link>
       ),
       meta: { width: "w-40", label: "Knowledge base", skeleton: "w-24" },
     }),
     col.accessor("documents", {
       header: ({ column }) => (
-        <DataTableColumnHeader column={column} title="Docs" />
+        <DataTableColumnHeader column={column} title="Documents" />
       ),
       cell: ({ getValue }) => (
         <NumericCell value={getValue()} format={(n) => formatNumber(n)} />
       ),
       meta: {
-        width: "w-20",
+        width: "w-24",
         label: "Documents",
         numeric: true,
         skeleton: "w-8",
@@ -239,7 +269,11 @@ function buildColumns(
               >
                 <RefreshCwIcon />
               </TooltipTrigger>
-              <TooltipContent>Sync now</TooltipContent>
+              <TooltipContent>
+                {s.status === "Running"
+                  ? "A sync is already running"
+                  : "Sync now"}
+              </TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger
@@ -269,61 +303,66 @@ function buildColumns(
   ])
 }
 
-const facets: FacetDef<KbSource>[] = [
-  {
-    id: "type",
-    title: "Type",
-    options: (Object.keys(typeIcon) as KbSourceType[]).map((v) => ({
-      value: v,
-      label: v,
-    })),
-    getValue: (r) => r.type,
-  },
-  {
-    id: "status",
-    title: "Status",
-    options: ["Synced", "Running", "Failed", "Paused"].map((v) => ({
-      value: v,
-      label: v,
-    })),
-    getValue: (r) => r.status,
-  },
-  {
-    id: "kb",
-    title: "Knowledge base",
-    options: [...new Set(seed.map((s) => s.kbId))].map((id) => ({
-      value: id,
-      label: getKnowledgeBase(id)?.name ?? id,
-    })),
-    getValue: (r) => r.kbId,
-  },
-]
-
 export function SourcesTab() {
-  const [items, setItems] = React.useState<KbSource[]>(seed)
+  const items = sourceStore.use()
+  const bases = kbStore.use()
   const [kbFilter] = useQueryParam("kb")
-  const patch = (id: string, p: Partial<KbSource>) =>
-    setItems((prev) => prev.map((s) => (s.id === id ? { ...s, ...p } : s)))
+  const kbName = React.useCallback(
+    (id: string) => bases.find((k) => k.id === id)?.name ?? id,
+    [bases]
+  )
+
+  const facets = React.useMemo<FacetDef<KbSource>[]>(
+    () => [
+      {
+        id: "type",
+        title: "Type",
+        options: (Object.keys(typeIcon) as KbSourceType[]).map((v) => ({
+          value: v,
+          label: sourceTypeLabel[v],
+        })),
+        getValue: (r) => r.type,
+      },
+      {
+        id: "status",
+        title: "Status",
+        options: ["Synced", "Running", "Failed", "Paused"].map((v) => ({
+          value: v,
+          label: v,
+        })),
+        getValue: (r) => r.status,
+      },
+      {
+        id: "kb",
+        title: "Knowledge base",
+        options: bases.map((k) => ({ value: k.id, label: k.name })),
+        getValue: (r) => r.kbId,
+      },
+    ],
+    [bases]
+  )
 
   const columns = React.useMemo(
     () =>
-      buildColumns((id, action) => {
-        const s = items.find((x) => x.id === id)
+      buildColumns(kbName, (id, action) => {
+        const s = sourceStore.get().find((x) => x.id === id)
         if (!s) return
         if (action === "sync") {
-          patch(id, { status: "Running" })
-          toast("Sync started", { description: `${s.name} · ${s.connector}` })
+          sourceStore.patch(id, { status: "Running" })
+          toast("Status set to Running", {
+            description: `${s.name} · ${s.connector}. The sync itself runs in the connector service you wire.`,
+          })
         } else if (action === "pause") {
-          patch(id, { status: "Paused" })
+          sourceStore.patch(id, { status: "Paused" })
           toast(`${s.name} paused`, {
             description: "Scheduled syncs are skipped until resumed",
           })
         } else {
-          patch(id, { status: "Synced" })
+          sourceStore.patch(id, { status: "Synced" })
           toast.success(`${s.name} resumed`)
         }
       }),
-    [items]
+    [kbName]
   )
 
   return (
@@ -333,30 +372,197 @@ export function SourcesTab() {
         data={items}
         getRowId={(r) => r.id}
         getSearchText={(r) =>
-          `${r.name} ${r.type} ${r.connector} ${getKnowledgeBase(r.kbId)?.name ?? ""} ${r.errors.join(" ")}`
+          `${r.name} ${r.type} ${sourceTypeLabel[r.type]} ${r.connector} ${kbName(r.kbId)} ${r.errors.join(" ")}`
         }
-        searchPlaceholder="Search sources…"
+        searchPlaceholder="Search sources"
         facets={facets}
         initialFacets={kbFilter ? { kb: [kbFilter] } : undefined}
         initialSorting={[{ id: "lastSync", desc: true }]}
         initialColumnVisibility={{ connector: false }}
         totalLabel="sources"
+        caption="Ingestion sources with their connector, target knowledge base, schedule, status and errors"
         selectionLabel={(n) => (n === 1 ? "source" : "sources")}
         emptyTitle="No sources"
         emptyMessage="Connect Confluence, SharePoint, GitHub, Zendesk, Notion, S3 or a website."
-        toolbar={
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => toast("Connector catalog opened")}
-          >
-            Add source
-          </Button>
-        }
+        toolbar={<AddSourceButton />}
         className="min-w-0"
       />
       <IngestionJobsPanel />
     </div>
+  )
+}
+
+/* ------------------------------------------------------------------------ */
+/* Add source                                                                */
+/* ------------------------------------------------------------------------ */
+
+const typeItems = (Object.keys(typeIcon) as KbSourceType[]).map((t) => ({
+  value: t,
+  label: sourceTypeLabel[t],
+}))
+const scheduleItems = [
+  { value: "0 * * * *", label: "Hourly" },
+  { value: "0 */6 * * *", label: "Every 6 hours" },
+  { value: "0 2 * * *", label: "Daily at 02:00 UTC" },
+  { value: "0 3 * * 1", label: "Weekly on Monday" },
+]
+
+function AddSourceButton() {
+  const bases = kbStore.use()
+  const [open, setOpen] = React.useState(false)
+  const [name, setName] = React.useState("")
+  const [type, setType] = React.useState<KbSourceType>("Confluence")
+  const [kbId, setKbId] = React.useState(bases[0]?.id ?? "")
+  const [schedule, setSchedule] = React.useState(scheduleItems[2].value)
+  const [href, setHref] = React.useState("")
+  const kbItems = bases.map((k) => ({ value: k.id, label: k.name }))
+  const canSave = name.trim().length > 1 && kbId
+
+  const reset = () => {
+    setName("")
+    setType("Confluence")
+    setSchedule(scheduleItems[2].value)
+    setHref("")
+  }
+
+  const save = () => {
+    const seq = sourceStore.get().length + 1
+    const source: KbSource = {
+      id: `src-${String(seq).padStart(3, "0")}`,
+      name: name.trim(),
+      type,
+      connector: `${type.toLowerCase().replace(/\s+/g, "-")}@1.0`,
+      kbId,
+      documents: 0,
+      lastSync: NOW.toISOString(),
+      schedule,
+      scheduleLabel:
+        scheduleItems.find((s) => s.value === schedule)?.label ?? schedule,
+      status: "Running",
+      errors: [],
+      href: href.trim() || undefined,
+    }
+    sourceStore.add(source, "start")
+    const kb = bases.find((k) => k.id === kbId)
+    toast.success(`${source.name} added`, {
+      description: `${sourceTypeLabel[type]} source feeding ${kb?.name ?? kbId}, first sync marked Running.`,
+    })
+    reset()
+    setOpen(false)
+  }
+
+  return (
+    <>
+      <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+        <PlusIcon /> Add source
+      </Button>
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetContent
+          className={cn(sheetWidths.detail, "flex flex-col gap-0 p-0")}
+        >
+          <SheetHeader className="border-b px-6 py-5">
+            <SheetTitle>Add source</SheetTitle>
+            <SheetDescription>
+              Registers a connector feeding one knowledge base. The first sync
+              is marked Running; documents arrive once the connector runs.
+            </SheetDescription>
+          </SheetHeader>
+          <SheetBody>
+            <FieldGroup>
+              <Field>
+                <FieldLabel htmlFor="source-name">Name</FieldLabel>
+                <Input
+                  id="source-name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Vendor contracts (SharePoint)"
+                  autoComplete="off"
+                />
+              </Field>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field>
+                  <FieldLabel htmlFor="source-type">Type</FieldLabel>
+                  <Select
+                    value={type}
+                    onValueChange={(v) => v && setType(v as KbSourceType)}
+                    items={typeItems}
+                  >
+                    <SelectTrigger id="source-type" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {typeItems.map((t) => (
+                        <SelectItem key={t.value} value={t.value}>
+                          {t.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="source-kb">Knowledge base</FieldLabel>
+                  <Select
+                    value={kbId}
+                    onValueChange={(v) => v && setKbId(v)}
+                    items={kbItems}
+                  >
+                    <SelectTrigger id="source-kb" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {kbItems.map((k) => (
+                        <SelectItem key={k.value} value={k.value}>
+                          {k.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+              </div>
+              <Field>
+                <FieldLabel htmlFor="source-schedule">Schedule</FieldLabel>
+                <Select
+                  value={schedule}
+                  onValueChange={(v) => v && setSchedule(v)}
+                  items={scheduleItems}
+                >
+                  <SelectTrigger id="source-schedule" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {scheduleItems.map((s) => (
+                      <SelectItem key={s.value} value={s.value}>
+                        {s.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FieldDescription className="font-mono">
+                  {schedule}
+                </FieldDescription>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="source-href">Link (optional)</FieldLabel>
+                <Input
+                  id="source-href"
+                  value={href}
+                  onChange={(e) => setHref(e.target.value)}
+                  placeholder="https://wiki.example.com/spaces/..."
+                  autoComplete="off"
+                />
+              </Field>
+            </FieldGroup>
+          </SheetBody>
+          <SheetFooterActions
+            primary={
+              <Button disabled={!canSave} onClick={save}>
+                Add source
+              </Button>
+            }
+          />
+        </SheetContent>
+      </Sheet>
+    </>
   )
 }
 
@@ -372,14 +578,20 @@ function IngestionJobsPanel() {
       <CardHeader>
         <CardTitle className="flex items-center justify-between gap-2 text-sm">
           Ingestion jobs
-          <span className="text-xs font-normal text-muted-foreground tabular-nums">
-            {running} running
+          <span className="flex items-center gap-1 text-xs font-normal text-muted-foreground">
+            <CountPill count={running} tone={running ? "progress" : "muted"} />{" "}
+            running
           </span>
         </CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-1">
         {jobs.length === 0 ? (
-          <EmptyState size="sm" bare title="No jobs" />
+          <EmptyState
+            size="sm"
+            bare
+            title="No jobs"
+            description="Jobs appear here when a source syncs."
+          />
         ) : (
           jobs.map((j) => <JobRow key={j.id} job={j} />)
         )}
@@ -389,8 +601,10 @@ function IngestionJobsPanel() {
 }
 
 function JobRow({ job: j }: { job: IngestionJob }) {
-  const source = seed.find((s) => s.id === j.sourceId)
-  const kb = getKnowledgeBase(j.kbId)
+  const sources = sourceStore.use()
+  const bases = kbStore.use()
+  const source = sources.find((s) => s.id === j.sourceId)
+  const kb = bases.find((k) => k.id === j.kbId)
   const live = j.status === "Running"
   return (
     <div
@@ -414,7 +628,7 @@ function JobRow({ job: j }: { job: IngestionJob }) {
         aria-label={`${j.id} progress`}
         className="gap-2"
       >
-        <span className="w-full text-[11px] text-muted-foreground tabular-nums">
+        <span className="w-full text-2xs text-muted-foreground tabular-nums">
           {formatNumber(j.docsProcessed)} / {formatNumber(j.docsTotal)} docs
           {j.chunksWritten > 0 &&
             ` · ${formatNumber(j.chunksWritten, true)} chunks`}
@@ -422,7 +636,7 @@ function JobRow({ job: j }: { job: IngestionJob }) {
         </span>
       </Progress>
       {j.error && (
-        <p className="truncate text-[11px] text-danger-text" title={j.error}>
+        <p className="truncate text-2xs text-danger-text" title={j.error}>
           {j.error}
         </p>
       )}

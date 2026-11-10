@@ -137,7 +137,7 @@ export function EmptyValue({ className }: { className?: string }) {
       aria-label="Empty"
       className={cn("text-muted-foreground/60", className)}
     >
-      —
+      -
     </span>
   )
 }
@@ -208,7 +208,7 @@ export function DateCell({
       className={cn(
         "whitespace-nowrap tabular-nums",
         tone === "muted" && "text-muted-foreground",
-        tone === "danger" && "font-medium text-destructive",
+        tone === "danger" && "font-medium text-danger-text",
         tone === "warning" && "font-medium text-warning-text",
         className
       )}

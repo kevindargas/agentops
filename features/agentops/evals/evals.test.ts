@@ -17,7 +17,7 @@ describe("evals data", () => {
       expect(getDataset(a.evalDataset)).toBeDefined()
   })
 
-  it("builds 30–50 runs with unique ev- ids and resolvable references", () => {
+  it("builds 30-50 runs with unique ev- ids and resolvable references", () => {
     expect(evalRuns.length).toBeGreaterThanOrEqual(30)
     expect(evalRuns.length).toBeLessThanOrEqual(50)
     expect(new Set(evalRuns.map((r) => r.id)).size).toBe(evalRuns.length)

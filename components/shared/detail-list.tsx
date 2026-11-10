@@ -22,7 +22,7 @@ export interface DetailListProps {
   className?: string
   /**
    * `grid` (default) stacks label over value in columns.
-   * `rows` puts label and value side by side with hairlines between rows — best in narrow side panels.
+   * `rows` puts label and value side by side with hairlines between rows, best in narrow side panels.
    */
   variant?: "grid" | "rows"
   /** Tighter vertical rhythm. */
@@ -71,7 +71,9 @@ export function DetailList({
               >
                 <span className="min-w-0 flex-1 break-words">
                   {item.value ?? (
-                    <span className="text-muted-foreground">—</span>
+                    <span aria-label="Empty" className="text-muted-foreground">
+                      -
+                    </span>
                   )}
                 </span>
                 {copy && (
@@ -125,7 +127,11 @@ export function DetailList({
               )}
             >
               <span className="min-w-0 break-words">
-                {item.value ?? <span className="text-muted-foreground">—</span>}
+                {item.value ?? (
+                  <span aria-label="Empty" className="text-muted-foreground">
+                    -
+                  </span>
+                )}
               </span>
               {copy && (
                 <CopyButton

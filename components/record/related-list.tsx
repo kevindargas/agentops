@@ -1,7 +1,9 @@
 import Link from "next/link"
 import { cn } from "cn"
-import { ArrowRightIcon, InboxIcon, PlusIcon } from "lucide-react"
+import { ArrowRightIcon, PlusIcon } from "lucide-react"
 
+import { CountPill } from "@/components/shared/count-pill"
+import { EmptyState } from "@/components/shared/empty-state"
 import { Button } from "@/components/ui/button"
 import {
   Table,
@@ -20,7 +22,7 @@ export interface RelatedColumn<T> {
   hideOnMobile?: boolean
 }
 
-/** Compact embedded list for related records on a form (tasks, incidents, CIs…). */
+/** Compact embedded list for related records on a form (tasks, incidents, services). */
 export function RelatedList<T>({
   title,
   description,
@@ -74,9 +76,7 @@ export function RelatedList<T>({
         <div className="min-w-0">
           <h3 className="flex items-center gap-2 text-sm font-semibold">
             {title}
-            <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground tabular-nums">
-              {rows.length}
-            </span>
+            <CountPill count={rows.length} />
           </h3>
           {description && (
             <p className="mt-0.5 text-xs text-muted-foreground">
@@ -88,23 +88,23 @@ export function RelatedList<T>({
       </div>
 
       {rows.length === 0 ? (
-        <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed px-4 py-8 text-center">
-          <span className="flex size-8 items-center justify-center rounded-lg bg-muted text-muted-foreground [&_svg]:size-4">
-            {emptyIcon ?? <InboxIcon />}
-          </span>
-          <p className="text-sm text-muted-foreground">{emptyMessage}</p>
-          {action && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="mt-1"
-              render={action.href ? <Link href={action.href} /> : undefined}
-              onClick={action.onClick}
-            >
-              {action.icon ?? <PlusIcon />} {action.label}
-            </Button>
-          )}
-        </div>
+        <EmptyState
+          size="sm"
+          title={emptyMessage}
+          icon={emptyIcon}
+          action={
+            action && (
+              <Button
+                variant="ghost"
+                size="sm"
+                render={action.href ? <Link href={action.href} /> : undefined}
+                onClick={action.onClick}
+              >
+                {action.icon ?? <PlusIcon />} {action.label}
+              </Button>
+            )
+          }
+        />
       ) : (
         <div className="overflow-x-auto rounded-lg border bg-card">
           <Table>

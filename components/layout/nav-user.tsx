@@ -11,6 +11,8 @@ import {
   UserIcon,
 } from "lucide-react"
 
+import { toast } from "sonner"
+
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import {
   DropdownMenu,
@@ -65,6 +67,7 @@ export function NavUser() {
                 aria-hidden
                 className="absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full bg-success ring-2 ring-sidebar"
               />
+              <span className="sr-only">Online</span>
             </span>
             <div className="grid flex-1 text-left text-sm leading-tight">
               <span className="truncate font-medium">{user.name}</span>
@@ -96,7 +99,9 @@ export function NavUser() {
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
-              <DropdownMenuItem render={<Link href="/settings" />}>
+              <DropdownMenuItem
+                render={<Link href="/settings?section=profile" />}
+              >
                 <UserIcon /> Profile
               </DropdownMenuItem>
               <DropdownMenuItem render={<Link href="/approvals" />}>
@@ -109,7 +114,9 @@ export function NavUser() {
               </DropdownMenuItem>
               <DropdownMenuItem render={<Link href="/settings" />}>
                 <SettingsIcon /> Settings
-                <DropdownMenuShortcut>⌘,</DropdownMenuShortcut>
+                <DropdownMenuShortcut>
+                  {siteConfig.shortcuts.settings.join("")}
+                </DropdownMenuShortcut>
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
@@ -120,11 +127,19 @@ export function NavUser() {
               </DropdownMenuShortcut>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive">
+            <DropdownMenuItem
+              variant="destructive"
+              onClick={() =>
+                toast("Signed out", {
+                  description:
+                    "Demo session: there is no identity provider to sign out of. Reload to continue.",
+                })
+              }
+            >
               <LogOutIcon /> Log out
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <p className="px-2 py-1 text-[11px] text-muted-foreground">
+            <p className="px-2 py-1 text-2xs text-muted-foreground">
               {siteConfig.name} v{siteConfig.version} · {siteConfig.workspace}
             </p>
           </DropdownMenuContent>

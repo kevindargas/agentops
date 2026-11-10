@@ -1,5 +1,6 @@
 "use client"
 
+import { useRouter } from "next/navigation"
 import { createColumnHelper } from "@tanstack/react-table"
 import { ClipboardCheckIcon, ThumbsDownIcon, ThumbsUpIcon } from "lucide-react"
 import { toast } from "sonner"
@@ -16,16 +17,19 @@ import {
 import { StateBadge } from "@/components/shared/status-badge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { agentTraces, deployedAgents } from "@/lib/data"
-import type { AgentTrace } from "@/lib/types"
+import { agentTraces, deployedAgents, traceFlags } from "@/lib/data/agentops"
+import { formatCost, formatMs, formatTokens } from "@/lib/format"
+import type { AgentTrace, BoundHit } from "@/lib/types"
 import {
   AgentChip,
-  fmtCost,
-  fmtMs,
-  fmtTokens,
+  BoundHitFlag,
   ModelChip,
+  OutcomeBadge,
+  outcomeLabel,
+  outcomeOrder,
   ScoreBar,
 } from "./shared"
+import { queueTraceForReview } from "./stores"
 
 const col = createColumnHelper<DataTableFeatures, AgentTrace>()
 
@@ -45,14 +49,14 @@ export const traceColumns = col.columns([
     cell: ({ getValue, row }) => (
       <span className="flex min-w-0 flex-col gap-0.5">
         <TruncatedText className="text-sm">{getValue()}</TruncatedText>
-        <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+        <span className="flex items-center gap-1.5 text-2xs text-muted-foreground">
           <AgentChip agentId={row.original.agentId} size="sm" />
           <span aria-hidden>·</span>
           {row.original.channel}
           {row.original.variant && (
             <Badge
               variant="outline"
-              className="h-4 px-1 font-mono text-[10px] text-muted-foreground"
+              className="h-4 px-1 font-mono text-3xs text-muted-foreground"
             >
               {row.original.variant}
             </Badge>
@@ -86,10 +90,35 @@ export const traceColumns = col.columns([
     ),
     meta: { width: "w-36", label: "Status", skeleton: "w-20 rounded-full" },
   }),
+  col.accessor("outcome", {
+    header: ({ column }) => (
+      <DataTableColumnHeader
+        column={column}
+        title="Outcome"
+        hint="What happened to the run. Partial and refused runs are still ok; the rest are failure modes. A flag names the run limit that stopped it."
+      />
+    ),
+    cell: ({ getValue, row }) => (
+      <span className="flex items-center gap-1.5">
+        <OutcomeBadge outcome={getValue()} />
+        {row.original.boundHit && (
+          <BoundHitFlag bound={row.original.boundHit} />
+        )}
+      </span>
+    ),
+    sortFn: (a, b) =>
+      outcomeOrder.indexOf(a.original.outcome) -
+      outcomeOrder.indexOf(b.original.outcome),
+    meta: { width: "w-44", label: "Outcome", skeleton: "w-20 rounded-full" },
+  }),
   col.accessor((r) => r.evals.grounded, {
     id: "grounded",
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Grounded" />
+      <DataTableColumnHeader
+        column={column}
+        title="Grounded"
+        hint="Evaluator score, 0 to 1: share of claims supported by the retrieved sources."
+      />
     ),
     cell: ({ getValue }) => (
       <ScoreBar
@@ -105,7 +134,9 @@ export const traceColumns = col.columns([
     header: ({ column }) => (
       <DataTableColumnHeader column={column} title="Latency" />
     ),
-    cell: ({ getValue }) => <NumericCell value={getValue()} format={fmtMs} />,
+    cell: ({ getValue }) => (
+      <NumericCell value={getValue()} format={formatMs} />
+    ),
     meta: { width: "w-24", label: "Latency", numeric: true, skeleton: "w-12" },
   }),
   col.accessor((r) => r.tokensIn + r.tokensOut, {
@@ -114,7 +145,7 @@ export const traceColumns = col.columns([
       <DataTableColumnHeader column={column} title="Tokens" />
     ),
     cell: ({ getValue }) => (
-      <NumericCell value={getValue()} format={fmtTokens} muted />
+      <NumericCell value={getValue()} format={formatTokens} muted />
     ),
     meta: { width: "w-24", label: "Tokens", numeric: true, skeleton: "w-10" },
   }),
@@ -123,7 +154,7 @@ export const traceColumns = col.columns([
       <DataTableColumnHeader column={column} title="Cost" />
     ),
     cell: ({ getValue }) => (
-      <NumericCell value={getValue()} format={(n) => fmtCost(n, 3)} muted />
+      <NumericCell value={getValue()} format={(n) => formatCost(n, 3)} muted />
     ),
     meta: { width: "w-24", label: "Cost", numeric: true, skeleton: "w-10" },
   }),
@@ -135,6 +166,21 @@ export const traceColumns = col.columns([
     enableSorting: false,
     meta: { width: "w-44", label: "Model", skeleton: "w-28" },
   }),
+  col.accessor("version", {
+    header: ({ column }) => (
+      <DataTableColumnHeader
+        column={column}
+        title="Version"
+        hint="Agent build that served the run. Compare versions after a release."
+      />
+    ),
+    cell: ({ getValue }) => (
+      <span className="font-mono text-xs text-muted-foreground">
+        {getValue()}
+      </span>
+    ),
+    meta: { width: "w-24", label: "Version", skeleton: "w-12" },
+  }),
   col.accessor("startedAt", {
     header: ({ column }) => (
       <DataTableColumnHeader column={column} title="Started" />
@@ -143,6 +189,19 @@ export const traceColumns = col.columns([
     meta: { width: "w-32", label: "Started", skeleton: "w-20" },
   }),
 ])
+
+const boundLabel: Record<BoundHit, string> = {
+  max_steps: "Max steps",
+  deadline: "Deadline",
+  cost_budget: "Cost budget",
+  no_progress: "No progress",
+}
+/** Only the bounds the generator actually produces, so no facet is empty. */
+const boundOptions = [
+  ...new Set(
+    agentTraces.map((t) => t.boundHit).filter((b): b is BoundHit => Boolean(b))
+  ),
+].map((b) => ({ value: b, label: boundLabel[b] }))
 
 const facets: FacetDef<AgentTrace>[] = [
   {
@@ -161,16 +220,38 @@ const facets: FacetDef<AgentTrace>[] = [
     getValue: (r) => r.status,
   },
   {
+    id: "outcome",
+    title: "Outcome",
+    options: outcomeOrder.map((v) => ({ value: v, label: outcomeLabel[v] })),
+    getValue: (r) => r.outcome,
+  },
+  {
+    id: "bound",
+    title: "Bound hit",
+    options: [...boundOptions, { value: "none", label: "None" }],
+    getValue: (r) => r.boundHit ?? "none",
+  },
+  {
     id: "flag",
     title: "Flag",
-    options: [
-      "Low confidence",
-      "Missing citation",
-      "Policy: PII",
-      "Tool error",
-      "Long latency",
-    ].map((v) => ({ value: v, label: v })),
+    options: traceFlags.map((v) => ({ value: v, label: v })),
     getValue: (r) => r.flags,
+  },
+  {
+    id: "version",
+    title: "Version",
+    options: [...new Set(agentTraces.map((t) => t.version))]
+      .sort()
+      .map((v) => ({ value: v, label: v })),
+    getValue: (r) => r.version,
+  },
+  {
+    id: "promptVersion",
+    title: "Prompt version",
+    options: [...new Set(agentTraces.map((t) => t.lineage.promptVersion))]
+      .sort((a, b) => Number(a.slice(2)) - Number(b.slice(2)))
+      .map((v) => ({ value: v, label: v })),
+    getValue: (r) => r.lineage.promptVersion,
   },
   {
     id: "channel",
@@ -197,10 +278,16 @@ export function TracesTable({
   data = agentTraces,
   agentId,
   compact = false,
+  initialFacets,
 }: {
   data?: AgentTrace[]
   agentId?: string
   compact?: boolean
+  /**
+   * Facet selections from the URL, e.g. `{ status: ["Failed"] }` or
+   * `{ promptVersion: ["p-41"] }` from `?version=p-41`.
+   */
+  initialFacets?: Record<string, string[]>
 }) {
   const scoped = agentId ? data.filter((t) => t.agentId === agentId) : data
   return (
@@ -209,35 +296,67 @@ export function TracesTable({
       data={scoped}
       getRowId={(r) => r.id}
       getSearchText={(r) =>
-        `${r.id} ${r.userQuery} ${r.finalAnswer} ${r.sessionId} ${r.flags.join(" ")}`
+        `${r.id} ${r.userQuery} ${r.finalAnswer} ${r.sessionId} ${r.version} ${r.lineage.promptVersion} ${r.flags.join(" ")} ${outcomeLabel[r.outcome]}`
       }
       searchPlaceholder="Search traces, sessions, text…"
       facets={agentId ? facets.filter((f) => f.id !== "agent") : facets}
+      initialFacets={initialFacets}
       initialSorting={[{ id: "startedAt", desc: true }]}
       initialColumnVisibility={{
         modelId: false,
+        version: false,
         tokens: !compact,
         cost: !compact,
       }}
       rowHref={(r) => `/agentops/traces/${r.id}`}
       pageSize={compact ? 10 : 20}
       totalLabel="traces"
+      caption="Agent traces"
       density={compact ? "compact" : undefined}
       selectionLabel={(n) => (n === 1 ? "trace" : "traces")}
       bulkActions={(rows, clear) => (
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => {
-            toast.success(
-              `${rows.length} trace${rows.length === 1 ? "" : "s"} sent to the review queue`
-            )
-            clear()
-          }}
-        >
-          <ClipboardCheckIcon /> Send to review
-        </Button>
+        <SendToReview traces={rows.map((r) => r.original)} onDone={clear} />
       )}
     />
+  )
+}
+
+/** Bulk action: queues the selected traces in the shared review store. */
+function SendToReview({
+  traces,
+  onDone,
+}: {
+  traces: AgentTrace[]
+  onDone: () => void
+}) {
+  const router = useRouter()
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={() => {
+        const created = traces.filter(
+          (t) => queueTraceForReview(t).created
+        ).length
+        const skipped = traces.length - created
+        toast.success(
+          created
+            ? `${created} trace${created === 1 ? "" : "s"} added to the review queue`
+            : "Already in the review queue",
+          {
+            description: skipped
+              ? `${skipped} already had a queue item`
+              : "Pending for the current session",
+            action: {
+              label: "Open queue",
+              onClick: () => router.push("/agentops/reviews"),
+            },
+          }
+        )
+        onDone()
+      }}
+    >
+      <ClipboardCheckIcon /> Send to review
+    </Button>
   )
 }

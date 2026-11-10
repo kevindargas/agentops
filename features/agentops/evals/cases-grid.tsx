@@ -13,6 +13,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
+import { CHART_HEIGHT } from "@/components/charts/chart-primitives"
 import { StackedBarChart } from "@/components/charts/stacked-bar-chart"
 import {
   DataTable,
@@ -20,6 +21,15 @@ import {
   NumericCell,
   type DataTableFeatures,
 } from "@/components/data-table"
+import { CountPill } from "@/components/shared/count-pill"
+import { EmptyState } from "@/components/shared/empty-state"
+import { Eyebrow } from "@/components/shared/eyebrow"
+import {
+  SheetBody,
+  SheetFooterActions,
+  sheetWidths,
+} from "@/components/shared/sheet-frame"
+import { StateBadge } from "@/components/shared/status-badge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -30,30 +40,41 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { getTrace } from "@/lib/data"
-import { getEvaluator, type EvalCase, type EvalRun } from "@/lib/data/evals"
+import { getTrace } from "@/lib/data/agentops"
+import {
+  getDataset,
+  getEvaluator,
+  type EvalCase,
+  type EvalRun,
+} from "@/lib/data/evals"
+import { formatCost, formatMs } from "@/lib/format"
 import {
   ChangeBadge,
-  fmtCost,
-  fmtMs,
   formatEvalScore,
   PassFailBadge,
   ScoreCell,
   scoreToneFor,
   shortName,
 } from "./shared"
+import { addCasesToDataset } from "./store"
 
 type Filter = "all" | "regressions" | "failures"
 
 const col = createColumnHelper<DataTableFeatures, EvalCase>()
 
-function buildColumns(evaluatorIds: string[]) {
+function buildColumns(evaluatorIds: string[], flagged: Set<string>) {
   return col.columns([
     col.accessor("id", {
       header: "#",
       cell: ({ getValue }) => (
-        <span className="font-mono text-[11px] text-muted-foreground">
+        <span className="inline-flex items-center gap-1 font-mono text-2xs text-muted-foreground">
           {getValue().split("-c")[1]}
+          {flagged.has(getValue()) && (
+            <FlagIcon
+              className="size-3 text-warning-text"
+              aria-label="Flagged in this session"
+            />
+          )}
         </span>
       ),
       enableSorting: false,
@@ -98,12 +119,20 @@ function buildColumns(evaluatorIds: string[]) {
     ...evaluatorIds.map((e) =>
       col.accessor((r) => r.scores[e] ?? -1, {
         id: e,
-        header: ({ column }) => (
-          <DataTableColumnHeader
-            column={column}
-            title={shortName(getEvaluator(e)?.name ?? e)}
-          />
-        ),
+        header: ({ column }) => {
+          const ev = getEvaluator(e)
+          return (
+            <DataTableColumnHeader
+              column={column}
+              title={shortName(ev?.name ?? e)}
+              hint={
+                ev
+                  ? `${ev.name}: ${ev.measures}, scored ${ev.scale}`
+                  : undefined
+              }
+            />
+          )
+        },
         cell: ({ row }) => (
           <ScoreCell evaluatorId={e} value={row.original.scores[e]} />
         ),
@@ -123,7 +152,11 @@ function buildColumns(evaluatorIds: string[]) {
     }),
     col.accessor("baselinePassed", {
       header: ({ column }) => (
-        <DataTableColumnHeader column={column} title="Baseline" />
+        <DataTableColumnHeader
+          column={column}
+          title="Baseline"
+          hint="Result of the same case on the baseline run."
+        />
       ),
       cell: ({ getValue }) => (
         <span className="text-xs text-muted-foreground">
@@ -134,7 +167,11 @@ function buildColumns(evaluatorIds: string[]) {
     }),
     col.accessor("change", {
       header: ({ column }) => (
-        <DataTableColumnHeader column={column} title="Changed" />
+        <DataTableColumnHeader
+          column={column}
+          title="Changed"
+          hint="Regression: passed on the baseline, fails now. Improvement: the reverse."
+        />
       ),
       cell: ({ getValue }) => <ChangeBadge change={getValue()} />,
       sortFn: (a, b) => rank[a.original.change] - rank[b.original.change],
@@ -145,7 +182,7 @@ function buildColumns(evaluatorIds: string[]) {
         <DataTableColumnHeader column={column} title="Latency" />
       ),
       cell: ({ getValue }) => (
-        <NumericCell value={getValue()} format={fmtMs} muted />
+        <NumericCell value={getValue()} format={formatMs} muted />
       ),
       meta: {
         width: "w-20",
@@ -159,7 +196,11 @@ function buildColumns(evaluatorIds: string[]) {
         <DataTableColumnHeader column={column} title="Cost" />
       ),
       cell: ({ getValue }) => (
-        <NumericCell value={getValue()} format={(n) => fmtCost(n, 3)} muted />
+        <NumericCell
+          value={getValue()}
+          format={(n) => formatCost(n, 3)}
+          muted
+        />
       ),
       meta: { width: "w-20", label: "Cost", numeric: true, skeleton: "w-10" },
     }),
@@ -204,9 +245,11 @@ export function CasesGrid({ run, cases }: { run: EvalRun; cases: EvalCase[] }) {
     run.regressions > 0 ? "regressions" : run.failed > 0 ? "failures" : "all"
   )
   const [openId, setOpenId] = React.useState<string | null>(null)
+  const [flagged, setFlagged] = React.useState<Set<string>>(() => new Set())
+  const [golden, setGolden] = React.useState<Set<string>>(() => new Set())
   const columns = React.useMemo(
-    () => buildColumns(run.evaluatorIds),
-    [run.evaluatorIds]
+    () => buildColumns(run.evaluatorIds, flagged),
+    [run.evaluatorIds, flagged]
   )
   const data = React.useMemo(
     () =>
@@ -239,6 +282,7 @@ export function CasesGrid({ run, cases }: { run: EvalRun; cases: EvalCase[] }) {
         density="compact"
         pageSize={25}
         totalLabel="cases"
+        caption={`Test cases for ${run.id} with expected and actual output and every evaluator score`}
         selectionLabel={(n) => (n === 1 ? "case" : "cases")}
         emptyTitle={
           filter === "regressions"
@@ -262,36 +306,33 @@ export function CasesGrid({ run, cases }: { run: EvalRun; cases: EvalCase[] }) {
           >
             <ToggleGroupItem value="regressions" size="sm" className="text-xs">
               Regressions
-              <Count n={run.regressions} tone="danger" />
+              <CountPill
+                count={run.regressions}
+                tone={run.regressions > 0 ? "danger" : "muted"}
+                className="ml-1"
+              />
             </ToggleGroupItem>
             <ToggleGroupItem value="failures" size="sm" className="text-xs">
               Failures
-              <Count n={run.failed} />
+              <CountPill count={run.failed} className="ml-1" />
             </ToggleGroupItem>
             <ToggleGroupItem value="all" size="sm" className="text-xs">
               All
-              <Count n={cases.length} />
+              <CountPill count={cases.length} className="ml-1" />
             </ToggleGroupItem>
           </ToggleGroup>
         }
       />
-      <CaseSheet run={run} item={open} onClose={() => setOpenId(null)} />
+      <CaseSheet
+        run={run}
+        item={open}
+        flagged={open ? flagged.has(open.id) : false}
+        inGolden={open ? golden.has(open.id) : false}
+        onFlag={(id) => setFlagged((s) => new Set(s).add(id))}
+        onGolden={(id) => setGolden((s) => new Set(s).add(id))}
+        onClose={() => setOpenId(null)}
+      />
     </>
-  )
-}
-
-function Count({ n, tone }: { n: number; tone?: "danger" }) {
-  return (
-    <span
-      className={cn(
-        "ml-1 rounded-full px-1.5 py-0.5 font-mono text-[10px] tabular-nums",
-        tone === "danger" && n > 0
-          ? "bg-destructive/10 text-danger-text"
-          : "bg-muted text-muted-foreground"
-      )}
-    >
-      {n}
-    </span>
   )
 }
 
@@ -302,22 +343,61 @@ function Count({ n, tone }: { n: number; tone?: "danger" }) {
 function CaseSheet({
   run,
   item: c,
+  flagged,
+  inGolden,
+  onFlag,
+  onGolden,
   onClose,
 }: {
   run: EvalRun
   item: EvalCase | null
+  flagged: boolean
+  inGolden: boolean
+  onFlag: (id: string) => void
+  onGolden: (id: string) => void
   onClose: () => void
 }) {
   const trace = c?.traceId ? getTrace(c.traceId) : undefined
+  const dataset = getDataset(run.datasetId)
+
+  function flag() {
+    if (!c) return
+    onFlag(c.id)
+    toast.warning("Case flagged", {
+      description: `${c.id} is marked in this session's grid. Flags are not sent anywhere in the template.`,
+    })
+  }
+
+  function addToGolden() {
+    if (!c) return
+    const updated = addCasesToDataset(
+      run.datasetId,
+      1,
+      `${c.id} promoted from ${run.id}`
+    )
+    onGolden(c.id)
+    toast.success(`Added to ${dataset?.name ?? run.datasetId}`, {
+      description: updated
+        ? `${updated.version} drafted in this session, now ${updated.cases} cases.`
+        : undefined,
+    })
+  }
+
   return (
     <Sheet open={c !== null} onOpenChange={(o) => !o && onClose()}>
-      <SheetContent className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl">
+      <SheetContent
+        className={cn(sheetWidths.editor, "flex flex-col gap-0 p-0")}
+      >
         {c && (
           <>
             <SheetHeader className="gap-3 border-b px-6 py-5">
               <div className="flex flex-wrap items-center gap-2">
                 <PassFailBadge passed={c.passed} size="default" />
                 <ChangeBadge change={c.change} size="default" />
+                {flagged && (
+                  <StateBadge state="Flagged" tone="warning" size="sm" />
+                )}
+                {inGolden && <StateBadge state="In golden set" size="sm" />}
                 <span className="text-xs text-muted-foreground">
                   Baseline {c.baselinePassed ? "passed" : "failed"}
                 </span>
@@ -326,7 +406,7 @@ function CaseSheet({
                     <Badge
                       key={t}
                       variant="outline"
-                      className="h-5 px-1.5 font-mono text-[10px] text-muted-foreground"
+                      className="h-5 px-1.5 font-mono text-3xs text-muted-foreground"
                     >
                       {t}
                     </Badge>
@@ -337,12 +417,12 @@ function CaseSheet({
                 {c.id}
               </SheetTitle>
               <SheetDescription className="text-xs tabular-nums">
-                {fmtMs(c.latencyMs)} · {fmtCost(c.cost, 3)} per case ·{" "}
+                {formatMs(c.latencyMs)} · {formatCost(c.cost, 3)} per case ·{" "}
                 {run.evaluatorIds.length} evaluators
               </SheetDescription>
             </SheetHeader>
 
-            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+            <SheetBody>
               <div className="flex flex-col gap-6">
                 <Block label="Input" text={c.input} />
                 <div className="grid gap-4 lg:grid-cols-2">
@@ -372,7 +452,7 @@ function CaseSheet({
                         <li key={e} className="flex gap-3 px-3 py-2.5">
                           <span
                             className={cn(
-                              "mt-0.5 inline-flex h-6 w-14 shrink-0 items-center justify-center rounded-md font-mono text-[11px] font-medium tabular-nums",
+                              "mt-0.5 inline-flex h-6 w-14 shrink-0 items-center justify-center rounded-md font-mono text-2xs font-medium tabular-nums",
                               tone === "success" &&
                                 "bg-success/12 text-success-text",
                               tone === "warning" &&
@@ -388,7 +468,7 @@ function CaseSheet({
                               <span className="text-sm font-medium">
                                 {ev.name}
                               </span>
-                              <span className="text-[11px] text-muted-foreground">
+                              <span className="text-2xs text-muted-foreground">
                                 {ev.type}
                                 {ev.modelId
                                   ? ` · ${ev.modelId.split("/")[1]}`
@@ -414,8 +494,8 @@ function CaseSheet({
                           {trace.id}
                         </span>
                         <span className="block truncate text-xs text-muted-foreground">
-                          {trace.spans.length} spans · {fmtMs(trace.durationMs)}{" "}
-                          · {trace.status}
+                          {trace.spans.length} spans ·{" "}
+                          {formatMs(trace.durationMs)} · {trace.status}
                         </span>
                       </span>
                     </span>
@@ -428,48 +508,52 @@ function CaseSheet({
                     </Button>
                   </section>
                 ) : (
-                  <p className="rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground">
-                    No production trace is linked to this case — it was authored
-                    or synthesised rather than sampled from traffic.
-                  </p>
+                  <EmptyState
+                    size="sm"
+                    bare
+                    icon={<RouteIcon />}
+                    title="No production trace"
+                    description="This case was authored or synthesised rather than sampled from traffic."
+                  />
                 )}
               </div>
-            </div>
+            </SheetBody>
 
-            <div className="flex flex-wrap items-center justify-end gap-2 border-t px-6 py-4">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() =>
-                  toast.warning("Case flagged", {
-                    description: `${c.id} routed to the dataset owner for review`,
-                  })
-                }
-              >
-                <FlagIcon /> Flag case
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() =>
-                  toast.success("Added to golden set", {
-                    description: `${c.id} will ship in the next dataset version`,
-                  })
-                }
-              >
-                <StarIcon /> Add to golden set
-              </Button>
-              <Button
-                size="sm"
-                render={
-                  <Link
-                    href={`/agentops/playground?agent=${run.agentId}&prompt=${run.promptVersion}`}
-                  />
-                }
-              >
-                <PlayIcon /> Open in playground
-              </Button>
-            </div>
+            <SheetFooterActions
+              tertiary={
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={flagged}
+                  onClick={flag}
+                >
+                  <FlagIcon /> {flagged ? "Flagged" : "Flag case"}
+                </Button>
+              }
+              secondary={
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={inGolden}
+                  onClick={addToGolden}
+                >
+                  <StarIcon />{" "}
+                  {inGolden ? "In golden set" : "Add to golden set"}
+                </Button>
+              }
+              primary={
+                <Button
+                  size="sm"
+                  render={
+                    <Link
+                      href={`/agentops/playground?agent=${run.agentId}&pv=${run.promptVersion}`}
+                    />
+                  }
+                >
+                  <PlayIcon /> Open in playground
+                </Button>
+              }
+            />
           </>
         )}
       </SheetContent>
@@ -488,9 +572,7 @@ function Block({
 }) {
   return (
     <section className="flex min-w-0 flex-col gap-1.5">
-      <h3 className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-        {label}
-      </h3>
+      <Eyebrow as="h3">{label}</Eyebrow>
       <pre
         className={cn(
           "rounded-lg border bg-muted/40 p-3 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap",
@@ -507,7 +589,7 @@ function Block({
 /* Distribution                                                              */
 /* ------------------------------------------------------------------------ */
 
-const bins = ["0–0.2", "0.2–0.4", "0.4–0.6", "0.6–0.8", "0.8–1.0"]
+const bins = ["0-0.2", "0.2-0.4", "0.4-0.6", "0.6-0.8", "0.8-1.0"]
 
 /** Score histogram per evaluator: one stacked column per bin. */
 export function ScoreDistribution({
@@ -535,13 +617,13 @@ export function ScoreDistribution({
   const series = ids.map((e, i) => ({
     key: e,
     label: shortName(getEvaluator(e)?.name ?? e),
-    color: `var(--chart-${(i % 5) + 1})`,
+    color: `var(--chart-${(i % 8) + 1})`,
   }))
   return (
     <StackedBarChart
       data={data}
       series={series}
-      height={220}
+      height={CHART_HEIGHT.md}
       valueFormatter={(v) => `${v} ${v === 1 ? "case" : "cases"}`}
     />
   )

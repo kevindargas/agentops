@@ -11,7 +11,7 @@ import {
 export interface SimulatedRunState {
   input: string | null
   result: PlaygroundResult | null
-  /** 0–1 stream progress. */
+  /** 0 to 1 stream progress. */
   progress: number
   streaming: boolean
 }

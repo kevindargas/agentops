@@ -18,6 +18,7 @@ import {
 import { toast } from "sonner"
 
 import { EmptyState } from "@/components/shared/empty-state"
+import { Eyebrow } from "@/components/shared/eyebrow"
 import { RiskBadge } from "@/components/shared/status-badge"
 import { UserChip } from "@/components/shared/user-chip"
 import {
@@ -45,15 +46,18 @@ import {
   FieldError,
   FieldLabel,
 } from "@/components/ui/field"
-import { Textarea } from "@/components/ui/textarea"
-import { getDeployedAgent, NOW } from "@/lib/data"
 import {
-  getRelease,
-  releaseApprovals as seed,
-  type Approver,
-  type ReleaseApproval,
-} from "@/lib/data/deployments"
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
+import { Textarea } from "@/components/ui/textarea"
+import { getDeployedAgent } from "@/lib/data/agentops"
+import type { Approver, Release, ReleaseApproval } from "@/lib/data/deployments"
+import { clock, NOW } from "@/lib/data/seed"
+import { currentUser } from "@/lib/data/users"
 import { formatDelta, timeAgo } from "@/lib/format"
+import { recordAudit } from "../audit/audit-store"
 import { AgentChip } from "../shared"
 import {
   ChangeChips,
@@ -62,8 +66,13 @@ import {
   VersionChip,
   strategyLabel,
 } from "./shared"
-
-type Decision = "approved" | "rejected" | "changes requested"
+import {
+  approvalsFrom,
+  decide,
+  decisionStore,
+  releaseStore,
+  type ApprovalDecision,
+} from "./store"
 
 const approverMeta: Record<
   Approver["status"],
@@ -77,7 +86,7 @@ const approverMeta: Record<
   rejected: {
     label: "Rejected",
     icon: <XCircleIcon />,
-    className: "text-destructive",
+    className: "text-danger-text",
   },
   "changes requested": {
     label: "Changes requested",
@@ -91,12 +100,29 @@ const approverMeta: Record<
   },
 }
 
-export function ReleaseApprovals() {
-  const [decisions, setDecisions] = React.useState<Record<string, Decision>>({})
-  const open = seed.filter((a) => !decisions[a.id])
-  const decided = seed.filter((a) => decisions[a.id])
+function releaseTarget(release: Release, agentName: string) {
+  return {
+    kind: "release",
+    id: release.id,
+    label: `${agentName} ${release.version}`,
+    href: `/agentops/deployments/${release.id}`,
+  }
+}
 
-  if (seed.length === 0)
+export function ReleaseApprovals() {
+  const releases = releaseStore.use()
+  const { decisions } = decisionStore.use()
+  const approvals = approvalsFrom(releases)
+  const open = approvals.filter((a) => !decisions[a.id])
+  const decided = Object.keys(decisions)
+    .map((id) => ({
+      id,
+      decision: decisions[id],
+      releaseId: id.replace(/^apr-/, "rel-"),
+    }))
+    .filter((d) => releases.some((r) => r.id === d.releaseId))
+
+  if (approvals.length === 0 && decided.length === 0)
     return (
       <EmptyState
         title="Nothing awaiting approval"
@@ -117,33 +143,28 @@ export function ReleaseApprovals() {
       ) : (
         <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
           {open.map((a) => (
-            <ApprovalCard
-              key={a.id}
-              approval={a}
-              onDecide={(d) => setDecisions((s) => ({ ...s, [a.id]: d }))}
-            />
+            <ApprovalCard key={a.id} approval={a} />
           ))}
         </div>
       )}
       {decided.length > 0 && (
         <div className="flex flex-col gap-2">
-          <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-            Decided this session
-          </h3>
+          <Eyebrow as="h3">Decided this session</Eyebrow>
           <ul className="divide-y rounded-lg border bg-card text-sm">
-            {decided.map((a) => {
-              const r = getRelease(a.releaseId)
-              const meta = approverMeta[decisions[a.id]]
+            {decided.map((d) => {
+              const r = releases.find((x) => x.id === d.releaseId)
+              const meta = approverMeta[d.decision]
               return (
-                <li key={a.id} className="flex items-center gap-3 px-3 py-2">
+                <li key={d.id} className="flex items-center gap-3 px-3 py-2">
                   <Link
-                    href={`/agentops/deployments/${a.releaseId}`}
+                    href={`/agentops/deployments/${d.releaseId}`}
                     className="font-mono text-xs hover:underline"
                   >
-                    {a.releaseId}
+                    {d.releaseId}
                   </Link>
                   {r && <AgentChip agentId={r.agentId} size="sm" />}
                   {r && <VersionChip version={r.version} />}
+                  {r && <StageBadge stage={r.stage} size="sm" />}
                   <span
                     className={cn(
                       "ml-auto inline-flex items-center gap-1 text-xs font-medium [&_svg]:size-3.5",
@@ -163,19 +184,15 @@ export function ReleaseApprovals() {
   )
 }
 
-function ApprovalCard({
-  approval,
-  onDecide,
-}: {
-  approval: ReleaseApproval
-  onDecide: (d: Decision) => void
-}) {
-  const release = getRelease(approval.releaseId)
+function ApprovalCard({ approval }: { approval: ReleaseApproval }) {
+  const releases = releaseStore.use()
+  const release = releases.find((r) => r.id === approval.releaseId)
   const [dialog, setDialog] = React.useState<"reject" | "changes" | null>(null)
   const [reason, setReason] = React.useState("")
   const [touched, setTouched] = React.useState(false)
   if (!release) return null
   const agent = getDeployedAgent(release.agentId)
+  const agentName = agent?.name ?? release.agentId
   const approvedCount = approval.approvers.filter(
     (x) => x.status === "approved"
   ).length
@@ -187,21 +204,101 @@ function ApprovalCard({
   const dueHours =
     (new Date(approval.due).getTime() - NOW.getTime()) / 3_600_000
 
+  function appendActivity(
+    kind: Release["activity"][number]["kind"],
+    message: string,
+    patch?: Partial<Release>
+  ) {
+    releaseStore.patch(approval.releaseId, (r) => ({
+      ...r,
+      ...patch,
+      activity: [
+        ...r.activity,
+        {
+          id: `${r.id}-local-${r.activity.length}`,
+          kind,
+          at: clock().toISOString(),
+          actorId: currentUser.id,
+          message,
+        },
+      ],
+    }))
+  }
+
+  function approve() {
+    if (!release) return
+    appendActivity("approval", "Approved from the approvals inbox", {
+      approvers: release.approvers.map((a) =>
+        a.status === "approved"
+          ? a
+          : { ...a, status: "approved", at: clock().toISOString() }
+      ),
+    })
+    decide(approval.id, "approved")
+    const event = recordAudit({
+      action: "release.approved",
+      source: "release",
+      target: releaseTarget(release, agentName),
+      summary: `Approved ${release.id} (${agentName} ${release.version}) with gate ${gate?.status ?? "not run"} at ${gate?.score ?? "n/a"}`,
+      context: {
+        agentId: release.agentId,
+        releaseId: release.id,
+        approvalId: approval.id,
+      },
+    })
+    toast.success(`${release.id} approved`, {
+      description: `${agentName} ${release.version} can start its ${release.strategy.toLowerCase()} rollout from the release record. Recorded as ${event.id}.`,
+    })
+  }
+
   function submit(kind: "reject" | "changes") {
+    if (!release) return
     if (!reasonValid) {
       setTouched(true)
       return
     }
     setDialog(null)
+    const text = reason.trim()
+    const decision: ApprovalDecision =
+      kind === "reject" ? "rejected" : "changes requested"
     if (kind === "reject") {
-      onDecide("rejected")
-      toast(`${release!.id} rejected`, { description: reason.trim() })
+      appendActivity("note", `Rejected: ${text}`, { stage: "Draft" })
     } else {
-      onDecide("changes requested")
-      toast(`Changes requested on ${release!.id}`, {
-        description: reason.trim(),
+      appendActivity("note", `Changes requested: ${text}`, {
+        approvers: release.approvers.map((a) =>
+          a.userId === currentUser.id
+            ? { ...a, status: "changes requested", at: clock().toISOString() }
+            : a
+        ),
       })
     }
+    decide(approval.id, decision)
+    const event = recordAudit({
+      action:
+        kind === "reject" ? "release.rejected" : "release.changes_requested",
+      source: "release",
+      target: releaseTarget(release, agentName),
+      summary:
+        kind === "reject"
+          ? `Rejected ${release.id} (${agentName} ${release.version}); release returned to Draft`
+          : `Requested changes on ${release.id} (${agentName} ${release.version})`,
+      before: release.stage,
+      after: kind === "reject" ? "Draft" : release.stage,
+      context: {
+        agentId: release.agentId,
+        releaseId: release.id,
+        approvalId: approval.id,
+        reason: text,
+      },
+    })
+    toast(
+      kind === "reject"
+        ? `${release.id} rejected`
+        : `Changes requested on ${release.id}`,
+      {
+        description: `${text} Recorded as ${event.id}.`,
+      }
+    )
   }
 
   return (
@@ -228,20 +325,16 @@ function ApprovalCard({
       </CardHeader>
       <CardContent className="flex flex-1 flex-col gap-4">
         <section className="flex flex-col gap-1.5">
-          <h4 className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-            What
-          </h4>
+          <Eyebrow as="h3">What</Eyebrow>
           <ChangeChips changes={release.changes} max={5} />
         </section>
 
         <section className="flex flex-col gap-1.5">
-          <h4 className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-            Evidence
-          </h4>
-          <ul className="grid grid-cols-2 gap-2 text-xs">
+          <Eyebrow as="h3">Evidence</Eyebrow>
+          <ul className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
             <Evidence
               label="Eval gate"
-              ok={gateOk}
+              ok={gate ? gateOk : undefined}
               value={<EvalGateChip gate={gate} />}
             />
             <Evidence
@@ -326,20 +419,25 @@ function ApprovalCard({
         </section>
 
         <div className="mt-auto flex gap-2 pt-1">
-          <Button
-            size="sm"
-            className="flex-1"
-            disabled={!gateOk}
-            title={gateOk ? undefined : "Eval gate must pass before approval"}
-            onClick={() => {
-              onDecide("approved")
-              toast.success(`${release.id} approved`, {
-                description: `${agent?.name} ${release.version} can start its ${release.strategy.toLowerCase()} rollout.`,
-              })
-            }}
-          >
-            <CheckIcon /> Approve
-          </Button>
+          <Tooltip>
+            <TooltipTrigger render={<span className="inline-flex flex-1" />}>
+              <Button
+                size="sm"
+                className="flex-1"
+                disabled={!gateOk}
+                onClick={approve}
+              >
+                <CheckIcon /> Approve
+              </Button>
+            </TooltipTrigger>
+            {!gateOk && (
+              <TooltipContent>
+                {gate
+                  ? `Eval gate failed${gate.reason ? `: ${gate.reason}` : ""}. Request changes instead.`
+                  : "No eval gate yet. Run a Pre-deploy eval before approving."}
+              </TooltipContent>
+            )}
+          </Tooltip>
           <Button
             size="sm"
             variant="outline"
@@ -379,8 +477,8 @@ function ApprovalCard({
             </AlertDialogTitle>
             <AlertDialogDescription>
               {dialog === "reject"
-                ? "The release returns to draft and the author is notified."
-                : "The author sees your note and re-requests approval once addressed."}
+                ? "The release returns to Draft and the reason is posted to its activity and the audit log."
+                : "Your note is posted to the release activity and the audit log; the author re-requests approval once addressed."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <Field data-invalid={touched && !reasonValid ? true : undefined}>
@@ -405,7 +503,7 @@ function ApprovalCard({
               </FieldError>
             ) : (
               <FieldDescription>
-                Posted to the release activity.
+                Posted to the release activity and stored as the audit reason.
               </FieldDescription>
             )}
           </Field>
@@ -462,7 +560,7 @@ function Evidence({
         )}
       </span>
       <span className="flex min-w-0 flex-col gap-0.5">
-        <span className="text-[11px] text-muted-foreground">{label}</span>
+        <span className="text-2xs text-muted-foreground">{label}</span>
         <span className="font-medium tabular-nums">{value}</span>
       </span>
     </li>

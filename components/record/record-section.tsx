@@ -1,5 +1,6 @@
 import { cn } from "cn"
 
+import { CountPill } from "@/components/shared/count-pill"
 import {
   Card,
   CardAction,
@@ -45,9 +46,7 @@ export function RecordSection({
           )}
           {title}
           {count !== undefined && (
-            <span className="rounded-full bg-muted px-1.5 py-0.5 font-sans text-[10px] font-medium text-muted-foreground tabular-nums">
-              {count}
-            </span>
+            <CountPill count={count} className="font-sans" />
           )}
         </CardTitle>
         {description && <CardDescription>{description}</CardDescription>}

@@ -1,3 +1,4 @@
+import { clock } from "@/lib/data/seed"
 import { createStore } from "@/lib/store"
 
 import { defaultControlSet } from "./controls"
@@ -20,29 +21,60 @@ export interface ReadinessState {
   customControlSet: ControlSet | null
 }
 
+const STORAGE_KEY = "agentops.readiness.v1"
+
+const initialState: ReadinessState = {
+  assessment: null,
+  snapshots: [],
+  showNotApplicable: false,
+  respondent: "",
+  customControlSet: null,
+}
+
 /**
- * Everything lives in the browser (localStorage) — nothing is sent anywhere.
+ * Everything lives in the browser (localStorage): nothing is sent anywhere.
  * `reset()` wipes it.
  */
 export const readinessStore = createStore<ReadinessState>(
-  {
-    assessment: null,
-    snapshots: [],
-    showNotApplicable: false,
-    respondent: "",
-    customControlSet: null,
-  },
-  "agentops.readiness.v1"
+  initialState,
+  STORAGE_KEY
 )
 
-function nowIso() {
-  return new Date().toISOString()
+/**
+ * `false` during server rendering and the hydration pass, `true` once the
+ * store has been subscribed to on the client (which loads localStorage).
+ * Pages render a skeleton until then so the empty seed never flashes.
+ */
+export function useReadinessHydrated() {
+  return readinessStore.useHydrated()
 }
 
-function newId(prefix: string) {
-  return `${prefix}-${Date.now().toString(36)}${Math.floor(Math.random() * 1e4)
-    .toString(36)
-    .padStart(3, "0")}`
+/** Label of the snapshot taken automatically before an import replaces the assessment. */
+export const BEFORE_IMPORT_LABEL = "Before import"
+
+function nowIso() {
+  return clock().toISOString()
+}
+
+/**
+ * Deterministic ids: a prefix, the demo clock and a counter that continues
+ * from the highest suffix already in the store, so reloads never collide.
+ */
+function newId(prefix: "asm" | "snap", existing: string[]) {
+  const stamp = clock().getTime().toString(36)
+  const re = new RegExp(`^${prefix}-${stamp}-(\\d+)$`)
+  const max = existing.reduce((acc, id) => {
+    const m = re.exec(id)
+    return m ? Math.max(acc, Number(m[1])) : acc
+  }, 0)
+  return `${prefix}-${stamp}-${max + 1}`
+}
+
+function existingIds(s: ReadinessState) {
+  return [
+    ...(s.assessment ? [s.assessment.id] : []),
+    ...s.snapshots.flatMap((x) => [x.id, x.assessment.id]),
+  ]
 }
 
 export function createAssessment(
@@ -52,7 +84,7 @@ export function createAssessment(
 ): Assessment {
   const ts = nowIso()
   return {
-    id: newId("asm"),
+    id: newId("asm", existingIds(readinessStore.get())),
     name,
     controlSetId: defaultControlSet.id,
     controlSetVersion: defaultControlSet.version,
@@ -65,12 +97,35 @@ export function createAssessment(
   }
 }
 
+function withSnapshot(s: ReadinessState, label: string): ReadinessState {
+  if (!s.assessment) return s
+  const snap: Snapshot = {
+    id: newId("snap", existingIds(s)),
+    label: label.trim() || `Snapshot ${s.snapshots.length + 1}`,
+    takenAt: nowIso(),
+    assessment: structuredClone(s.assessment),
+  }
+  return { ...s, snapshots: [snap, ...s.snapshots].slice(0, 25) }
+}
+
 export const readinessActions = {
   start(profile: SystemProfile, target: MaturityTarget) {
     readinessStore.set({ assessment: createAssessment(profile, target) })
   },
   load(assessment: Assessment) {
     readinessStore.set({ assessment })
+  },
+  /**
+   * Replace the current assessment, filing the one being replaced as a
+   * snapshot first so nothing is lost. Returns whether a snapshot was taken.
+   */
+  replace(assessment: Assessment, snapshotLabel = BEFORE_IMPORT_LABEL) {
+    const had = readinessStore.get().assessment !== null
+    readinessStore.set((s) => ({
+      ...withSnapshot(s, snapshotLabel),
+      assessment,
+    }))
+    return had
   },
   updateProfile(profile: SystemProfile, target: MaturityTarget) {
     readinessStore.set((s) =>
@@ -148,16 +203,7 @@ export const readinessActions = {
     readinessStore.set({ showNotApplicable })
   },
   snapshot(label: string) {
-    readinessStore.set((s) => {
-      if (!s.assessment) return s
-      const snap: Snapshot = {
-        id: newId("snap"),
-        label: label.trim() || `Snapshot ${s.snapshots.length + 1}`,
-        takenAt: nowIso(),
-        assessment: structuredClone(s.assessment),
-      }
-      return { ...s, snapshots: [snap, ...s.snapshots].slice(0, 25) }
-    })
+    readinessStore.set((s) => withSnapshot(s, label))
   },
   addSnapshot(snapshot: Snapshot) {
     readinessStore.set((s) => ({
@@ -184,15 +230,9 @@ export const readinessActions = {
     readinessStore.set({ customControlSet })
   },
   reset() {
-    readinessStore.set({
-      assessment: null,
-      snapshots: [],
-      showNotApplicable: false,
-      respondent: "",
-      customControlSet: null,
-    })
+    readinessStore.set({ ...initialState })
     try {
-      window.localStorage.removeItem("agentops.readiness.v1")
+      window.localStorage.removeItem(STORAGE_KEY)
     } catch {}
   },
 }

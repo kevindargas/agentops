@@ -1,5 +1,5 @@
 /**
- * Readiness Assessment — shared types.
+ * Readiness Assessment: shared types.
  *
  * A *control set* is the swappable catalog (domains + controls + framework
  * tags). An *assessment* is one team's answers against a control set for one
@@ -37,7 +37,7 @@ export type MaturityTarget = "prototype" | "pilot" | "production"
 export type MaturityLevel = "ad-hoc" | "defined" | "managed" | "optimized"
 export type Effort = "low" | "medium" | "high"
 export type Applicability = "applies" | "reduced" | "not-applicable"
-export type FrameworkId = "owasp" | "nist" | "eu-ai-act" | "otel"
+export type FrameworkId = "owasp" | "nist" | "eu-ai-act" | "otel" | "iso-42001"
 
 export const systemTypes: SystemType[] = [
   "chatbot",
@@ -105,6 +105,7 @@ export interface FrameworkRefs {
   nist?: string[]
   euAiAct?: string[]
   otel?: string[]
+  iso42001?: string[]
 }
 
 export type CadenceInterval = "weekly" | "monthly" | "quarterly" | "semiannual"
@@ -127,7 +128,7 @@ export interface ControlDef {
   title: string
   /** What the control is. */
   what: string
-  /** Why it matters — the failure it prevents. */
+  /** Why it matters: the failure it prevents. */
   why: string
   /** Implementation steps. */
   how: string[]
@@ -210,13 +211,13 @@ export interface ControlEval {
   applicability: Applicability
   /** Effective weight after applicability and stage adjustments. */
   weight: number
-  /** 0–1 credit for the current status. */
+  /** 0 to 1 credit for the current status. */
   credit: number
   /** Required at the assessment's maturity target. */
   required: boolean
   /** Required gate control that is not yet in place. */
   blocker: boolean
-  /** 0–100, higher = fix first. */
+  /** 0 to 100, higher = fix first. */
   severity: number
   /** Review due state derived from `cadence` and `lastReviewed`. */
   review?: { dueAt: string; overdue: boolean }

@@ -33,15 +33,27 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar"
 import { Skeleton } from "@/components/ui/skeleton"
-import { navigation, type NavItem } from "@/config/nav"
+import { navigation, type NavCounts, type NavItem } from "@/config/nav"
 import { siteConfig } from "@/config/site"
 import { openCommandMenu } from "./command-menu"
 import { NavUser } from "./nav-user"
 
+/** Landing pages whose children are separate nav entries; match them exactly. */
+const EXACT_MATCH = new Set(["/dashboard", "/agentops", "/ai"])
+
 function isActivePath(pathname: string, href: string) {
   const base = href.split("?")[0]
-  if (base === "/dashboard") return pathname === base
+  if (EXACT_MATCH.has(base)) return pathname === base
   return pathname === base || pathname.startsWith(base + "/")
+}
+
+/** Screen-reader suffix for a badge count. */
+const badgeLabel: Record<NonNullable<NavItem["badge"]>, string> = {
+  approvals: "pending",
+  reviews: "pending",
+  recommendations: "new",
+  alerts: "open",
+  proposals: "pending",
 }
 
 /**
@@ -88,10 +100,13 @@ function NavEntry({
   item,
   pathname,
   url,
+  count,
 }: {
   item: NavItem
   pathname: string
   url: string
+  /** Live badge count resolved from `NavCounts`; omitted when zero. */
+  count?: number
 }) {
   const { isMobile, setOpenMobile } = useSidebar()
   const active = isActivePath(pathname, item.href)
@@ -131,16 +146,18 @@ function NavEntry({
     </SidebarMenuButton>
   )
 
-  const badge = item.badge ? (
-    <SidebarMenuBadge
-      className={cn(
-        "h-5 min-w-5 rounded-full bg-sidebar-primary/10 px-1.5 text-[11px] text-sidebar-primary",
-        hasChildren && "right-7"
-      )}
-    >
-      {item.badge}
-    </SidebarMenuBadge>
-  ) : null
+  const badge =
+    item.badge && count ? (
+      <SidebarMenuBadge
+        className={cn(
+          "h-5 min-w-5 rounded-full bg-sidebar-primary/10 px-1.5 text-2xs text-sidebar-primary",
+          hasChildren && "right-7"
+        )}
+      >
+        {count}
+        <span className="sr-only"> {badgeLabel[item.badge]}</span>
+      </SidebarMenuBadge>
+    ) : null
 
   if (!hasChildren) {
     return (
@@ -195,7 +212,7 @@ function NavEntry({
 }
 
 /** Reads the current URL (needs useSearchParams, hence the Suspense boundary around it). */
-function SidebarNav() {
+function SidebarNav({ navCounts }: { navCounts?: NavCounts }) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const qs = searchParams.toString()
@@ -211,7 +228,7 @@ function SidebarNav() {
         />
       )}
       <SidebarGroup className="py-1.5">
-        <SidebarGroupLabel className="text-[11px] font-medium text-sidebar-foreground/50">
+        <SidebarGroupLabel className="text-2xs font-medium text-sidebar-foreground/50">
           {group.label}
         </SidebarGroupLabel>
         <SidebarGroupContent>
@@ -222,6 +239,7 @@ function SidebarNav() {
                 item={item}
                 pathname={pathname}
                 url={url}
+                count={item.badge ? navCounts?.[item.badge] : undefined}
               />
             ))}
           </SidebarMenu>
@@ -260,7 +278,10 @@ function SidebarNavSkeleton() {
   ))
 }
 
-export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
+export function AppSidebar({
+  navCounts,
+  ...props
+}: React.ComponentProps<typeof Sidebar> & { navCounts?: NavCounts }) {
   return (
     <Sidebar collapsible="icon" {...props}>
       <SidebarHeader className="gap-1.5">
@@ -272,7 +293,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
               render={<Link href="/dashboard" />}
               className="transition-colors data-[slot=sidebar-menu-button]:p-1.5!"
             >
-              <div className="flex aspect-square size-8 shrink-0 items-center justify-center rounded-lg bg-linear-to-b from-brand to-brand/85 text-brand-foreground shadow-sm ring-1 ring-black/5 ring-inset dark:ring-white/10">
+              <div className="flex aspect-square size-8 shrink-0 items-center justify-center rounded-lg bg-linear-to-b from-brand to-brand/85 text-brand-foreground shadow-raised ring-1 ring-foreground/10 ring-inset">
                 <HexagonIcon className="size-4" strokeWidth={2.25} />
               </div>
               <div className="grid flex-1 text-left text-sm leading-tight">
@@ -307,10 +328,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
               <span>Search</span>
               <KbdGroup className="ml-auto group-data-[collapsible=icon]:hidden">
                 {siteConfig.shortcuts.commandMenu.map((k) => (
-                  <Kbd
-                    key={k}
-                    className="h-4.5 min-w-4.5 bg-muted/80 text-[10px]"
-                  >
+                  <Kbd key={k} className="h-4.5 min-w-4.5 bg-muted/80 text-3xs">
                     {k}
                   </Kbd>
                 ))}
@@ -321,7 +339,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
       </SidebarHeader>
       <SidebarContent className="py-1">
         <React.Suspense fallback={<SidebarNavSkeleton />}>
-          <SidebarNav />
+          <SidebarNav navCounts={navCounts} />
         </React.Suspense>
       </SidebarContent>
       <SidebarFooter className="border-t border-sidebar-border/60">

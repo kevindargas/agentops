@@ -1,9 +1,9 @@
 "use client"
 
+import * as React from "react"
 import { createColumnHelper } from "@tanstack/react-table"
 import { cn } from "cn"
-import { PlusIcon, ShieldCheckIcon } from "lucide-react"
-import { toast } from "sonner"
+import { ShieldCheckIcon } from "lucide-react"
 
 import { Sparkline } from "@/components/charts/sparkline"
 import {
@@ -15,26 +15,39 @@ import {
   type FacetDef,
 } from "@/components/data-table"
 import { UserChip } from "@/components/shared/user-chip"
-import { Button } from "@/components/ui/button"
 import {
   guardrailCategories,
   type Guardrail,
+  type GuardrailFailMode,
   type GuardrailMode,
   type GuardrailStatus,
+  type GuardrailViolation,
 } from "@/lib/data/guardrails"
+import { formatMs } from "@/lib/format"
 import {
+  bypassAlertThreshold,
   CategoryBadge,
   EngineCell,
+  FailModeBadge,
+  failModeMeta,
   fmtPct,
   ModeBadge,
   PolicyStatusBadge,
   ScopeCell,
 } from "./shared"
+import { falsePositiveRate, fpTone } from "./store"
 
-const col = createColumnHelper<DataTableFeatures, Guardrail>()
+/** Policy row with the false-positive figures derived from the violations log. */
+type Row = Guardrail & {
+  fpRate: number | null
+  fpDecided: number
+}
+
+const col = createColumnHelper<DataTableFeatures, Row>()
 
 const modes: GuardrailMode[] = ["Block", "Flag", "Redact", "Require approval"]
 const statuses: GuardrailStatus[] = ["Active", "Disabled", "Draft"]
+const failModes: GuardrailFailMode[] = ["fail_closed", "fail_open"]
 
 const columns = col.columns([
   col.accessor("name", {
@@ -60,7 +73,11 @@ const columns = col.columns([
   }),
   col.accessor("mode", {
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Mode" />
+      <DataTableColumnHeader
+        column={column}
+        title="Mode"
+        hint="What happens when the policy matches: block the turn, flag it for review, redact the match or pause for approval."
+      />
     ),
     cell: ({ getValue }) => <ModeBadge mode={getValue()} />,
     meta: { width: "w-36", label: "Mode", skeleton: "w-16 rounded-full" },
@@ -82,7 +99,11 @@ const columns = col.columns([
   }),
   col.accessor("triggers24h", {
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Triggers · 24h" />
+      <DataTableColumnHeader
+        column={column}
+        title="Triggers · 24h"
+        hint="Times the policy matched in the last 24 hours; the sparkline is the last 14 days."
+      />
     ),
     cell: ({ row }) => {
       const g = row.original
@@ -116,33 +137,106 @@ const columns = col.columns([
       skeleton: "w-24",
     },
   }),
-  col.accessor("falsePositiveRate", {
+  col.accessor("fpRate", {
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="False pos." />
+      <DataTableColumnHeader
+        column={column}
+        title="False pos."
+        hint="Reviewer verdicts marked false positive divided by all decided verdicts on this policy. Blank until a reviewer has decided at least one violation."
+      />
     ),
-    cell: ({ getValue, row }) => {
-      const v = getValue()
-      if (row.original.triggers24h === 0 && v === 0)
-        return <NumericCell value={null} />
+    cell: ({ row }) => {
+      const v = row.original.fpRate
+      if (v === null) return <NumericCell value={null} />
+      const tone = fpTone(v)
       return (
         <NumericCell
           value={v}
           format={(n) => fmtPct(n)}
           className={cn(
-            v >= 0.3
+            tone === "danger"
               ? "text-danger-text"
-              : v >= 0.15
+              : tone === "warning"
                 ? "text-warning-text"
                 : "text-muted-foreground"
           )}
         />
       )
     },
+    sortFn: (a, b) => (a.original.fpRate ?? -1) - (b.original.fpRate ?? -1),
     meta: {
       width: "w-24",
       label: "False-positive rate",
       numeric: true,
       skeleton: "w-10",
+    },
+  }),
+  col.accessor("failMode", {
+    header: ({ column }) => (
+      <DataTableColumnHeader
+        column={column}
+        title="Fail mode"
+        hint="Behaviour when the engine itself errors or times out: fail closed rejects the turn, fail open lets it through unguarded."
+      />
+    ),
+    cell: ({ getValue }) => <FailModeBadge failMode={getValue()} size="sm" />,
+    meta: {
+      width: "w-28",
+      label: "Fail mode",
+      skeleton: "w-16 rounded-full",
+    },
+  }),
+  col.accessor("p95Ms", {
+    header: ({ column }) => (
+      <DataTableColumnHeader
+        column={column}
+        title="p95"
+        hint="95th percentile of the latency this policy adds to a turn."
+      />
+    ),
+    cell: ({ getValue }) => (
+      <NumericCell
+        value={getValue()}
+        format={formatMs}
+        className={cn(getValue() >= 1000 && "text-warning-text")}
+        muted={getValue() < 1000}
+      />
+    ),
+    meta: {
+      width: "w-20",
+      label: "p95 evaluation latency",
+      numeric: true,
+      skeleton: "w-8",
+    },
+  }),
+  col.accessor("bypassRate", {
+    header: ({ column }) => (
+      <DataTableColumnHeader
+        column={column}
+        title="Bypass"
+        hint="Share of red-team attack cases that got past the policy on its last red-team eval run. Above 5% is a finding."
+      />
+    ),
+    cell: ({ getValue, row }) => {
+      const v = getValue()
+      if (!row.original.lastRedTeamRunId) return <NumericCell value={null} />
+      return (
+        <NumericCell
+          value={v}
+          format={(n) => fmtPct(n, 1)}
+          className={cn(
+            v > bypassAlertThreshold
+              ? "font-medium text-danger-text"
+              : "text-muted-foreground"
+          )}
+        />
+      )
+    },
+    meta: {
+      width: "w-20",
+      label: "Red-team bypass rate",
+      numeric: true,
+      skeleton: "w-8",
     },
   }),
   col.accessor("status", {
@@ -160,7 +254,7 @@ const columns = col.columns([
   }),
 ])
 
-const facets: FacetDef<Guardrail>[] = [
+const facets: FacetDef<Row>[] = [
   {
     id: "category",
     title: "Category",
@@ -179,42 +273,48 @@ const facets: FacetDef<Guardrail>[] = [
     options: statuses.map((s) => ({ value: s, label: s })),
     getValue: (r) => r.status,
   },
+  {
+    id: "failMode",
+    title: "Fail mode",
+    options: failModes.map((m) => ({ value: m, label: failModeMeta[m].label })),
+    getValue: (r) => r.failMode,
+  },
 ]
 
 export function PoliciesTable({
   policies,
+  violations,
   onOpen,
 }: {
   policies: Guardrail[]
+  violations: GuardrailViolation[]
   onOpen: (id: string) => void
 }) {
+  const rows = React.useMemo<Row[]>(
+    () =>
+      policies.map((g) => {
+        const fp = falsePositiveRate(violations, g.id)
+        return { ...g, fpRate: fp.rate, fpDecided: fp.decided }
+      }),
+    [policies, violations]
+  )
   return (
     <DataTable
       columns={columns}
-      data={policies}
+      data={rows}
       getRowId={(r) => r.id}
       getSearchText={(r) =>
-        `${r.name} ${r.description} ${r.category} ${r.mode} ${r.engine} ${r.modelId ?? ""}`
+        `${r.name} ${r.description} ${r.category} ${r.mode} ${r.engine} ${r.modelId ?? ""} ${r.failMode} ${r.languages.join(" ")}`
       }
       searchPlaceholder="Search policies…"
       facets={facets}
       initialSorting={[{ id: "triggers24h", desc: true }]}
+      initialColumnVisibility={{ ownerId: false }}
       onRowClick={(r) => onOpen(r.id)}
       totalLabel="policies"
+      caption="Guardrail policies with mode, scope, engine, trigger counts and effectiveness"
       selectionLabel={(n) => (n === 1 ? "policy" : "policies")}
       emptyIcon={<ShieldCheckIcon />}
-      toolbar={
-        <Button
-          size="sm"
-          onClick={() =>
-            toast("New policy", {
-              description: "The policy editor opens with a YAML template.",
-            })
-          }
-        >
-          <PlusIcon /> New policy
-        </Button>
-      }
     />
   )
 }

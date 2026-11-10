@@ -101,7 +101,7 @@ describe("formatters", () => {
     expect(formatPrice(2.5)).toBe("$2.50")
   })
   it("formats context windows", () => {
-    expect(formatContext(0)).toBe("—")
+    expect(formatContext(0)).toBe("n/a")
     expect(formatContext(262_144)).toBe("262K")
     expect(formatContext(1_048_576)).toBe("1M")
     expect(formatContext(2_000_000)).toBe("2M")

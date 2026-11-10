@@ -1,21 +1,18 @@
 "use client"
 
 import Link from "next/link"
+import { createColumnHelper } from "@tanstack/react-table"
 import { cn } from "cn"
 import {
   ArrowUpRightIcon,
   BotIcon,
-  CheckCheckIcon,
   ClockIcon,
-  CoinsIcon,
   HistoryIcon,
   LayersIcon,
   PauseIcon,
   PlayIcon,
   ShieldCheckIcon,
   SparklesIcon,
-  TimerIcon,
-  ZapIcon,
 } from "lucide-react"
 
 import { AgentAvatar, AgentCard } from "@/components/ai/agent-card"
@@ -23,8 +20,17 @@ import { useAi } from "@/components/ai/ai-provider"
 import { ProposalCard } from "@/components/ai/proposal-card"
 import { Sparkline } from "@/components/charts/sparkline"
 import { StackedBarChart } from "@/components/charts/stacked-bar-chart"
+import {
+  DataTable,
+  DataTableColumnHeader,
+  NumericCell,
+  type DataTableFeatures,
+} from "@/components/data-table"
+import { CountPill } from "@/components/shared/count-pill"
 import { EmptyState } from "@/components/shared/empty-state"
+import { MetricTile } from "@/components/shared/metric-tile"
 import { StatCard } from "@/components/shared/stat-card"
+import { StatGrid } from "@/components/shared/stat-grid"
 import { StateBadge } from "@/components/shared/status-badge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -55,20 +61,7 @@ import {
 } from "@/components/ui/select"
 import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
 import {
   agentRuns,
   autonomyMeta,
@@ -77,9 +70,10 @@ import {
   runOutcomeMeta,
   toolCatalog,
   usageByDay,
+  type AgentRun,
   type Autonomy,
 } from "@/lib/ai/agents"
-import { formatNumber, timeAgo } from "@/lib/format"
+import { formatDurationMs, formatNumber, timeAgo } from "@/lib/format"
 
 const outcomeState: Record<string, string> = {
   applied: "Complete",
@@ -93,14 +87,10 @@ const outcomeState: Record<string, string> = {
 const riskTone: Record<"low" | "medium" | "high", string> = {
   low: "border-border text-muted-foreground",
   medium: "border-warning/40 text-warning-text",
-  high: "border-destructive/30 text-destructive",
+  high: "border-destructive/30 text-danger-text",
 }
 
-function fmtDuration(ms: number) {
-  return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`
-}
-
-/** Header actions for the AI Control Center page. */
+/** Header actions for the Workflow Automations page. */
 export function ControlCenterActions() {
   const { agents, updateAgent, setOpen, setTab } = useAi()
   const anyActive = agents.some((a) => a.enabled)
@@ -132,6 +122,115 @@ export function ControlCenterActions() {
   )
 }
 
+/* ------------------------------------------------------------------------ */
+/* Run history table                                                         */
+/* ------------------------------------------------------------------------ */
+
+const runCol = createColumnHelper<DataTableFeatures, AgentRun>()
+
+const runColumns = runCol.columns([
+  runCol.accessor("agentId", {
+    header: ({ column }) => (
+      <DataTableColumnHeader column={column} title="Agent" />
+    ),
+    cell: ({ getValue }) => (
+      <span className="flex items-center gap-2">
+        <AgentAvatar agentId={getValue()} size="xs" />
+        <span className="truncate text-sm">{getAgent(getValue())?.name}</span>
+      </span>
+    ),
+    enableHiding: false,
+    meta: { width: "w-48", label: "Agent", skeleton: "w-28" },
+  }),
+  runCol.accessor("summary", {
+    header: "Run",
+    cell: ({ row }) => {
+      const r = row.original
+      return (
+        <div className="min-w-0">
+          <p className="truncate text-sm">{r.summary}</p>
+          <p className="flex items-center gap-2 text-xs text-muted-foreground">
+            {r.recordNumber && r.recordHref ? (
+              <Link
+                href={r.recordHref}
+                className="inline-flex items-center gap-0.5 font-mono underline-offset-4 hover:underline"
+              >
+                {r.recordNumber}{" "}
+                <ArrowUpRightIcon className="size-3 opacity-60" />
+              </Link>
+            ) : (
+              <span>No record</span>
+            )}
+            <span>
+              {r.toolCalls} tool call{r.toolCalls === 1 ? "" : "s"}
+            </span>
+          </p>
+        </div>
+      )
+    },
+    enableSorting: false,
+    meta: { width: "min-w-72 max-w-md", label: "Run", skeleton: "w-56" },
+  }),
+  runCol.accessor("trigger", {
+    header: "Trigger",
+    cell: ({ getValue }) => (
+      <span className="text-xs text-muted-foreground">{getValue()}</span>
+    ),
+    enableSorting: false,
+    meta: { width: "w-40", label: "Trigger", skeleton: "w-24" },
+  }),
+  runCol.accessor("durationMs", {
+    header: ({ column }) => (
+      <DataTableColumnHeader column={column} title="Duration" />
+    ),
+    cell: ({ getValue }) => (
+      <NumericCell value={getValue()} format={formatDurationMs} />
+    ),
+    meta: { width: "w-24", label: "Duration", numeric: true, skeleton: "w-10" },
+  }),
+  runCol.accessor("tokens", {
+    header: ({ column }) => (
+      <DataTableColumnHeader column={column} title="Tokens" />
+    ),
+    cell: ({ getValue }) => (
+      <NumericCell value={getValue()} format={(n) => formatNumber(n, true)} />
+    ),
+    meta: { width: "w-24", label: "Tokens", numeric: true, skeleton: "w-10" },
+  }),
+  runCol.accessor("outcome", {
+    header: ({ column }) => (
+      <DataTableColumnHeader column={column} title="Outcome" />
+    ),
+    cell: ({ getValue }) => (
+      <StateBadge state={runOutcomeMeta[getValue()].state} size="sm" />
+    ),
+    meta: { width: "w-36", label: "Outcome", skeleton: "w-20 rounded-full" },
+  }),
+  runCol.accessor("startedAt", {
+    header: ({ column }) => (
+      <DataTableColumnHeader column={column} title="When" />
+    ),
+    cell: ({ getValue }) => (
+      <span className="text-xs whitespace-nowrap text-muted-foreground tabular-nums">
+        {timeAgo(getValue())}
+      </span>
+    ),
+    meta: { width: "w-28", label: "When", skeleton: "w-16" },
+  }),
+])
+
+/* ------------------------------------------------------------------------ */
+
+/** Relative change in autonomous plus approved actions, today versus yesterday. */
+function actionsDelta() {
+  const today = usageByDay[usageByDay.length - 1]
+  const yesterday = usageByDay[usageByDay.length - 2]
+  if (!today || !yesterday) return undefined
+  const a = today.applied + today.approved
+  const b = yesterday.applied + yesterday.approved
+  return b === 0 ? undefined : Math.round(((a - b) / b) * 1000) / 10
+}
+
 export function ControlCenter() {
   const {
     agents,
@@ -141,9 +240,10 @@ export function ControlCenter() {
     activity,
     settings,
     updateSettings,
+    actionsToday,
   } = useAi()
   const enabled = agents.filter((a) => a.enabled)
-  const actions24h = enabled.reduce((a, x) => a + x.actions24h, 0)
+  const actions24h = actionsToday
   const saved = enabled.reduce(
     (a, x) => a + x.actions24h * x.avgSavedMinutes,
     0
@@ -152,7 +252,7 @@ export function ControlCenter() {
     agents.reduce((a, x) => a + x.acceptanceRate, 0) / agents.length
   )
   const degraded = agents.filter((a) => a.health === "Degraded").length
-  const tokens24h = agentRuns.reduce((a, r) => a + r.tokens, 0) * 9 // scaled from the sample of runs
+  const tokens24h = enabled.reduce((a, x) => a + x.tokens24h, 0)
   const budgetUsed = Math.min(
     100,
     Math.round((actions24h / settings.dailyActionBudget) * 100)
@@ -160,12 +260,12 @@ export function ControlCenter() {
 
   return (
     <>
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <StatGrid columns={4}>
         <StatCard
           label="Agent actions · 24h"
-          value={actions24h.toLocaleString()}
-          delta={9}
-          icon={<BotIcon />}
+          value={actions24h.toLocaleString("en-US")}
+          delta={actionsDelta()}
+          deltaLabel="vs yesterday"
           hint={`${enabled.length} of ${agents.length} agents active${degraded ? ` · ${degraded} degraded` : ""}`}
         >
           <Sparkline
@@ -176,7 +276,6 @@ export function ControlCenter() {
         <StatCard
           label="Awaiting your approval"
           value={proposals.length}
-          icon={<ShieldCheckIcon />}
           hint={
             proposals.length
               ? `Oldest ${timeAgo(proposals[proposals.length - 1].created)}`
@@ -186,18 +285,14 @@ export function ControlCenter() {
         <StatCard
           label="Acceptance rate"
           value={`${acceptance}%`}
-          delta={2}
-          icon={<CheckCheckIcon />}
-          hint="Proposals approved or left unchanged"
+          hint="Proposals approved or left unchanged, all agents"
         />
         <StatCard
           label="Time saved · 24h"
           value={`${Math.round(saved / 60)}h`}
-          delta={14}
-          icon={<TimerIcon />}
-          hint={`≈ ${formatNumber(tokens24h, true)} tokens · ${budgetUsed}% of daily budget`}
+          hint={`${formatNumber(tokens24h, true)} tokens · ${budgetUsed}% of daily budget`}
         />
-      </div>
+      </StatGrid>
 
       <Tabs defaultValue="agents" className="gap-4">
         <TabsList>
@@ -207,9 +302,12 @@ export function ControlCenter() {
           <TabsTrigger value="queue">
             <ShieldCheckIcon /> Approval queue
             {proposals.length > 0 && (
-              <span className="ml-0.5 rounded-full bg-brand px-1.5 text-[10px] font-semibold text-brand-foreground tabular-nums">
-                {proposals.length}
-              </span>
+              <CountPill
+                count={proposals.length}
+                tone="inverse"
+                label="waiting"
+                className="ml-0.5"
+              />
             )}
           </TabsTrigger>
           <TabsTrigger value="runs">
@@ -271,7 +369,7 @@ export function ControlCenter() {
             <EmptyState
               icon={<SparklesIcon />}
               title="Nothing to approve"
-              description="Agents set to “act with approval” will queue their proposed changes here."
+              description="Agents set to act with approval will queue their proposed changes here."
             />
           ) : (
             <div className="grid gap-4 xl:grid-cols-3">
@@ -294,22 +392,14 @@ export function ControlCenter() {
                         (p) => p.impact === impact
                       ).length
                       return (
-                        <div
+                        <MetricTile
                           key={impact}
-                          className="rounded-lg border px-2.5 py-2"
-                        >
-                          <p className="text-[11px] text-muted-foreground capitalize">
-                            {impact} impact
-                          </p>
-                          <p
-                            className={cn(
-                              "text-lg font-semibold tabular-nums",
-                              impact === "high" && n > 0 && "text-destructive"
-                            )}
-                          >
-                            {n}
-                          </p>
-                        </div>
+                          label={`${impact} impact`}
+                          value={n}
+                          tone={
+                            impact === "high" && n > 0 ? "danger" : undefined
+                          }
+                        />
                       )
                     })}
                   </div>
@@ -337,9 +427,9 @@ export function ControlCenter() {
                       ))}
                   </ul>
                   <p className="text-xs leading-relaxed text-muted-foreground">
-                    Approving applies the change immediately and logs it to the
-                    audit trail. Rejections are fed back to the agent as
-                    training signal.
+                    Approving or rejecting moves the proposal to the activity
+                    list under Runs with your name. In this template the
+                    underlying record does not change.
                   </p>
                 </CardContent>
               </Card>
@@ -354,88 +444,27 @@ export function ControlCenter() {
               <CardHeader>
                 <CardTitle>Run history</CardTitle>
                 <CardDescription>
-                  Every agent invocation with its outcome, duration and cost
+                  Every agent invocation with its outcome, duration and tokens
                 </CardDescription>
                 <CardAction>
-                  <Badge variant="secondary" className="tabular-nums">
-                    {agentRuns.length} runs
-                  </Badge>
+                  <CountPill
+                    count={agentRuns.length}
+                    size="default"
+                    label="runs"
+                  />
                 </CardAction>
               </CardHeader>
-              <CardContent className="px-0">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="**:[th]:h-9 **:[th]:text-xs">
-                      <TableHead className="pl-4">Agent</TableHead>
-                      <TableHead>Run</TableHead>
-                      <TableHead className="hidden lg:table-cell">
-                        Trigger
-                      </TableHead>
-                      <TableHead className="text-right">Duration</TableHead>
-                      <TableHead className="hidden text-right md:table-cell">
-                        Tokens
-                      </TableHead>
-                      <TableHead>Outcome</TableHead>
-                      <TableHead className="pr-4 text-right">When</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {agentRuns.map((r) => {
-                      const agent = getAgent(r.agentId)
-                      const meta = runOutcomeMeta[r.outcome]
-                      return (
-                        <TableRow key={r.id} className="**:[td]:py-2.5">
-                          <TableCell className="pl-4">
-                            <span className="flex items-center gap-2">
-                              <AgentAvatar agentId={r.agentId} size="xs" />
-                              <span className="hidden truncate text-sm xl:inline">
-                                {agent?.name}
-                              </span>
-                            </span>
-                          </TableCell>
-                          <TableCell className="max-w-[320px]">
-                            <p className="truncate text-sm">{r.summary}</p>
-                            <p className="flex items-center gap-2 text-xs text-muted-foreground">
-                              {r.recordNumber && r.recordHref ? (
-                                <Link
-                                  href={r.recordHref}
-                                  className="inline-flex items-center gap-0.5 font-mono underline-offset-4 hover:underline"
-                                >
-                                  {r.recordNumber}{" "}
-                                  <ArrowUpRightIcon className="size-3 opacity-60" />
-                                </Link>
-                              ) : (
-                                <span className="font-mono">—</span>
-                              )}
-                              <span>
-                                {r.toolCalls} tool call
-                                {r.toolCalls === 1 ? "" : "s"}
-                              </span>
-                            </p>
-                          </TableCell>
-                          <TableCell className="hidden text-xs text-muted-foreground lg:table-cell">
-                            {r.trigger}
-                          </TableCell>
-                          <TableCell className="text-right text-xs tabular-nums">
-                            {fmtDuration(r.durationMs)}
-                          </TableCell>
-                          <TableCell className="hidden text-right text-xs tabular-nums md:table-cell">
-                            {formatNumber(r.tokens, true)}
-                          </TableCell>
-                          <TableCell>
-                            <StateBadge
-                              state={meta.state}
-                              className="h-[18px] px-1.5 text-[10px]"
-                            />
-                          </TableCell>
-                          <TableCell className="pr-4 text-right text-xs whitespace-nowrap text-muted-foreground tabular-nums">
-                            {timeAgo(r.startedAt)}
-                          </TableCell>
-                        </TableRow>
-                      )
-                    })}
-                  </TableBody>
-                </Table>
+              <CardContent>
+                <DataTable
+                  columns={runColumns}
+                  data={agentRuns}
+                  getRowId={(r) => r.id}
+                  hideToolbar
+                  hidePagination
+                  initialSorting={[{ id: "startedAt", desc: true }]}
+                  totalLabel="runs"
+                  caption="Workflow agent run history with trigger, duration, tokens and outcome"
+                />
               </CardContent>
             </Card>
 
@@ -474,9 +503,10 @@ export function ControlCenter() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle>Audit log</CardTitle>
+                  <CardTitle>Activity</CardTitle>
                   <CardDescription>
-                    Who approved what, and whether it was undone
+                    Who approved what, and whether it was undone. Workflow
+                    agents only; deployed-agent events live in the Audit Log.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="divide-y">
@@ -513,7 +543,8 @@ export function ControlCenter() {
                       </div>
                       <StateBadge
                         state={outcomeState[a.outcome]}
-                        className="h-[18px] shrink-0 px-1.5 text-[10px]"
+                        size="sm"
+                        className="shrink-0"
                       />
                     </div>
                   ))}
@@ -530,7 +561,8 @@ export function ControlCenter() {
               <CardHeader>
                 <CardTitle>Model & autonomy</CardTitle>
                 <CardDescription>
-                  Defaults applied to new agents and the assistant.
+                  Defaults for the assistant and for new agents. Each setting
+                  says what it does in this template.
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -564,6 +596,8 @@ export function ControlCenter() {
                         models.find((m) => m.id === settings.modelId)
                           ?.description
                       }
+                      . Labels the assistant run; the scripted engine does not
+                      change with it.
                     </FieldDescription>
                   </Field>
 
@@ -592,7 +626,12 @@ export function ControlCenter() {
                       </SelectContent>
                     </Select>
                     <FieldDescription>
-                      {autonomyMeta[settings.defaultAutonomy].description}
+                      {autonomyMeta[settings.defaultAutonomy].description}{" "}
+                      <Badge variant="outline" className="ml-1 text-3xs">
+                        Planned
+                      </Badge>{" "}
+                      Stored only; applies once agents can be registered from
+                      this page.
                     </FieldDescription>
                   </Field>
 
@@ -602,7 +641,8 @@ export function ControlCenter() {
                         Daily action budget
                       </FieldLabel>
                       <span className="text-sm tabular-nums">
-                        {settings.dailyActionBudget.toLocaleString()} actions
+                        {settings.dailyActionBudget.toLocaleString("en-US")}{" "}
+                        actions
                       </span>
                     </div>
                     <Slider
@@ -638,7 +678,8 @@ export function ControlCenter() {
                       />
                     </div>
                     <FieldDescription>
-                      Agents pause and ask for review once the budget is spent.{" "}
+                      Once the budget is spent, actions applied from AgentOps
+                      Assist queue for approval instead of applying.{" "}
                       <span className="font-medium text-foreground tabular-nums">
                         {actions24h}
                       </span>{" "}
@@ -654,8 +695,8 @@ export function ControlCenter() {
                         Require approval for high-risk actions
                       </FieldTitle>
                       <FieldDescription>
-                        Notifications, closures and deletions always queue for a
-                        human, even on autonomous agents.
+                        High-risk suggested actions in AgentOps Assist queue for
+                        a human instead of applying.
                       </FieldDescription>
                     </FieldContent>
                     <Switch
@@ -670,8 +711,8 @@ export function ControlCenter() {
                     <FieldContent>
                       <FieldTitle>Redact personal data</FieldTitle>
                       <FieldDescription>
-                        Strip names, bank details and IDs before sending content
-                        to the model.
+                        E-mail addresses, phone numbers and IBANs in a prompt
+                        are masked before AgentOps Assist processes it.
                       </FieldDescription>
                     </FieldContent>
                     <Switch
@@ -707,13 +748,15 @@ export function ControlCenter() {
                 <CardHeader>
                   <CardTitle>Allowed tools</CardTitle>
                   <CardDescription>
-                    Capabilities agents may use. Disabled tools are hidden from
-                    every agent.
+                    Capability categories AgentOps Assist may use. Unchecked
+                    categories are skipped in its runs and shown as such.
                   </CardDescription>
                   <CardAction>
-                    <Badge variant="secondary" className="tabular-nums">
-                      {settings.allowedTools.length} / {toolCatalog.length}
-                    </Badge>
+                    <CountPill
+                      count={`${settings.allowedTools.length} / ${toolCatalog.length}`}
+                      size="default"
+                      label="allowed"
+                    />
                   </CardAction>
                 </CardHeader>
                 <CardContent className="flex flex-col divide-y">
@@ -743,7 +786,7 @@ export function ControlCenter() {
                             <Badge
                               variant="outline"
                               className={cn(
-                                "h-[18px] px-1.5 text-[10px]",
+                                "h-4.5 px-1.5 text-3xs",
                                 riskTone[t.risk]
                               )}
                             >
@@ -754,7 +797,7 @@ export function ControlCenter() {
                             {t.description}
                           </span>
                         </span>
-                        <code className="hidden shrink-0 pt-0.5 font-mono text-[10px] text-muted-foreground sm:block">
+                        <code className="hidden shrink-0 pt-0.5 font-mono text-3xs text-muted-foreground sm:block">
                           {t.id}
                         </code>
                       </label>
@@ -767,52 +810,30 @@ export function ControlCenter() {
                 <CardHeader>
                   <CardTitle>Usage</CardTitle>
                   <CardDescription>
-                    Where the budget went in the last 24 hours
+                    Enabled agents, last 24 hours
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="grid grid-cols-3 gap-2">
-                  {[
-                    {
-                      icon: ZapIcon,
-                      label: "Runs",
-                      value: agents
-                        .reduce((a, x) => a + x.runs24h, 0)
-                        .toLocaleString(),
-                    },
-                    {
-                      icon: CoinsIcon,
-                      label: "Tokens",
-                      value: formatNumber(tokens24h, true),
-                    },
-                    {
-                      icon: TimerIcon,
-                      label: "Avg. latency",
-                      value: fmtDuration(
-                        Math.round(
-                          agentRuns.reduce((a, r) => a + r.durationMs, 0) /
-                            agentRuns.length
-                        )
-                      ),
-                    },
-                  ].map(({ icon: Icon, label, value }) => (
-                    <Tooltip key={label}>
-                      <TooltipTrigger
-                        render={
-                          <div className="rounded-lg border px-2.5 py-2" />
-                        }
-                      >
-                        <p className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                          <Icon className="size-3" /> {label}
-                        </p>
-                        <p className="text-base font-semibold tabular-nums">
-                          {value}
-                        </p>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        Across all enabled agents, last 24 hours
-                      </TooltipContent>
-                    </Tooltip>
-                  ))}
+                  <MetricTile
+                    label="Runs"
+                    value={enabled
+                      .reduce((a, x) => a + x.runs24h, 0)
+                      .toLocaleString("en-US")}
+                  />
+                  <MetricTile
+                    label="Tokens"
+                    value={formatNumber(tokens24h, true)}
+                  />
+                  <MetricTile
+                    label="Avg latency"
+                    value={formatDurationMs(
+                      Math.round(
+                        agentRuns.reduce((a, r) => a + r.durationMs, 0) /
+                          agentRuns.length
+                      )
+                    )}
+                    hint="Across the sampled runs"
+                  />
                 </CardContent>
               </Card>
             </div>

@@ -33,11 +33,11 @@ export default async function SettingsPage({
   return (
     <>
       <PageHeader
-        title="Settings"
+        nav="/settings"
         description="Personal preferences and platform configuration. Personal changes apply immediately; platform changes are audited."
         actions={
           <Button variant="outline" render={<Link href="/admin/users" />}>
-            <UsersIcon /> Users & groups
+            <UsersIcon /> Users & Groups
           </Button>
         }
       />

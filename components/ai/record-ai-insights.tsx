@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import dynamic from "next/dynamic"
 import Link from "next/link"
 import { cn } from "cn"
 import {
@@ -13,8 +14,9 @@ import {
   TriangleAlertIcon,
 } from "lucide-react"
 
-import { MessageResponse } from "@/components/ai-elements/message"
 import { Shimmer } from "@/components/ai-elements/shimmer"
+import { Eyebrow } from "@/components/shared/eyebrow"
+import { StateBadge } from "@/components/shared/status-badge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -25,7 +27,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { StateBadge } from "@/components/shared/status-badge"
+import { Skeleton } from "@/components/ui/skeleton"
 import { autonomyMeta } from "@/lib/ai/agents"
 import {
   planResponse,
@@ -38,24 +40,23 @@ import { AgentAvatar } from "./agent-card"
 import { useAi } from "./ai-provider"
 import { ConfidenceMeter } from "./proposal-card"
 
+/** Markdown renderer pulls the Streamdown stack; load it only once a summary exists. */
+const MessageResponse = dynamic(
+  () =>
+    import("@/components/ai-elements/message").then((m) => m.MessageResponse),
+  { ssr: false, loading: () => <Skeleton className="h-16 w-full" /> }
+)
+
 export interface InsightChip {
   label: string
   value: string
   tone?: "default" | "good" | "warn"
 }
 
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-      {children}
-    </p>
-  )
-}
-
 /**
- * Contextual AI card for record pages: streams a summary locally, lists similar
- * records and the suggested next step, and hands deeper questions to the docked
- * assistant with the record as context.
+ * Contextual card for record pages: streams a scripted summary locally, lists
+ * similar records and the suggested next step, and hands deeper questions to
+ * the docked assistant with the record as context.
  */
 export function RecordAiInsights({
   context,
@@ -100,10 +101,10 @@ export function RecordAiInsights({
       <CardHeader className="gap-1">
         <CardTitle className="flex items-center gap-2">
           <AgentAvatar agentId="triage" size="sm" muted={!triage?.enabled} />
-          AI insights
+          Insights
           <Badge
             variant="outline"
-            className="h-4 px-1 text-[9px] font-medium tracking-wider text-muted-foreground uppercase"
+            className="h-4 px-1 text-3xs font-medium tracking-wider text-muted-foreground uppercase"
           >
             Scripted
           </Badge>
@@ -119,7 +120,7 @@ export function RecordAiInsights({
             </>
           ) : (
             <span className="inline-flex items-center gap-1 text-warning-text">
-              <TriangleAlertIcon className="size-3" /> Triage agent is paused —
+              <TriangleAlertIcon className="size-3" /> Triage agent is paused;
               insights may be stale
             </span>
           )}
@@ -165,7 +166,7 @@ export function RecordAiInsights({
 
         <div className="rounded-lg border bg-background/70 p-3">
           <div className="mb-1.5 flex items-center justify-between">
-            <SectionLabel>Summary</SectionLabel>
+            <Eyebrow as="span">Summary</Eyebrow>
             {summary && !streaming && (
               <Button
                 size="xs"
@@ -185,7 +186,7 @@ export function RecordAiInsights({
             </p>
           ) : summary === "" ? (
             <Shimmer className="text-sm">
-              Reading work notes and related records…
+              Reading work notes and related records
             </Shimmer>
           ) : (
             <MessageResponse className="text-sm leading-relaxed">
@@ -197,8 +198,8 @@ export function RecordAiInsights({
         <div className="grid gap-3 @md/insights:grid-cols-2">
           <div className="flex flex-col gap-2 rounded-lg border bg-background/70 p-3">
             <div className="flex items-center justify-between">
-              <SectionLabel>Similar records</SectionLabel>
-              <span className="text-[11px] text-muted-foreground tabular-nums">
+              <Eyebrow as="span">Similar records</Eyebrow>
+              <span className="text-2xs text-muted-foreground tabular-nums">
                 {insights.similar.length}
               </span>
             </div>
@@ -217,7 +218,7 @@ export function RecordAiInsights({
                       href={source.href}
                       className="group/sim min-w-0 flex-1 leading-tight"
                     >
-                      <span className="flex items-center gap-1 font-mono text-[11px] font-medium text-foreground/80 group-hover/sim:text-foreground">
+                      <span className="flex items-center gap-1 font-mono text-2xs font-medium text-foreground/80 group-hover/sim:text-foreground">
                         {source.id}
                         <ArrowUpRightIcon className="size-3 opacity-0 transition-opacity group-hover/sim:opacity-60" />
                       </span>
@@ -225,10 +226,7 @@ export function RecordAiInsights({
                         {source.title} · {meta}
                       </span>
                     </Link>
-                    <StateBadge
-                      state={state}
-                      className="h-[18px] shrink-0 px-1.5 text-[10px]"
-                    />
+                    <StateBadge state={state} size="sm" className="shrink-0" />
                   </li>
                 ))}
               </ul>
@@ -236,7 +234,7 @@ export function RecordAiInsights({
           </div>
 
           <div className="flex flex-col gap-2 rounded-lg border bg-background/70 p-3">
-            <SectionLabel>Suggested next action</SectionLabel>
+            <Eyebrow as="span">Suggested next action</Eyebrow>
             <div className="flex-1">
               <p className="text-sm leading-snug font-medium">
                 {insights.nextAction.label}
@@ -251,7 +249,7 @@ export function RecordAiInsights({
                 {insights.signals.map((s) => (
                   <span
                     key={s}
-                    className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                    className="rounded-sm bg-muted px-1.5 py-0.5 text-3xs text-muted-foreground"
                   >
                     {s}
                   </span>

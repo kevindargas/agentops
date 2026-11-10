@@ -1,20 +1,14 @@
 import type { Metadata } from "next"
-import Link from "next/link"
 import {
-  BellIcon,
   CalendarIcon,
-  CheckIcon,
   ClockIcon,
-  CopyIcon,
   PackageIcon,
   ReceiptIcon,
   ShieldIcon,
   TruckIcon,
   UserIcon,
-  XIcon,
 } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { ActivityStream } from "@/components/record/activity-stream"
 import { LifecycleTracker } from "@/components/record/lifecycle-tracker"
@@ -28,8 +22,16 @@ import { SlaProgress } from "@/components/record/sla-progress"
 import { DetailList } from "@/components/shared/detail-list"
 import { StateBadge } from "@/components/shared/status-badge"
 import { GroupChip, UserChip } from "@/components/shared/user-chip"
+import {
+  RequestApprovalActions,
+  RequestApprovalBadge,
+  RequestApprovalMeta,
+  RequestBadges,
+} from "@/features/requests/request-approval-actions"
+import { approvalReminderHours } from "@/lib/constants"
 import { buildActivity, getCatalogItem, getRequest } from "@/lib/data"
-import { NOW } from "@/lib/data/seed"
+import { NOW, hoursFromNow } from "@/lib/data/seed"
+import { currentUser } from "@/lib/data/users"
 import {
   formatCurrency,
   formatDate,
@@ -77,14 +79,6 @@ export default async function RequestPage({
     .map((i) => getCatalogItem(i.catalogItemId)?.name)
     .filter(Boolean)
     .join(", ")
-  const approvalTone =
-    request.approval === "Approved"
-      ? "success"
-      : request.approval === "Rejected"
-        ? "danger"
-        : request.approval === "Requested"
-          ? "warning"
-          : "default"
 
   return (
     <>
@@ -96,8 +90,7 @@ export default async function RequestPage({
         description={`${request.items.length} item${request.items.length === 1 ? "" : "s"} · ${request.price === 0 ? "No charge" : formatCurrency(request.price)}`}
         badges={
           <>
-            <StateBadge state={request.state} />
-            <StateBadge state={request.stage} dot={false} />
+            <RequestBadges request={request} />
           </>
         }
         meta={
@@ -105,13 +98,7 @@ export default async function RequestPage({
             <MetaItem label="Requested for" icon={<UserIcon />}>
               <UserChip userId={request.requestedForId} size="xs" />
             </MetaItem>
-            <MetaItem
-              label="Approval"
-              icon={<ShieldIcon />}
-              tone={approvalTone}
-            >
-              {request.approval}
-            </MetaItem>
+            <RequestApprovalMeta request={request} />
             <MetaItem label="Opened" icon={<ClockIcon />}>
               {timeAgo(request.opened)}
             </MetaItem>
@@ -131,48 +118,7 @@ export default async function RequestPage({
             </MetaItem>
           </>
         }
-        actions={
-          request.approval === "Requested" ? (
-            <>
-              <Button variant="outline">
-                <XIcon /> Reject
-              </Button>
-              <Button>
-                <CheckIcon /> Approve
-              </Button>
-            </>
-          ) : (
-            <Button variant="outline" render={<Link href="/itsm/catalog" />}>
-              <PackageIcon /> Order again
-            </Button>
-          )
-        }
-        overflow={[
-          {
-            label: "Duplicate request",
-            icon: <CopyIcon />,
-            message: "Draft request created with the same items",
-          },
-          {
-            label: "Follow",
-            icon: <BellIcon />,
-            message: `You now follow ${request.number}`,
-            separatorBefore: true,
-          },
-          {
-            label: "Cancel request",
-            destructive: true,
-            separatorBefore: true,
-            disabled: closed,
-            confirm: {
-              title: `Cancel ${request.number}?`,
-              description:
-                "Open fulfillment tasks will be closed incomplete and the requester notified.",
-              actionLabel: "Cancel request",
-            },
-            message: `${request.number} cancelled`,
-          },
-        ]}
+        actions={<RequestApprovalActions request={request} />}
       />
 
       <LifecycleTracker
@@ -188,7 +134,7 @@ export default async function RequestPage({
               title="Approval"
               icon={<ShieldIcon />}
               size="sm"
-              action={<StateBadge state={request.approval} />}
+              action={<RequestApprovalBadge request={request} />}
               contentClassName="flex flex-col gap-3"
             >
               <DetailList
@@ -197,7 +143,9 @@ export default async function RequestPage({
                 items={[
                   {
                     label: "Approver",
-                    value: <UserChip userId="u-001" showTitle size="md" />,
+                    value: (
+                      <UserChip userId={currentUser.id} showTitle size="md" />
+                    ),
                   },
                   {
                     label: "Requested by",
@@ -209,8 +157,8 @@ export default async function RequestPage({
                 <>
                   <Separator />
                   <p className="text-xs text-muted-foreground">
-                    Waiting on the requester’s manager. Reminder scheduled for
-                    tomorrow 09:00.
+                    Waiting on the approver. Reminder scheduled for{" "}
+                    {formatDateTime(hoursFromNow(approvalReminderHours))}.
                   </p>
                 </>
               )}

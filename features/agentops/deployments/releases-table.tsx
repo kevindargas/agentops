@@ -3,7 +3,6 @@
 import Link from "next/link"
 import { createColumnHelper } from "@tanstack/react-table"
 import { RocketIcon } from "lucide-react"
-import { toast } from "sonner"
 
 import {
   DataTable,
@@ -15,15 +14,14 @@ import {
 } from "@/components/data-table"
 import { RecordLink } from "@/components/shared/record-link"
 import { UserChip } from "@/components/shared/user-chip"
-import { Button } from "@/components/ui/button"
-import { deployedAgents, getDeployedAgent } from "@/lib/data"
+import { deployedAgents, getDeployedAgent } from "@/lib/data/agentops"
 import {
   releaseEnvironments,
   releaseStages,
   releaseStrategies,
-  releases as seed,
   type Release,
 } from "@/lib/data/deployments"
+import { NotInDemoButton } from "../evals/shared"
 import { AgentChip } from "../shared"
 import {
   ChangeChips,
@@ -36,6 +34,7 @@ import {
   environmentLabel,
   strategyLabel,
 } from "./shared"
+import { releaseStore } from "./store"
 
 const col = createColumnHelper<DataTableFeatures, Release>()
 
@@ -91,7 +90,11 @@ const columns = col.columns([
   }),
   col.accessor("strategy", {
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Strategy" />
+      <DataTableColumnHeader
+        column={column}
+        title="Strategy"
+        hint="How traffic moves to the new version: canary steps, blue-green cut-over, mirrored shadow traffic or a direct switch."
+      />
     ),
     cell: ({ row }) => (
       <TruncatedText className="text-xs" muted>
@@ -111,10 +114,16 @@ const columns = col.columns([
   }),
   col.accessor((r) => r.evalGate?.status ?? "", {
     id: "evalGate",
-    header: "Eval gate",
+    header: ({ column }) => (
+      <DataTableColumnHeader
+        column={column}
+        title="Eval gate"
+        hint="Result of the golden-set eval run the release is gated on: composite score against the threshold, plus the reason when it failed."
+      />
+    ),
     cell: ({ row }) => <EvalGateChip gate={row.original.evalGate} />,
     enableSorting: false,
-    meta: { width: "w-28", label: "Eval gate", skeleton: "w-16" },
+    meta: { width: "w-36", label: "Eval gate", skeleton: "w-16" },
   }),
   col.accessor("traffic", {
     header: ({ column }) => (
@@ -131,7 +140,13 @@ const columns = col.columns([
   }),
   col.accessor((r) => r.health.qualityDelta, {
     id: "health",
-    header: "Health vs baseline",
+    header: ({ column }) => (
+      <DataTableColumnHeader
+        column={column}
+        title="Health vs baseline"
+        hint="Error-rate delta in percentage points (red above +0.2) and composite quality delta (red below -0.5) during the rollout."
+      />
+    ),
     cell: ({ row }) => <HealthDeltas release={row.original} />,
     enableSorting: false,
     meta: { width: "w-36", label: "Health", skeleton: "w-20" },
@@ -189,7 +204,10 @@ export function ReleasesTable({
   agentId?: string
   initialFacets?: Record<string, string[]>
 }) {
-  const data = agentId ? seed.filter((r) => r.agentId === agentId) : seed
+  const releases = releaseStore.use()
+  const data = agentId
+    ? releases.filter((r) => r.agentId === agentId)
+    : releases
   return (
     <DataTable
       columns={columns}
@@ -205,21 +223,15 @@ export function ReleasesTable({
       initialColumnVisibility={{ deployedById: false }}
       rowHref={(r) => `/agentops/deployments/${r.id}`}
       totalLabel="releases"
+      caption="Releases with agent, version, changes, strategy, stage, eval gate, traffic and health"
       selectionLabel={(n) => (n === 1 ? "release" : "releases")}
       emptyTitle="No releases"
-      emptyMessage="Releases appear here when a draft is created from an experiment or the agent editor."
+      emptyMessage="Releases appear here when a passed eval run is promoted or staging is promoted from the Environments tab."
       emptyIcon={<RocketIcon />}
       toolbar={
-        <Button
-          size="sm"
-          onClick={() =>
-            toast("New release draft", {
-              description: "Pick an agent and the changes to ship.",
-            })
-          }
-        >
+        <NotInDemoButton reason="Releases are drafted from a passed eval run (Promote to production) or from the Environments tab (Promote to prod); there is no blank release form.">
           <RocketIcon /> New release
-        </Button>
+        </NotInDemoButton>
       }
     />
   )

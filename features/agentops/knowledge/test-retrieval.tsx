@@ -5,6 +5,7 @@ import { cn } from "cn"
 import { InfoIcon, SearchIcon, SparklesIcon } from "lucide-react"
 
 import { EmptyState } from "@/components/shared/empty-state"
+import { Eyebrow } from "@/components/shared/eyebrow"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -24,7 +25,7 @@ import {
   type RetrievalResult,
 } from "@/lib/data/knowledge"
 import { ScoreBar } from "../shared"
-import { StoreBadge } from "./shared"
+import { sourceTypeLabel, StoreBadge } from "./shared"
 
 const sampleQueries: Record<string, string[]> = {
   "kb-support-kb": ["duplicate invoice charge refund", "SSO login loop"],
@@ -115,7 +116,7 @@ export function TestRetrievalPanel({
               id="test-query"
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
-              placeholder="Ask what an agent would ask…"
+              placeholder="Ask what an agent would ask"
               className="pl-8"
               autoComplete="off"
             />
@@ -129,11 +130,12 @@ export function TestRetrievalPanel({
       {kb && (
         <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
           <StoreBadge store={kb.store} />
-          <span className="font-mono">
-            top_k {kb.retrieval.topK} · thr {kb.retrieval.scoreThreshold} · BM25{" "}
+          <span className="tabular-nums">
+            Top k {kb.retrieval.topK} · Score threshold{" "}
+            {kb.retrieval.scoreThreshold} · BM25 weight{" "}
             {kb.retrieval.hybridWeight}
-            {kb.retrieval.reranker ? " · rerank" : ""}
-            {kb.retrieval.mmr ? " · MMR" : ""}
+            {kb.retrieval.reranker ? " · Reranker on" : ""}
+            {kb.retrieval.mmr ? " · MMR on" : ""}
           </span>
           <span className="mx-1 hidden sm:inline">·</span>
           <span>Try:</span>
@@ -199,9 +201,12 @@ function ResultRow({
           <p className="mt-0.5 truncate text-xs text-muted-foreground">
             {source?.name ?? "Unknown source"}
             {source && (
-              <span className="text-muted-foreground/70"> · {source.type}</span>
+              <span className="text-muted-foreground/70">
+                {" "}
+                · {sourceTypeLabel[source.type]}
+              </span>
             )}
-            <span className="ml-1.5 font-mono text-[11px] text-muted-foreground/70">
+            <span className="ml-1.5 font-mono text-2xs text-muted-foreground/70">
               {r.chunk.id}
             </span>
           </p>
@@ -220,9 +225,7 @@ function ResultRow({
         </div>
         <div className="flex shrink-0 items-start gap-4">
           <div className="flex flex-col items-end gap-0.5">
-            <span className="text-[11px] text-muted-foreground uppercase">
-              Score
-            </span>
+            <Eyebrow as="span">Score</Eyebrow>
             <ScoreBar
               value={r.score}
               max={1}
@@ -231,9 +234,7 @@ function ResultRow({
             />
           </div>
           <div className="flex flex-col items-end gap-0.5">
-            <span className="text-[11px] text-muted-foreground uppercase">
-              Rerank
-            </span>
+            <Eyebrow as="span">Rerank</Eyebrow>
             <ScoreBar
               value={r.rerankScore}
               max={1}
@@ -245,7 +246,7 @@ function ResultRow({
       </div>
       {r.belowThreshold && (
         <Badge variant="outline" className="mt-2 text-muted-foreground">
-          Below threshold — not sent to the model
+          Below threshold: not sent to the model
         </Badge>
       )}
     </li>

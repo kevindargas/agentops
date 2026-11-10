@@ -1,18 +1,12 @@
 import type { Metadata } from "next"
 import Link from "next/link"
 import {
-  BellIcon,
-  CalendarIcon,
   CalendarClockIcon,
   ClockIcon,
-  CopyIcon,
   FlaskConicalIcon,
-  LinkIcon,
   ListChecksIcon,
-  PlayIcon,
   ServerIcon,
   ShieldAlertIcon,
-  ShieldIcon,
   UndoIcon,
   UserIcon,
   UsersIcon,
@@ -20,7 +14,6 @@ import {
 import { cn } from "cn"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { ActivityStream } from "@/components/record/activity-stream"
 import { LifecycleTracker } from "@/components/record/lifecycle-tracker"
@@ -38,7 +31,14 @@ import {
   StateBadge,
 } from "@/components/shared/status-badge"
 import { GroupChip, UserChip } from "@/components/shared/user-chip"
-import { ChangeApprovalCard } from "@/features/changes/change-approval-card"
+import {
+  ChangeActions,
+  ChangeStateBadge,
+} from "@/features/changes/change-actions"
+import {
+  ChangeApprovalCard,
+  ChangeApprovalMeta,
+} from "@/features/changes/change-approval-card"
 import { ChangeTypePill } from "@/features/changes/changes-table"
 import { changeStates, impactLabels } from "@/lib/constants"
 import {
@@ -135,7 +135,6 @@ export default async function ChangePage({
         ? 100
         : 0
   const startsIn = timeAgo(change.plannedStart)
-  const done = ["Closed", "Canceled"].includes(change.state)
 
   const riskFactors: { label: string; value: string; level: 0 | 1 | 2 }[] = [
     {
@@ -144,7 +143,7 @@ export default async function ChangePage({
       level: change.risk === "Low" ? 0 : change.risk === "Moderate" ? 1 : 2,
     },
     {
-      label: "CI criticality",
+      label: "Service criticality",
       value: ci?.businessCriticality.split(" - ")[1] ?? "Unknown",
       level: !ci
         ? 1
@@ -160,7 +159,7 @@ export default async function ChangePage({
       level: impacted.length === 0 ? 0 : impacted.length < 3 ? 1 : 2,
     },
     {
-      label: "Open incidents on CI",
+      label: "Open incidents on service",
       value: String(linkedIncidents.length),
       level:
         linkedIncidents.length === 0 ? 0 : linkedIncidents.length < 3 ? 1 : 2,
@@ -183,7 +182,7 @@ export default async function ChangePage({
         badges={
           <>
             <ChangeTypePill type={change.type} />
-            <StateBadge state={change.state} />
+            <ChangeStateBadge change={change} />
             <RiskBadge risk={change.risk} />
             <PriorityBadge priority={change.priority} short />
           </>
@@ -208,70 +207,13 @@ export default async function ChangePage({
                   ? `Starts ${startsIn}`
                   : `Ended ${timeAgo(change.plannedEnd)}`}
             </MetaItem>
-            <MetaItem
-              label="Approval"
-              icon={<ShieldIcon />}
-              tone={
-                change.approval === "Approved"
-                  ? "success"
-                  : change.approval === "Rejected"
-                    ? "danger"
-                    : change.approval === "Requested"
-                      ? "warning"
-                      : "default"
-              }
-            >
-              {change.approval}
-            </MetaItem>
+            <ChangeApprovalMeta change={change} />
             <MetaItem label="Opened" icon={<ClockIcon />}>
               {timeAgo(change.opened)}
             </MetaItem>
           </>
         }
-        actions={
-          <>
-            <Button
-              variant="outline"
-              render={<Link href="/itsm/changes/calendar" />}
-            >
-              <CalendarIcon /> View in calendar
-            </Button>
-            <Button disabled={change.state !== "Scheduled"}>
-              <PlayIcon /> Start implementation
-            </Button>
-          </>
-        }
-        overflow={[
-          {
-            label: "Copy as template",
-            icon: <CopyIcon />,
-            message: "Change template drafted from this record",
-          },
-          {
-            label: "Link incident",
-            icon: <LinkIcon />,
-            href: "/itsm/incidents",
-          },
-          {
-            label: "Follow",
-            icon: <BellIcon />,
-            message: `You now follow ${change.number}`,
-            separatorBefore: true,
-          },
-          {
-            label: "Cancel change",
-            destructive: true,
-            separatorBefore: true,
-            disabled: done,
-            confirm: {
-              title: `Cancel ${change.number}?`,
-              description:
-                "The maintenance window will be released and approvers notified. Linked incidents stay open.",
-              actionLabel: "Cancel change",
-            },
-            message: `${change.number} canceled`,
-          },
-        ]}
+        actions={<ChangeActions change={change} />}
       />
 
       <LifecycleTracker
@@ -315,7 +257,7 @@ export default async function ChangePage({
                     style={{ width: `${windowPct}%` }}
                   />
                 </div>
-                <div className="flex items-center justify-between text-[11px] text-muted-foreground tabular-nums">
+                <div className="flex items-center justify-between text-2xs text-muted-foreground tabular-nums">
                   <span>{formatDateTime(change.plannedStart)}</span>
                   <span>{formatDateTime(change.plannedEnd)}</span>
                 </div>
@@ -327,14 +269,14 @@ export default async function ChangePage({
               <SummaryRow label="Planned end">
                 {formatDateTime(change.plannedEnd)}
               </SummaryRow>
-              <SummaryRow label="Maintenance window">
-                Weekday 18:00–00:00 UTC
+              <SummaryRow label="Default maintenance window">
+                Weekdays 18:00 to 00:00 UTC
               </SummaryRow>
               <SummaryRow label="Conflicts">
                 <span
                   className={
                     conflicts.length > 0
-                      ? "font-medium text-destructive"
+                      ? "font-medium text-danger-text"
                       : undefined
                   }
                 >
@@ -376,14 +318,14 @@ export default async function ChangePage({
                 {change.cabRequired
                   ? "CAB authorization is required before scheduling."
                   : change.type === "Standard"
-                    ? "Pre-approved standard change — no CAB review."
+                    ? "Pre-approved standard change, no CAB review."
                     : "Change manager approval is sufficient."}
               </p>
             </RecordSection>
 
             {ci && (
               <RecordSection
-                title="Configuration item"
+                title="Affected service"
                 icon={<ServerIcon />}
                 size="sm"
               >
@@ -391,6 +333,7 @@ export default async function ChangePage({
                   number={ci.id.toUpperCase()}
                   type={ci.class}
                   title={ci.name}
+                  href="/itom/health"
                   state={ci.status}
                   icon={<ServerIcon />}
                   meta={`${ci.environment} · ${ci.businessCriticality}`}
@@ -407,7 +350,7 @@ export default async function ChangePage({
             <AlertDescription>
               <span>
                 {conflicts.length} other change{conflicts.length > 1 ? "s" : ""}{" "}
-                on the same configuration item within 24 hours:{" "}
+                on the same service within 24 hours:{" "}
                 {conflicts.map((c, i) => (
                   <span key={c.number}>
                     {i > 0 && ", "}
@@ -433,14 +376,7 @@ export default async function ChangePage({
           </p>
         </RecordSection>
 
-        <RecordSection
-          title="Details"
-          action={
-            <Button variant="ghost" size="xs" disabled={done}>
-              Edit
-            </Button>
-          }
-        >
+        <RecordSection title="Details">
           <DetailList
             items={[
               {
@@ -448,7 +384,7 @@ export default async function ChangePage({
                 value: <UserChip userId={change.requestedById} />,
               },
               {
-                label: "Configuration item",
+                label: "Affected service",
                 value: ci ? (
                   <span className="inline-flex items-center gap-1.5">
                     {ci.name}
@@ -516,7 +452,7 @@ export default async function ChangePage({
               count: impacted.length,
               content: (
                 <RelatedList
-                  title="Services depending on this CI"
+                  title="Services depending on the affected service"
                   description="Upstream services that may be affected during the window."
                   rows={impacted}
                   getKey={(c) => c.id}
@@ -548,11 +484,11 @@ export default async function ChangePage({
               count: linkedIncidents.length,
               content: (
                 <RelatedList
-                  title="Incidents on the same CI"
+                  title="Incidents on the same service"
                   rows={linkedIncidents}
                   getKey={(i) => i.number}
                   getHref={(i) => `/itsm/incidents/${i.number}`}
-                  emptyMessage="No open incidents on this configuration item."
+                  emptyMessage="No open incidents on the affected service."
                   action={{ label: "Link incident", href: "/itsm/incidents" }}
                   columns={[
                     {

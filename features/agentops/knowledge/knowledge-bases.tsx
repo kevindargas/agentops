@@ -7,12 +7,15 @@ import {
   DownloadIcon,
   FlaskConicalIcon,
   PencilIcon,
+  PlusIcon,
   RefreshCwIcon,
   ShieldCheckIcon,
   TriangleAlertIcon,
+  UsersIcon,
 } from "lucide-react"
 import { toast } from "sonner"
 
+import { useQueryParam } from "@/hooks/use-query-param"
 import { Sparkline } from "@/components/charts/sparkline"
 import {
   DataTable,
@@ -25,6 +28,13 @@ import {
 } from "@/components/data-table"
 import { CopyButton } from "@/components/shared/copy-button"
 import { EmptyState } from "@/components/shared/empty-state"
+import { Eyebrow } from "@/components/shared/eyebrow"
+import { MetricTile } from "@/components/shared/metric-tile"
+import {
+  SheetBody,
+  SheetFooterActions,
+  sheetWidths,
+} from "@/components/shared/sheet-frame"
 import { UserChip } from "@/components/shared/user-chip"
 import {
   AlertDialog,
@@ -39,45 +49,70 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field"
+import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import {
   Sheet,
   SheetContent,
   SheetDescription,
-  SheetFooter,
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
 import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
+import { Textarea } from "@/components/ui/textarea"
+import { deployedAgents, getDeployedAgent } from "@/lib/data/agentops"
 import {
   ingestionJobs,
   isKbStale,
-  kbSources,
-  knowledgeBases as seed,
+  type KbStore,
   type KnowledgeBase,
   type RetrievalConfig,
 } from "@/lib/data/knowledge"
-import { formatNumber } from "@/lib/format"
-import { AgentChip, fmtMs } from "../shared"
+import { NOW } from "@/lib/data/seed"
+import { currentUser } from "@/lib/data/users"
+import { formatMs, formatNumber } from "@/lib/format"
+import { AgentChip } from "../shared"
 import {
   EmbeddingChip,
   Fact,
   KbStateBadge,
   SectionTitle,
+  sourceTypeLabel,
   StoreBadge,
   pct,
-  useQueryParam,
 } from "./shared"
+import { kbStore, sourceStore } from "./store"
 import { TestRetrievalPanel } from "./test-retrieval"
 
 const col = createColumnHelper<DataTableFeatures, KnowledgeBase>()
 
 function retrievalSummary(r: RetrievalConfig) {
   return [
-    `top_k ${r.topK}`,
+    `top k ${r.topK}`,
+    `threshold ${r.scoreThreshold.toFixed(2)}`,
     `BM25 ${r.hybridWeight.toFixed(2)}`,
-    `thr ${r.scoreThreshold.toFixed(2)}`,
     r.reranker ? "rerank" : null,
     r.mmr ? "MMR" : null,
   ]
@@ -98,6 +133,7 @@ const columns = col.columns([
             {isKbStale(row.original) && (
               <TriangleAlertIcon
                 className="size-3.5 text-warning"
+                role="img"
                 aria-label="Not synced in over 7 days"
               />
             )}
@@ -131,12 +167,12 @@ const columns = col.columns([
   }),
   col.accessor("documents", {
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Docs" />
+      <DataTableColumnHeader column={column} title="Documents" />
     ),
     cell: ({ getValue }) => (
       <NumericCell value={getValue()} format={(n) => formatNumber(n)} />
     ),
-    meta: { width: "w-20", label: "Documents", numeric: true, skeleton: "w-8" },
+    meta: { width: "w-24", label: "Documents", numeric: true, skeleton: "w-8" },
   }),
   col.accessor("chunks", {
     header: ({ column }) => (
@@ -165,7 +201,13 @@ const columns = col.columns([
   }),
   col.accessor((r) => r.retrieval.topK, {
     id: "retrieval",
-    header: "Retrieval",
+    header: ({ column }) => (
+      <DataTableColumnHeader
+        column={column}
+        title="Retrieval"
+        hint="Top k chunks returned, minimum score threshold, BM25 weight of the hybrid search, reranker and MMR flags"
+      />
+    ),
     cell: ({ row }) => (
       <span className="font-mono text-xs text-muted-foreground tabular-nums">
         {retrievalSummary(row.original.retrieval)}
@@ -240,13 +282,20 @@ function AgentStack({ ids }: { ids: string[] }) {
   )
 }
 
+const storeOptions: KbStore[] = [
+  "pgvector",
+  "Pinecone",
+  "Weaviate",
+  "Elasticsearch",
+  "Vertex AI Search",
+  "Bedrock KB",
+]
+
 const facets: FacetDef<KnowledgeBase>[] = [
   {
     id: "store",
     title: "Store",
-    options: [...new Set(seed.map((k) => k.store))]
-      .sort()
-      .map((v) => ({ value: v, label: v })),
+    options: storeOptions.map((v) => ({ value: v, label: v })),
     getValue: (r) => r.store,
   },
   {
@@ -258,26 +307,38 @@ const facets: FacetDef<KnowledgeBase>[] = [
     })),
     getValue: (r) => r.status,
   },
+  {
+    id: "agent",
+    title: "Agent",
+    options: deployedAgents.map((a) => ({ value: a.id, label: a.name })),
+    getValue: (r) => r.access.agentIds,
+  },
 ]
 
-export function KnowledgeBasesTable() {
-  const [items, setItems] = React.useState<KnowledgeBase[]>(seed)
+export function KnowledgeBasesTable({
+  agentId,
+}: {
+  /** From `?agent=`: pre-selects the Agent facet. */
+  agentId?: string | null
+}) {
+  const items = kbStore.use()
   const [openId, setOpenId] = useQueryParam("kb")
   const open = items.find((k) => k.id === openId) ?? null
-  const patch = (id: string, p: Partial<KnowledgeBase>) =>
-    setItems((prev) => prev.map((k) => (k.id === id ? { ...k, ...p } : k)))
+  const patch = (id: string, p: Partial<KnowledgeBase>) => kbStore.patch(id, p)
 
   return (
     <>
       <DataTable
+        key={agentId ?? "all"}
         columns={columns}
         data={items}
         getRowId={(r) => r.id}
         getSearchText={(r) =>
           `${r.name} ${r.description} ${r.store} ${r.embeddingModel} ${r.access.agentIds.join(" ")}`
         }
-        searchPlaceholder="Search knowledge bases…"
+        searchPlaceholder="Search knowledge bases"
         facets={facets}
+        initialFacets={agentId ? { agent: [agentId] } : undefined}
         initialSorting={[{ id: "documents", desc: true }]}
         initialColumnVisibility={{
           chunking: false,
@@ -286,20 +347,185 @@ export function KnowledgeBasesTable() {
         }}
         onRowClick={(r) => setOpenId(r.id)}
         totalLabel="knowledge bases"
+        caption="Knowledge bases with their store, embedding model, size, retrieval settings, freshness and attached agents"
         selectionLabel={(n) => (n === 1 ? "knowledge base" : "knowledge bases")}
         emptyTitle="No knowledge bases"
         emptyMessage="Connect a vector store to give agents something to retrieve from."
-        toolbar={
-          <Button size="sm" onClick={() => toast("Create index wizard opened")}>
-            New knowledge base
-          </Button>
-        }
+        toolbar={<NewKnowledgeBaseButton onCreated={setOpenId} />}
       />
       <KnowledgeBaseSheet
         kb={open}
         onClose={() => setOpenId(null)}
         onPatch={patch}
       />
+    </>
+  )
+}
+
+/* ------------------------------------------------------------------------ */
+/* New knowledge base                                                        */
+/* ------------------------------------------------------------------------ */
+
+const storeItems = storeOptions.map((s) => ({ value: s, label: s }))
+
+function NewKnowledgeBaseButton({
+  onCreated,
+}: {
+  onCreated: (id: string) => void
+}) {
+  const [open, setOpen] = React.useState(false)
+  const [name, setName] = React.useState("")
+  const [description, setDescription] = React.useState("")
+  const [store, setStore] = React.useState<KbStore>("pgvector")
+  const [embedding, setEmbedding] = React.useState(
+    "openai/text-embedding-3-large"
+  )
+
+  const normalized = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+  const id = `kb-${normalized.replace(/^-+|-+$/g, "")}`
+  const taken = kbStore.get().some((k) => k.id === id)
+  const canSave = normalized.length > 1 && !taken && embedding.trim()
+
+  const reset = () => {
+    setName("")
+    setDescription("")
+    setStore("pgvector")
+    setEmbedding("openai/text-embedding-3-large")
+  }
+
+  const save = () => {
+    const now = NOW.toISOString()
+    const kb: KnowledgeBase = {
+      id,
+      name: id.replace(/^kb-/, ""),
+      description: description.trim() || "Created from the registry.",
+      store,
+      embeddingModel: embedding.trim(),
+      embeddingDims: embedding.includes("large") ? 3072 : 1536,
+      documents: 0,
+      chunks: 0,
+      chunking: { size: 512, overlap: 64, strategy: "recursive" },
+      retrieval: {
+        topK: 8,
+        hybridWeight: 0.3,
+        reranker: null,
+        scoreThreshold: 0.4,
+        mmr: false,
+        mmrLambda: 0.7,
+      },
+      access: {
+        agentIds: [],
+        piiFilter: true,
+        aclInheritance: false,
+        roles: ["admin"],
+      },
+      lastSync: now,
+      sizeGb: 0,
+      status: "Healthy",
+      ownerId: currentUser.id,
+      queries14d: Array.from({ length: 14 }, () => 0),
+      hitRate: 0,
+      latency: { p50Ms: 0, p95Ms: 0 },
+      createdAt: now,
+    }
+    kbStore.add(kb, "start")
+    toast.success(`${kb.name} created`, {
+      description: `${store} index on ${embedding.trim()}. Add a source on the Sources tab to start ingesting.`,
+    })
+    reset()
+    setOpen(false)
+    onCreated(kb.id)
+  }
+
+  return (
+    <>
+      <Button size="sm" onClick={() => setOpen(true)}>
+        <PlusIcon /> New knowledge base
+      </Button>
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetContent
+          className={cn(sheetWidths.detail, "flex flex-col gap-0 p-0")}
+        >
+          <SheetHeader className="border-b px-6 py-5">
+            <SheetTitle>New knowledge base</SheetTitle>
+            <SheetDescription>
+              Creates an empty index with default chunking and retrieval
+              settings. Attach agents and sources from its sheet.
+            </SheetDescription>
+          </SheetHeader>
+          <SheetBody>
+            <FieldGroup>
+              <Field>
+                <FieldLabel htmlFor="kb-name">Name</FieldLabel>
+                <Input
+                  id="kb-name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="vendor-contracts"
+                  autoComplete="off"
+                  className="font-mono"
+                />
+                <FieldDescription>
+                  {taken ? `${id} already exists.` : `Id ${id}`}
+                </FieldDescription>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="kb-description">Description</FieldLabel>
+                <Textarea
+                  id="kb-description"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  rows={2}
+                  placeholder="What the index holds and which agents should use it."
+                />
+              </Field>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field>
+                  <FieldLabel htmlFor="kb-store">Store</FieldLabel>
+                  <Select
+                    value={store}
+                    onValueChange={(v) => v && setStore(v as KbStore)}
+                    items={storeItems}
+                  >
+                    <SelectTrigger id="kb-store" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {storeItems.map((s) => (
+                        <SelectItem key={s.value} value={s.value}>
+                          {s.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="kb-embedding">
+                    Embedding model
+                  </FieldLabel>
+                  <Input
+                    id="kb-embedding"
+                    value={embedding}
+                    onChange={(e) => setEmbedding(e.target.value)}
+                    autoComplete="off"
+                    className="font-mono"
+                  />
+                </Field>
+              </div>
+            </FieldGroup>
+          </SheetBody>
+          <SheetFooterActions
+            primary={
+              <Button disabled={!canSave} onClick={save}>
+                Create
+              </Button>
+            }
+          />
+        </SheetContent>
+      </Sheet>
     </>
   )
 }
@@ -317,11 +543,12 @@ function KnowledgeBaseSheet({
   onClose: () => void
   onPatch: (id: string, p: Partial<KnowledgeBase>) => void
 }) {
+  const allSources = sourceStore.use()
   const [editOpen, setEditOpen] = React.useState(false)
   const [testOpen, setTestOpen] = React.useState(false)
   const [reindexOpen, setReindexOpen] = React.useState(false)
 
-  const sources = kb ? kbSources.filter((s) => s.kbId === kb.id) : []
+  const sources = kb ? allSources.filter((s) => s.kbId === kb.id) : []
   const jobs = kb
     ? ingestionJobs.filter((j) => j.kbId === kb.id).slice(0, 10)
     : []
@@ -355,9 +582,23 @@ function KnowledgeBaseSheet({
     toast.success("Config exported", { description: `${kb.name}.kb.json` })
   }
 
+  const toggleAgent = (agentId: string, on: boolean) => {
+    if (!kb) return
+    const next = on
+      ? [...kb.access.agentIds, agentId]
+      : kb.access.agentIds.filter((id) => id !== agentId)
+    onPatch(kb.id, { access: { ...kb.access, agentIds: next } })
+    const name = getDeployedAgent(agentId)?.name ?? agentId
+    toast(on ? `${name} can now query ${kb.name}` : `${name} removed`, {
+      description: `${next.length} agent${next.length === 1 ? "" : "s"} attached.`,
+    })
+  }
+
   return (
     <Sheet open={kb !== null} onOpenChange={(o) => !o && onClose()}>
-      <SheetContent className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
+      <SheetContent
+        className={cn(sheetWidths.editor, "flex flex-col gap-0 p-0")}
+      >
         {kb && (
           <>
             <SheetHeader className="gap-3 border-b px-6 py-5">
@@ -372,7 +613,7 @@ function KnowledgeBaseSheet({
                     <TriangleAlertIcon /> Stale sync
                   </Badge>
                 )}
-                <span className="ml-auto inline-flex items-center gap-1 font-mono text-[11px] text-muted-foreground">
+                <span className="ml-auto inline-flex items-center gap-1 font-mono text-2xs text-muted-foreground">
                   {kb.id} <CopyButton value={kb.id} label="Copy id" />
                 </span>
               </div>
@@ -384,19 +625,26 @@ function KnowledgeBaseSheet({
               </SheetDescription>
             </SheetHeader>
 
-            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+            <SheetBody>
               <div className="flex flex-col gap-6">
                 <section className="grid gap-3 sm:grid-cols-[1fr_auto]">
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                    <Fact label="Documents">{formatNumber(kb.documents)}</Fact>
-                    <Fact label="Chunks">{formatNumber(kb.chunks)}</Fact>
-                    <Fact label="Hit rate">{pct(kb.hitRate)}</Fact>
-                    <Fact label="p95 latency">{fmtMs(kb.latency.p95Ms)}</Fact>
+                    <MetricTile
+                      label="Documents"
+                      value={formatNumber(kb.documents)}
+                    />
+                    <MetricTile
+                      label="Chunks"
+                      value={formatNumber(kb.chunks)}
+                    />
+                    <MetricTile label="Hit rate" value={pct(kb.hitRate)} />
+                    <MetricTile
+                      label="p95 latency"
+                      value={formatMs(kb.latency.p95Ms)}
+                    />
                   </div>
                   <div className="flex flex-col items-end justify-between rounded-lg border bg-muted/30 px-3 py-2">
-                    <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-                      Queries · 14d
-                    </p>
+                    <Eyebrow as="span">Queries · 14d</Eyebrow>
                     <Sparkline
                       data={kb.queries14d}
                       className="h-8 w-28"
@@ -427,11 +675,11 @@ function KnowledgeBaseSheet({
                     Retrieval settings
                   </SectionTitle>
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                    <Fact label="top_k">{kb.retrieval.topK}</Fact>
+                    <Fact label="Top k">{kb.retrieval.topK}</Fact>
                     <Fact label="Score threshold">
                       {kb.retrieval.scoreThreshold.toFixed(2)}
                     </Fact>
-                    <Fact label="Hybrid (BM25 weight)">
+                    <Fact label="BM25 weight">
                       {kb.retrieval.hybridWeight.toFixed(2)}
                     </Fact>
                     <Fact label="Reranker">
@@ -446,7 +694,7 @@ function KnowledgeBaseSheet({
                     </Fact>
                     <Fact label="MMR">
                       {kb.retrieval.mmr
-                        ? `On · λ ${kb.retrieval.mmrLambda.toFixed(2)}`
+                        ? `On · lambda ${kb.retrieval.mmrLambda.toFixed(2)}`
                         : "Off"}
                     </Fact>
                     <Fact label="Embedding">
@@ -471,7 +719,7 @@ function KnowledgeBaseSheet({
                     <EmptyState
                       size="sm"
                       title="No sources"
-                      description="This index has nothing to ingest from."
+                      description="This index has nothing to ingest from. Add one on the Sources tab."
                     />
                   ) : (
                     <ul className="divide-y rounded-lg border">
@@ -482,7 +730,7 @@ function KnowledgeBaseSheet({
                         >
                           <TwoLineCell
                             primary={s.name}
-                            secondary={`${s.type} · ${s.connector} · ${s.scheduleLabel}`}
+                            secondary={`${sourceTypeLabel[s.type]} · ${s.connector} · ${s.scheduleLabel}`}
                             className="min-w-0 flex-1"
                           />
                           <span className="text-xs text-muted-foreground tabular-nums">
@@ -498,13 +746,19 @@ function KnowledgeBaseSheet({
                 <section className="flex flex-col gap-2">
                   <SectionTitle>Ingestion history</SectionTitle>
                   {jobs.length === 0 ? (
-                    <p className="text-xs text-muted-foreground">
-                      No ingestion jobs recorded yet.
-                    </p>
+                    <EmptyState
+                      size="sm"
+                      bare
+                      title="No ingestion jobs yet"
+                      description="Jobs appear here once a source syncs into this index."
+                    />
                   ) : (
                     <div className="overflow-x-auto rounded-lg border">
                       <table className="w-full min-w-[28rem] text-sm">
-                        <thead className="bg-muted/40 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+                        <caption className="sr-only">
+                          Recent ingestion jobs for {kb.name}
+                        </caption>
+                        <thead className="bg-muted/40 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
                           <tr>
                             <th className="px-3 py-2 text-left font-medium">
                               Job
@@ -533,7 +787,7 @@ function KnowledgeBaseSheet({
                                 {j.id}
                               </td>
                               <td className="max-w-40 truncate px-3 py-2">
-                                {kbSources.find((s) => s.id === j.sourceId)
+                                {allSources.find((s) => s.id === j.sourceId)
                                   ?.name ?? j.sourceId}
                               </td>
                               <td className="px-3 py-2 text-right tabular-nums">
@@ -560,12 +814,38 @@ function KnowledgeBaseSheet({
                 </section>
 
                 <section className="flex flex-col gap-2">
-                  <SectionTitle>Access policy</SectionTitle>
+                  <SectionTitle
+                    action={
+                      <DropdownMenu>
+                        <DropdownMenuTrigger
+                          render={<Button variant="outline" size="sm" />}
+                        >
+                          <UsersIcon /> Manage agents
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-64">
+                          <DropdownMenuGroup>
+                            <DropdownMenuLabel>
+                              Agents allowed to query
+                            </DropdownMenuLabel>
+                            {deployedAgents.map((a) => (
+                              <DropdownMenuCheckboxItem
+                                key={a.id}
+                                checked={kb.access.agentIds.includes(a.id)}
+                                onCheckedChange={(on) => toggleAgent(a.id, on)}
+                              >
+                                {a.name}
+                              </DropdownMenuCheckboxItem>
+                            ))}
+                          </DropdownMenuGroup>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    }
+                  >
+                    Access policy
+                  </SectionTitle>
                   <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
                     <div className="rounded-lg border bg-muted/30 px-3 py-2">
-                      <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-                        Agents attached
-                      </p>
+                      <Eyebrow as="span">Agents attached</Eyebrow>
                       {kb.access.agentIds.length === 0 ? (
                         <p className="mt-1 text-xs text-muted-foreground">
                           No agent can query this index.
@@ -608,23 +888,29 @@ function KnowledgeBaseSheet({
                   <Fact label="Size">{kb.sizeGb.toFixed(1)} GB</Fact>
                 </section>
               </div>
-            </div>
+            </SheetBody>
 
-            <SheetFooter className="flex-row flex-wrap items-center justify-end gap-2 border-t px-6 py-4">
-              <Button variant="ghost" size="sm" onClick={exportConfig}>
-                <DownloadIcon /> Export config
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setTestOpen(true)}
-              >
-                <FlaskConicalIcon /> Test retrieval
-              </Button>
-              <Button size="sm" onClick={() => setReindexOpen(true)}>
-                <RefreshCwIcon /> Re-index
-              </Button>
-            </SheetFooter>
+            <SheetFooterActions
+              tertiary={
+                <Button variant="ghost" size="sm" onClick={exportConfig}>
+                  <DownloadIcon /> Export config
+                </Button>
+              }
+              secondary={
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setTestOpen(true)}
+                >
+                  <FlaskConicalIcon /> Test retrieval
+                </Button>
+              }
+              primary={
+                <Button size="sm" onClick={() => setReindexOpen(true)}>
+                  <RefreshCwIcon /> Re-index
+                </Button>
+              }
+            />
 
             <EditRetrievalSheet
               key={kb.id}
@@ -641,7 +927,9 @@ function KnowledgeBaseSheet({
             />
 
             <Sheet open={testOpen} onOpenChange={setTestOpen}>
-              <SheetContent className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-xl">
+              <SheetContent
+                className={cn(sheetWidths.detail, "flex flex-col gap-0 p-0")}
+              >
                 <SheetHeader className="border-b px-6 py-5">
                   <SheetTitle>Test retrieval</SheetTitle>
                   <SheetDescription>
@@ -650,9 +938,10 @@ function KnowledgeBaseSheet({
                     current retrieval settings.
                   </SheetDescription>
                 </SheetHeader>
-                <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+                <SheetBody>
                   <TestRetrievalPanel kbId={kb.id} lockKb />
-                </div>
+                </SheetBody>
+                <SheetFooterActions />
               </SheetContent>
             </Sheet>
 
@@ -668,7 +957,7 @@ function KnowledgeBaseSheet({
                     re-chunked and re-embedded with{" "}
                     <span className="font-mono">{kb.embeddingModel}</span>.
                     Agents keep serving from the current index until the swap
-                    completes. Estimated cost: ~$
+                    completes. Estimated cost: about $
                     {Math.max(1, Math.round(kb.chunks / 9000))}.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
@@ -678,8 +967,8 @@ function KnowledgeBaseSheet({
                     onClick={() => {
                       setReindexOpen(false)
                       onPatch(kb.id, { status: "Syncing" })
-                      toast("Re-index queued", {
-                        description: `${kb.name} · ${formatNumber(kb.chunks)} chunks`,
+                      toast("Status set to Syncing", {
+                        description: `${kb.name} · ${formatNumber(kb.chunks)} chunks to rebuild. The re-index itself runs in the backend you wire.`,
                       })
                     }}
                   >
@@ -760,7 +1049,9 @@ function EditRetrievalSheet({
         }
       }}
     >
-      <SheetContent className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-md">
+      <SheetContent
+        className={cn(sheetWidths.detail, "flex flex-col gap-0 p-0")}
+      >
         <SheetHeader className="border-b px-6 py-5">
           <SheetTitle>Retrieval settings</SheetTitle>
           <SheetDescription>
@@ -768,11 +1059,11 @@ function EditRetrievalSheet({
             <span className="font-mono">{kb.name}</span> on their next query.
           </SheetDescription>
         </SheetHeader>
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+        <SheetBody>
           <div className="flex flex-col gap-6">
             <SliderField
               id="top-k"
-              label="top_k"
+              label="Top k"
               hint="Chunks returned to the model after reranking."
               value={draft.topK}
               display={String(draft.topK)}
@@ -794,7 +1085,7 @@ function EditRetrievalSheet({
             />
             <SliderField
               id="hybrid"
-              label="Hybrid weight (BM25)"
+              label="BM25 weight"
               hint="0 is dense-only, 1 is lexical-only. Exact identifiers favour lexical."
               value={draft.hybridWeight}
               display={draft.hybridWeight.toFixed(2)}
@@ -807,7 +1098,7 @@ function EditRetrievalSheet({
               <div>
                 <Label htmlFor="rerank">Reranker</Label>
                 <p className="text-xs text-muted-foreground">
-                  Cross-encoder pass over the candidate set. Adds ~80 ms.
+                  Cross-encoder pass over the candidate set. Adds about 80 ms.
                 </p>
               </div>
               <Switch
@@ -839,7 +1130,7 @@ function EditRetrievalSheet({
               {draft.mmr && (
                 <SliderField
                   id="mmr-lambda"
-                  label="λ (relevance vs diversity)"
+                  label="Lambda (relevance vs diversity)"
                   value={draft.mmrLambda}
                   display={draft.mmrLambda.toFixed(2)}
                   min={0}
@@ -850,20 +1141,24 @@ function EditRetrievalSheet({
               )}
             </div>
           </div>
-        </div>
-        <SheetFooter className="flex-row items-center justify-end gap-2 border-t px-6 py-4">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setDraft(kb.retrieval)}
-            disabled={!dirty}
-          >
-            Reset
-          </Button>
-          <Button size="sm" onClick={() => onSave(draft)} disabled={!dirty}>
-            Save settings
-          </Button>
-        </SheetFooter>
+        </SheetBody>
+        <SheetFooterActions
+          tertiary={
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setDraft(kb.retrieval)}
+              disabled={!dirty}
+            >
+              Reset
+            </Button>
+          }
+          primary={
+            <Button size="sm" onClick={() => onSave(draft)} disabled={!dirty}>
+              Save settings
+            </Button>
+          }
+        />
       </SheetContent>
     </Sheet>
   )

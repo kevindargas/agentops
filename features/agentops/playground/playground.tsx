@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import dynamic from "next/dynamic"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { cn } from "cn"
@@ -22,48 +23,82 @@ import {
   PromptInputTextarea,
   PromptInputTools,
 } from "@/components/ai-elements/prompt-input"
+import { Section } from "@/components/shared/page-header"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Kbd } from "@/components/ui/kbd"
 import { Label } from "@/components/ui/label"
+import { Skeleton } from "@/components/ui/skeleton"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { modelDisplayName } from "@/features/agentops/format"
+import {
+  promptStore,
+  versionsForAgent,
+} from "@/features/agentops/prompts/prompt-store"
 import { ModelChip } from "@/features/agentops/shared"
-import { deployedAgents, getDeployedAgent } from "@/lib/data"
+import { deployedAgents, getDeployedAgent } from "@/lib/data/agentops"
 import {
   cloneParams,
   configFromSearchParams,
-  diffParams,
   extractVariables,
   getSamplePrompt,
   renderPrompt,
   type PlaygroundConfig,
   type PlaygroundRunRecord,
 } from "@/lib/data/playground"
+import { modelDisplayName } from "@/lib/format"
 import { ColumnBadge, ConfigPanel } from "./config-panel"
 import { MetricsStrip } from "./metrics-strip"
-import { RunTranscript } from "./run-transcript"
+import { diffAllParams, readPenaltyParams } from "./param-fields"
 import { RunsList } from "./runs-list"
 import { useSimulatedRun } from "./use-simulated-run"
+
+/** The transcript pulls the markdown stack; load it on first run only. */
+const RunTranscript = dynamic(
+  () => import("./run-transcript").then((m) => m.RunTranscript),
+  { ssr: false, loading: () => <Skeleton className="min-h-64 rounded-xl" /> }
+)
 
 type Column = "A" | "B"
 
 const MAX_RUNS = 8
 
 /**
+ * Reads the initial configuration from the URL. `pv` is the canonical prompt
+ * version parameter (what share links write); `prompt` is accepted as an
+ * alias so older links from other pages still land on the right version. A
+ * version that does not exist for the agent falls back to the deployed one.
+ */
+function configFromUrl(search: URLSearchParams): PlaygroundConfig {
+  const sp = new URLSearchParams(search.toString())
+  if (!sp.get("pv") && sp.get("prompt")) sp.set("pv", sp.get("prompt") ?? "")
+  const base = configFromSearchParams(sp)
+  const agent = getDeployedAgent(base.agentId)
+  const known = agent
+    ? versionsForAgent(agent.id).some((v) => v.id === base.promptVersion)
+    : false
+  return {
+    ...base,
+    promptVersion: known || !agent ? base.promptVersion : agent.promptVersion,
+    params: readPenaltyParams(sp, base.params),
+  }
+}
+
+/**
  * Playground root. Owns the two configurations (A is always live; B only in
  * compare mode), the prompt + variables, both simulated streams and the
  * in-memory run history. Reads the initial configuration from the URL so
- * share links reproduce a setup exactly.
+ * share links and deep links from other pages reproduce a setup exactly.
  */
 export function Playground() {
   const searchParams = useSearchParams()
   const router = useRouter()
+  // Subscribe so drafts saved from the panel show up in the version select.
+  promptStore.use()
   const [configs, setConfigs] = React.useState<
     Record<Column, PlaygroundConfig>
   >(() => {
-    const a = configFromSearchParams(searchParams)
+    const a = configFromUrl(searchParams)
     return { A: a, B: { ...a, params: cloneParams(a.params) } }
   })
   const [compare, setCompare] = React.useState(false)
@@ -167,59 +202,74 @@ export function Playground() {
     }
   }
 
-  const createExperiment = () => {
-    const d = diffParams(configs.B.params, configs.A.params)
+  const comparisonSummary = () => {
+    const d = diffAllParams(configs.B.params, configs.A.params)
     const what =
       configs.A.modelId !== configs.B.modelId
         ? `${modelDisplayName(configs.A.modelId)} vs ${modelDisplayName(configs.B.modelId)}`
         : d.length
-          ? d.map((x) => x.label.toLowerCase()).join(", ")
+          ? d.map((x) => `${x.label}: ${x.from} vs ${x.to}`).join("; ")
           : "identical configurations"
-    toast.success("Experiment drafted", {
-      description: `${agentA.name}: ${what}. Open it to set traffic split and the primary metric.`,
-      action: {
-        label: "Open experiments",
-        onClick: () => router.push("/agentops/experiments"),
-      },
-    })
+    const results = [runA.result, runB.result].every(Boolean)
+      ? ` Last run: A quality ${runA.result?.metrics.quality} at ${runA.result?.metrics.latencyMs} ms, B quality ${runB.result?.metrics.quality} at ${runB.result?.metrics.latencyMs} ms.`
+      : ""
+    return `${agentA.name} A/B from the Playground. A: ${configs.A.promptVersion} on ${modelDisplayName(configs.A.modelId)}. B: ${configs.B.promptVersion} on ${modelDisplayName(configs.B.modelId)}. Differences: ${what}.${results}`
+  }
+
+  const draftExperiment = async () => {
+    const summary = comparisonSummary()
+    try {
+      await navigator.clipboard.writeText(summary)
+      toast.success("Comparison summary copied", {
+        description:
+          "Paste it into the experiment description. Experiments are created on the Experiments page.",
+        action: {
+          label: "Open experiments",
+          onClick: () => router.push("/agentops/experiments"),
+        },
+      })
+    } catch {
+      toast("Clipboard unavailable", { description: summary })
+    }
   }
 
   return (
     <div className="grid gap-6 xl:grid-cols-[22rem_minmax(0,1fr)]">
       <aside className="flex flex-col gap-3 self-start rounded-xl border bg-card p-4 xl:sticky xl:top-20 xl:max-h-[calc(100vh-6rem)] xl:overflow-y-auto">
-        <div className="flex items-center justify-between gap-2">
-          <h2 className="flex items-center gap-1.5 text-sm font-semibold">
-            <SlidersHorizontalIcon className="size-3.5 text-muted-foreground" />
-            Configuration
-          </h2>
-          {compare && (
-            <ToggleGroup
-              multiple={false}
-              value={[editing]}
-              onValueChange={(v) => v[0] && setEditing(v[0] as Column)}
-              variant="outline"
-              spacing={0}
-              aria-label="Configuration to edit"
-            >
-              {(["A", "B"] as const).map((c) => (
-                <ToggleGroupItem
-                  key={c}
-                  value={c}
-                  size="sm"
-                  className="px-3 font-mono text-xs data-pressed:bg-muted"
-                >
-                  {c}
-                </ToggleGroupItem>
-              ))}
-            </ToggleGroup>
-          )}
-        </div>
-        <ConfigPanel
-          key={editing}
-          label={compare ? editing : undefined}
-          config={configs[editing]}
-          onChange={(next) => updateConfig(editing, next)}
-        />
+        <Section
+          title="Configuration"
+          icon={<SlidersHorizontalIcon />}
+          actions={
+            compare ? (
+              <ToggleGroup
+                multiple={false}
+                value={[editing]}
+                onValueChange={(v) => v[0] && setEditing(v[0] as Column)}
+                variant="outline"
+                spacing={0}
+                aria-label="Configuration to edit"
+              >
+                {(["A", "B"] as const).map((c) => (
+                  <ToggleGroupItem
+                    key={c}
+                    value={c}
+                    size="sm"
+                    className="px-3 font-mono text-xs data-pressed:bg-muted"
+                  >
+                    {c}
+                  </ToggleGroupItem>
+                ))}
+              </ToggleGroup>
+            ) : undefined
+          }
+        >
+          <ConfigPanel
+            key={editing}
+            label={compare ? editing : undefined}
+            config={configs[editing]}
+            onChange={(next) => updateConfig(editing, next)}
+          />
+        </Section>
       </aside>
 
       <div className="flex min-w-0 flex-col gap-4">
@@ -241,8 +291,8 @@ export function Playground() {
           </ToggleGroup>
           <div className="flex items-center gap-2">
             {compare && (
-              <Button variant="outline" size="sm" onClick={createExperiment}>
-                <FlaskConicalIcon /> Create experiment from this
+              <Button variant="outline" size="sm" onClick={draftExperiment}>
+                <FlaskConicalIcon /> Copy comparison for an experiment
               </Button>
             )}
             <Button
@@ -257,7 +307,7 @@ export function Playground() {
 
         <PromptInput
           onSubmit={() => run()}
-          className="rounded-xl shadow-xs transition-shadow focus-within:shadow-sm"
+          className="rounded-xl shadow-hairline transition-shadow focus-within:shadow-raised"
         >
           <PromptInputBody>
             <Label htmlFor="playground-prompt" className="sr-only">
@@ -278,14 +328,14 @@ export function Playground() {
             />
             {varNames.length > 0 && (
               <div className="grid gap-2 border-t px-3 py-2.5 sm:grid-cols-2">
-                <p className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground sm:col-span-2">
+                <p className="flex items-center gap-1.5 text-2xs font-medium text-muted-foreground sm:col-span-2">
                   <BracesIcon className="size-3" /> Variables
                 </p>
                 {varNames.map((name) => (
                   <div key={name} className="flex flex-col gap-1">
                     <Label
                       htmlFor={`var-${name}`}
-                      className="font-mono text-[11px] text-muted-foreground"
+                      className="font-mono text-2xs text-muted-foreground"
                     >
                       {`{{${name}}}`}
                     </Label>
@@ -303,7 +353,7 @@ export function Playground() {
             )}
           </PromptInputBody>
           <PromptInputFooter className="pt-0">
-            <PromptInputTools className="min-w-0 flex-wrap gap-1.5 text-[11px] text-muted-foreground">
+            <PromptInputTools className="min-w-0 flex-wrap gap-1.5 text-2xs text-muted-foreground">
               {compare ? (
                 <>
                   <ColumnBadge label="A" />
@@ -317,7 +367,7 @@ export function Playground() {
                   <ModelChip modelId={configs.A.modelId} className="text-xs" />
                   <Badge
                     variant="outline"
-                    className="h-5 px-1.5 font-mono text-[10px] text-muted-foreground"
+                    className="h-5 px-1.5 font-mono text-3xs text-muted-foreground"
                   >
                     {configs.A.promptVersion}
                   </Badge>
@@ -329,9 +379,17 @@ export function Playground() {
               )}
             </PromptInputTools>
             <div className="flex items-center gap-2">
-              <span className="hidden items-center gap-1 text-[11px] text-muted-foreground sm:flex">
-                <Kbd className="h-4 min-w-4 text-[10px]">↵</Kbd> run
-                <Kbd className="ml-1 h-4 min-w-4 text-[10px]">⇧↵</Kbd> newline
+              <span className="hidden items-center gap-1 text-2xs text-muted-foreground sm:flex">
+                {busy ? (
+                  <>
+                    <Kbd className="h-4 px-1 text-3xs">Esc</Kbd> stop
+                  </>
+                ) : (
+                  <>
+                    <Kbd className="h-4 min-w-4 text-3xs">↵</Kbd> run
+                    <Kbd className="ml-1 h-4 min-w-4 text-3xs">⇧↵</Kbd> newline
+                  </>
+                )}
               </span>
               <PromptInputSubmit
                 status={busy ? "streaming" : undefined}
@@ -363,7 +421,7 @@ export function Playground() {
               const r = col === "A" ? runA : runB
               const o = col === "A" ? runB : runA
               const agent = col === "A" ? agentA : agentB
-              const d = diffParams(cfg.params, other.params)
+              const d = diffAllParams(cfg.params, other.params)
               return (
                 <section
                   key={col}
@@ -378,11 +436,11 @@ export function Playground() {
                     <ModelChip modelId={cfg.modelId} className="text-xs" />
                     <Badge
                       variant="outline"
-                      className="h-5 px-1.5 font-mono text-[10px] text-muted-foreground"
+                      className="h-5 px-1.5 font-mono text-3xs text-muted-foreground"
                     >
                       {cfg.promptVersion}
                     </Badge>
-                    <span className="ml-auto text-[11px] text-muted-foreground tabular-nums">
+                    <span className="ml-auto text-2xs text-muted-foreground tabular-nums">
                       {cfg.modelId !== other.modelId || d.length
                         ? `${d.length + (cfg.modelId !== other.modelId ? 1 : 0)} differ from ${col === "A" ? "B" : "A"}`
                         : `same as ${col === "A" ? "B" : "A"}`}
@@ -423,7 +481,7 @@ export function Playground() {
           </section>
         )}
 
-        <RunsList runs={runs} onRerun={rerun} disabled={busy} />
+        <RunsList runs={runs} max={MAX_RUNS} onRerun={rerun} disabled={busy} />
       </div>
     </div>
   )

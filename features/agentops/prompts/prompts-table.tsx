@@ -12,20 +12,22 @@ import {
   type DataTableFeatures,
   type FacetDef,
 } from "@/components/data-table"
+import { StatCard } from "@/components/shared/stat-card"
+import { StatGrid } from "@/components/shared/stat-grid"
 import { UserChip } from "@/components/shared/user-chip"
-import { deployedAgents, getDeployedAgent } from "@/lib/data"
+import { deployedAgents, getDeployedAgent } from "@/lib/data/agentops"
 import {
   extractVariables,
   latestVersion,
   productionVersion,
   promptLabels,
-  prompts,
   promptTypeLabel,
   type Prompt,
   type PromptLabel,
   type PromptType,
 } from "@/lib/data/prompts"
 import { AgentChip, ModelChip, ScoreBar } from "../shared"
+import { allVersions, awaitingReviewByLabel, promptStore } from "./prompt-store"
 import { LabelBadge, TypeBadge, VersionTag } from "./shared"
 
 const col = createColumnHelper<DataTableFeatures, Prompt>()
@@ -45,7 +47,7 @@ const columns = col.columns([
       <TwoLineCell
         primary={row.original.name}
         secondary={
-          <span className="font-mono text-[11px]">{row.original.slug}</span>
+          <span className="font-mono text-2xs">{row.original.slug}</span>
         }
       />
     ),
@@ -68,7 +70,11 @@ const columns = col.columns([
   col.accessor((p) => latestVersion(p).number, {
     id: "latest",
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Latest" />
+      <DataTableColumnHeader
+        column={column}
+        title="Latest"
+        hint="Newest version number plus every label present on the prompt except archived"
+      />
     ),
     cell: ({ row }) => (
       <span className="flex flex-wrap items-center gap-1">
@@ -87,11 +93,15 @@ const columns = col.columns([
     {
       id: "variables",
       header: ({ column }) => (
-        <DataTableColumnHeader column={column} title="Vars" />
+        <DataTableColumnHeader
+          column={column}
+          title="Variables"
+          hint="Distinct {{variable}} placeholders in the production template"
+        />
       ),
       cell: ({ getValue }) => <NumericCell value={getValue()} muted />,
       meta: {
-        width: "w-16",
+        width: "w-24",
         label: "Variables",
         numeric: true,
         skeleton: "w-6",
@@ -103,11 +113,11 @@ const columns = col.columns([
     header: "Model",
     cell: ({ row }) => {
       const v = productionVersion(row.original)
-      if (!v) return <span className="text-muted-foreground">—</span>
+      if (!v) return <span className="text-muted-foreground">None</span>
       return (
         <span className="flex items-center gap-2">
           <ModelChip modelId={v.modelId} className="text-xs" />
-          <span className="font-mono text-[11px] text-muted-foreground tabular-nums">
+          <span className="font-mono text-2xs text-muted-foreground tabular-nums">
             t={v.params.temperature.toFixed(1)}
           </span>
         </span>
@@ -119,7 +129,11 @@ const columns = col.columns([
   col.accessor((p) => productionVersion(p)?.evalScore ?? 0, {
     id: "eval",
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Eval" />
+      <DataTableColumnHeader
+        column={column}
+        title="Eval"
+        hint="Evaluator composite, 0 to 100, of the production version on the agent's golden set"
+      />
     ),
     cell: ({ getValue }) =>
       getValue() ? (
@@ -174,14 +188,65 @@ const facets: FacetDef<Prompt>[] = [
   },
 ]
 
+/** Stat row for the list page, computed from the shared prompt store. */
+export function PromptsStats() {
+  const prompts = promptStore.use()
+  const versions = allVersions(prompts)
+  const production = versions.filter((v) => v.label === "production")
+  const awaiting = awaitingReviewByLabel(prompts)
+  const awaitingTotal = Object.values(awaiting).reduce((a, b) => a + b, 0)
+  const awaitingHint =
+    awaitingTotal === 0
+      ? "no version has review Pending Approval"
+      : (Object.entries(awaiting) as [PromptLabel, number][])
+          .map(([label, n]) => `${n} ${label}`)
+          .join(" · ") + " with review Pending Approval"
+  const scored = prompts
+    .map((p) => productionVersion(p)?.evalScore ?? null)
+    .filter((s): s is number => s !== null)
+  const avg = scored.length
+    ? scored.reduce((a, b) => a + b, 0) / scored.length
+    : 0
+  const agents = new Set(prompts.map((p) => p.agentId)).size
+
+  return (
+    <StatGrid columns={4}>
+      <StatCard
+        label="Prompts"
+        value={prompts.length}
+        hint={`across ${agents} agents`}
+      />
+      <StatCard
+        label="Versions"
+        value={versions.length}
+        hint={`${production.length} in production`}
+      />
+      <StatCard
+        label="Awaiting review"
+        value={awaitingTotal}
+        hint={awaitingHint}
+      />
+      <StatCard
+        label="Avg eval score"
+        value={avg.toFixed(1)}
+        hint="production versions, golden sets"
+      />
+    </StatGrid>
+  )
+}
+
 export function PromptsTable({
   agentId,
   toolbar,
 }: {
+  /** Pre-selects the Agent facet (from `?agent=`). */
   agentId?: string
   toolbar?: React.ReactNode
 }) {
-  const data = agentId ? prompts.filter((p) => p.agentId === agentId) : prompts
+  const data = promptStore.use()
+  const agentKnown = agentId
+    ? deployedAgents.some((a) => a.id === agentId)
+    : false
   return (
     <DataTable
       columns={columns}
@@ -190,12 +255,14 @@ export function PromptsTable({
       getSearchText={(p) =>
         `${p.name} ${p.slug} ${p.description} ${promptTypeLabel[p.type]} ${getDeployedAgent(p.agentId)?.name ?? ""} ${p.versions.map((v) => v.id).join(" ")}`
       }
-      searchPlaceholder="Search prompts, slugs or version ids…"
-      facets={agentId ? facets.filter((f) => f.id !== "agent") : facets}
+      searchPlaceholder="Search prompts, slugs or version ids"
+      facets={facets}
+      initialFacets={agentKnown && agentId ? { agent: [agentId] } : undefined}
       initialSorting={[{ id: "updatedAt", desc: true }]}
       initialColumnVisibility={{ editor: false }}
       rowHref={(p) => `/agentops/prompts/${p.id}`}
       totalLabel="prompts"
+      caption="Prompt registry: one row per prompt with its latest version, production model and eval score"
       selectionLabel={(n) => (n === 1 ? "prompt" : "prompts")}
       toolbar={toolbar}
       emptyTitle="No prompts yet"

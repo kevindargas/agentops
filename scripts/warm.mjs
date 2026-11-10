@@ -1,36 +1,27 @@
 /**
- * Pre-compiles the routes you are likely to open so `next dev` has them ready.
- * Run it in a second terminal after `pnpm dev` (or `pnpm dev:warm`, which
- * starts both). Turbopack compiles on demand, so the first visit to a route
- * is what feels slow; this moves that cost to the background.
+ * Pre-compiles every route so `next dev` has them ready. Run it in a second
+ * terminal after `pnpm dev` (or `pnpm dev:warm`, which starts both).
+ * Turbopack compiles on demand, so the first visit to a route is what feels
+ * slow; this moves that cost to the background. The route list is derived
+ * from `app/(app)/**\/page.tsx` (see `scripts/warm-routes.mjs`).
  */
+import { fileURLToPath } from "node:url"
+import { dirname, join } from "node:path"
+
+import { collectRoutes, warmRoutes } from "./warm-routes.mjs"
+
 const base = process.env.WARM_BASE ?? "http://localhost:3000"
-const routes = [
-  "/dashboard",
-  "/agentops",
-  "/agentops/agents",
-  "/agentops/agents/agt-it-helpdesk",
-  "/agentops/traces",
-  "/agentops/reviews",
-  "/agentops/drift",
-  "/agentops/experiments",
-  "/agentops/recommendations",
-  "/agentops/semantic-layer",
-  "/ai",
-  "/ai/models",
-  "/itsm/incidents",
-  "/itsm/incidents/INC0010048",
-  "/itsm/changes",
-  "/itsm/changes/calendar",
-  "/itsm/problems",
-  "/itsm/knowledge",
-  "/cmdb",
-  "/itom/health",
-  "/itom/alerts",
-  "/hr/cases",
-  "/employee-center",
-  "/settings",
-]
+const appDir = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "app",
+  "(app)"
+)
+const routes = warmRoutes(appDir)
+const { skipped } = collectRoutes(appDir)
+for (const route of skipped) {
+  console.log(`skip ${route} (no sample id in scripts/warm-routes.mjs)`)
+}
 
 const until = Date.now() + 120_000
 while (Date.now() < until) {
@@ -54,11 +45,11 @@ async function worker() {
         headers: { accept: "text/html" },
       })
       console.log(
-        `${res.status} ${route.padEnd(36)} ${((Date.now() - t0) / 1000).toFixed(1)}s`
+        `${res.status} ${route.padEnd(40)} ${((Date.now() - t0) / 1000).toFixed(1)}s`
       )
     } catch (err) {
       console.log(
-        `ERR ${route.padEnd(36)} ${err instanceof Error ? err.message : err}`
+        `ERR ${route.padEnd(40)} ${err instanceof Error ? err.message : err}`
       )
     }
   }

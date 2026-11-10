@@ -9,7 +9,7 @@ import {
 import { NOW } from "@/lib/data/seed"
 import { formatDateTime } from "@/lib/format"
 
-/** Elapsed share of a window anchored to the demo clock, clamped to 0–100. */
+/** Elapsed share of a window anchored to the demo clock, clamped to 0 to 100. */
 export function elapsedPercent(start: string, end: string, at: Date = NOW) {
   const total = new Date(end).getTime() - new Date(start).getTime()
   if (total <= 0) return 100
@@ -73,7 +73,7 @@ export function SlaProgress({
     progress: "bg-brand",
   }[tone]
   const text = {
-    danger: "text-destructive",
+    danger: "text-danger-text",
     success: "text-success-text",
     warning: "text-warning-text",
     progress: "text-muted-foreground",

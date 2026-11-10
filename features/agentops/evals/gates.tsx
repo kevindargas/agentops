@@ -1,6 +1,5 @@
 "use client"
 
-import * as React from "react"
 import Link from "next/link"
 import { cn } from "cn"
 import {
@@ -14,6 +13,7 @@ import { toast } from "sonner"
 import { DateCell } from "@/components/data-table"
 import { EmptyState } from "@/components/shared/empty-state"
 import { StateBadge } from "@/components/shared/status-badge"
+import { Button } from "@/components/ui/button"
 import {
   Card,
   CardContent,
@@ -24,27 +24,44 @@ import {
 } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
-import { getDeployedAgent } from "@/lib/data"
-import { releaseGates as seed, type ReleaseGate } from "@/lib/data/evals"
+import { getDeployedAgent } from "@/lib/data/agentops"
+import type { ReleaseGate } from "@/lib/data/evals"
 import { AgentChip, ModelChip } from "@/features/agentops/shared"
+import { recordAudit } from "../audit/audit-store"
 import { evalTone, PromptChip } from "./shared"
+import { gateStore } from "./store"
 
 export function ReleaseGates({ agentId }: { agentId?: string }) {
-  const [gates, setGates] = React.useState<ReleaseGate[]>(seed)
+  const gates = gateStore.use()
   const visible = agentId ? gates.filter((g) => g.agentId === agentId) : gates
   const passing = visible.filter((g) => g.status === "Passed").length
   const enforced = visible.filter((g) => g.enforced).length
 
   const toggle = (id: string, on: boolean) => {
-    setGates((prev) =>
-      prev.map((g) => (g.id === id ? { ...g, enforced: on } : g))
-    )
-    const g = gates.find((x) => x.id === id)
-    const name = getDeployedAgent(g?.agentId ?? "")?.name ?? "agent"
+    const g = gateStore.get().find((x) => x.id === id)
+    if (!g) return
+    gateStore.patch(id, { enforced: on })
+    const name = getDeployedAgent(g.agentId)?.name ?? g.agentId
+    const event = recordAudit({
+      action: on ? "release.gate.enforced" : "release.gate.advisory",
+      source: "release",
+      target: {
+        kind: "release-gate",
+        id: g.id,
+        label: `${name} release gate`,
+        href: "/agentops/evals?tab=gates",
+      },
+      summary: on
+        ? `Enforced the release gate for ${name}: promotions block while any rule fails`
+        : `Set the release gate for ${name} to advisory: failing rules are reported, not blocking`,
+      before: g.enforced ? "enforced" : "advisory",
+      after: on ? "enforced" : "advisory",
+      context: { agentId: g.agentId },
+    })
     toast(on ? "Gate enforced" : "Gate set to advisory", {
       description: on
-        ? `Promotions of ${name} are blocked until every rule passes`
-        : `${name} can be promoted with failing rules; results are still reported`,
+        ? `Promotions of ${name} are blocked until every rule passes. Recorded as ${event.id}.`
+        : `${name} can be promoted with failing rules; results are still reported. Recorded as ${event.id}.`,
     })
   }
 
@@ -54,7 +71,24 @@ export function ReleaseGates({ agentId }: { agentId?: string }) {
         size="sm"
         icon={<ShieldCheckIcon />}
         title="No release gates"
-        description="Define the eval rules a candidate must clear before it can be promoted."
+        description="A gate is derived from the agent's latest completed golden-set run. Run an eval for this agent to get one."
+        action={
+          <Button
+            variant="outline"
+            size="sm"
+            render={
+              <Link
+                href={
+                  agentId
+                    ? `/agentops/evals?tab=runs&agent=${agentId}`
+                    : "/agentops/evals?tab=runs"
+                }
+              />
+            }
+          >
+            Open eval runs
+          </Button>
+        }
       />
     )
 
@@ -104,7 +138,7 @@ function GateCard({
         {agent && (
           <CardDescription className="flex flex-wrap items-center gap-1.5">
             <PromptChip version={agent.promptVersion} />
-            <ModelChip modelId={agent.modelId} className="text-[11px]" />
+            <ModelChip modelId={agent.modelId} className="text-2xs" />
             <StateBadge state={agent.environment} size="sm" />
           </CardDescription>
         )}
@@ -128,7 +162,7 @@ function GateCard({
                 />
               )}
               <span className="min-w-0 flex-1 truncate">{r.label}</span>
-              <span className="shrink-0 font-mono text-[11px] text-muted-foreground tabular-nums">
+              <span className="shrink-0 font-mono text-2xs text-muted-foreground tabular-nums">
                 {r.requirement}
               </span>
               <span

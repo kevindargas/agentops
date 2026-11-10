@@ -6,6 +6,7 @@ import { ArrowRightIcon, SparklesIcon } from "lucide-react"
 import { AgentAvatar } from "@/components/ai/agent-card"
 import { useAi } from "@/components/ai/ai-provider"
 import { ProposalCard } from "@/components/ai/proposal-card"
+import { CountPill } from "@/components/shared/count-pill"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -35,9 +36,7 @@ export function AgentProposalsCard() {
             <SparklesIcon className="size-3.5" />
           </span>
           Agent proposals
-          <span className="rounded-full bg-brand px-1.5 py-0.5 text-[10px] font-semibold text-brand-foreground tabular-nums">
-            {proposals.length}
-          </span>
+          <CountPill count={proposals.length} tone="inverse" label="waiting" />
         </CardTitle>
         <CardDescription className="flex flex-wrap items-center gap-x-1.5">
           <span className="inline-flex -space-x-1">
@@ -67,7 +66,7 @@ export function AgentProposalsCard() {
             Review in Assist
           </Button>
           <Button variant="outline" size="sm" render={<Link href="/ai" />}>
-            Control center <ArrowRightIcon />
+            Workflow Automations <ArrowRightIcon />
           </Button>
         </CardAction>
       </CardHeader>

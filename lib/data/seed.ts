@@ -5,6 +5,15 @@
 
 export const NOW = new Date("2026-11-05T14:30:00Z")
 
+/**
+ * The clock every module should read instead of `new Date()`. It returns the
+ * frozen demo clock so server and client renders match; when the template is
+ * wired to real data this is the one place to switch to the wall clock.
+ */
+export function clock(): Date {
+  return new Date(NOW.getTime())
+}
+
 export function createRng(seed: number) {
   let s = seed >>> 0
   return () => {

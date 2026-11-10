@@ -1,13 +1,29 @@
 "use client"
 
+import Link from "next/link"
 import { cn } from "cn"
-import { GitCompareIcon, RocketIcon, Undo2Icon } from "lucide-react"
+import {
+  ArchiveIcon,
+  GitCompareIcon,
+  MoreHorizontalIcon,
+  RocketIcon,
+  SlidersHorizontalIcon,
+  TagIcon,
+  Undo2Icon,
+} from "lucide-react"
 
 import { DateCell } from "@/components/data-table"
 import { EmptyState } from "@/components/shared/empty-state"
 import { StateBadge } from "@/components/shared/status-badge"
 import { UserChip } from "@/components/shared/user-chip"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import type { PromptVersion } from "@/lib/data/prompts"
 import { ModelChip, scoreTone } from "../shared"
 import { LabelBadge, paramsSummary, VersionTag } from "./shared"
@@ -29,18 +45,33 @@ function previousScore(versions: PromptVersion[], idx: number) {
 
 export function VersionsTab({
   versions,
+  agentId,
+  highlightId,
   onPromote,
   onRollback,
+  onStage,
+  onArchive,
   onCompare,
 }: {
   /** Ascending by version number. */
   versions: PromptVersion[]
+  agentId: string
+  /** Version named by `?version=`; its row is emphasised. */
+  highlightId?: string | null
   onPromote: (v: PromptVersion) => void
   onRollback: (v: PromptVersion) => void
+  onStage: (v: PromptVersion) => void
+  onArchive: (v: PromptVersion) => void
   onCompare: (v: PromptVersion) => void
 }) {
   if (versions.length === 0)
-    return <EmptyState size="sm" title="No versions yet" />
+    return (
+      <EmptyState
+        size="sm"
+        title="No versions yet"
+        description="Use New version in the header to draft the first template."
+      />
+    )
 
   const rows = versions
     .map((v, i) => ({ v, prev: previousScore(versions, i) }))
@@ -49,11 +80,12 @@ export function VersionsTab({
   return (
     <div className="overflow-x-auto rounded-lg border">
       <table className="w-full min-w-[56rem] text-sm">
-        <thead className="bg-muted/40 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+        <caption className="sr-only">Prompt versions, newest first</caption>
+        <thead className="bg-muted/40 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
           <tr>
             <th className="px-3 py-2 text-left font-medium">Version</th>
             <th className="px-3 py-2 text-left font-medium">Change</th>
-            <th className="px-3 py-2 text-right font-medium">Eval</th>
+            <th className="px-3 py-2 text-right font-medium">Eval score</th>
             <th className="px-3 py-2 text-left font-medium">Model</th>
             <th className="px-3 py-2 text-right font-medium">Actions</th>
           </tr>
@@ -62,12 +94,15 @@ export function VersionsTab({
           {rows.map(({ v, prev }) => {
             const delta =
               v.evalScore !== null && prev !== null ? v.evalScore - prev : null
+            const highlighted = highlightId === v.id
             return (
               <tr
                 key={v.id}
+                id={`version-${v.id}`}
                 className={cn(
                   "align-top",
-                  v.label === "archived" && "text-muted-foreground"
+                  v.label === "archived" && "text-muted-foreground",
+                  highlighted && "bg-brand/5 ring-1 ring-brand/30 ring-inset"
                 )}
               >
                 <td className="w-44 px-3 py-3">
@@ -78,7 +113,7 @@ export function VersionsTab({
                   {v.review === "Pending Approval" && (
                     <StateBadge state={v.review} size="sm" className="mt-1.5" />
                   )}
-                  <p className="mt-1.5 font-mono text-[11px] text-muted-foreground">
+                  <p className="mt-1.5 font-mono text-2xs text-muted-foreground">
                     {v.id}
                   </p>
                 </td>
@@ -108,7 +143,7 @@ export function VersionsTab({
                       {delta !== null && (
                         <span
                           className={cn(
-                            "block text-[11px]",
+                            "block text-2xs",
                             delta > 0
                               ? "text-success-text"
                               : delta < 0
@@ -116,7 +151,7 @@ export function VersionsTab({
                                 : "text-muted-foreground"
                           )}
                         >
-                          {delta > 0 ? "+" : delta < 0 ? "−" : "±"}
+                          {delta > 0 ? "+" : delta < 0 ? "-" : "±"}
                           {Math.abs(delta).toFixed(1)} vs prev
                         </span>
                       )}
@@ -125,11 +160,11 @@ export function VersionsTab({
                 </td>
                 <td className="w-64 px-3 py-3">
                   <ModelChip modelId={v.modelId} className="text-xs" />
-                  <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+                  <p className="mt-1 font-mono text-2xs text-muted-foreground">
                     {paramsSummary(v.params)}
                   </p>
                 </td>
-                <td className="w-56 px-3 py-3">
+                <td className="w-60 px-3 py-3">
                   <div className="flex justify-end gap-1">
                     <Button
                       variant="outline"
@@ -152,6 +187,43 @@ export function VersionsTab({
                         <RocketIcon /> Promote
                       </Button>
                     )}
+                    <DropdownMenu>
+                      <DropdownMenuTrigger
+                        render={
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            aria-label={`More actions for ${v.id}`}
+                          />
+                        }
+                      >
+                        <MoreHorizontalIcon />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          render={
+                            <Link
+                              href={`/agentops/playground?agent=${agentId}&pv=${v.id}`}
+                            />
+                          }
+                        >
+                          <SlidersHorizontalIcon /> Open in Playground
+                        </DropdownMenuItem>
+                        {v.label === "draft" && (
+                          <DropdownMenuItem onClick={() => onStage(v)}>
+                            <TagIcon /> Mark as staging
+                          </DropdownMenuItem>
+                        )}
+                        {(v.label === "draft" || v.label === "staging") && (
+                          <>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem onClick={() => onArchive(v)}>
+                              <ArchiveIcon /> Archive version
+                            </DropdownMenuItem>
+                          </>
+                        )}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </div>
                 </td>
               </tr>

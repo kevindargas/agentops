@@ -15,6 +15,9 @@
     --color-sidebar-primary: var(--sidebar-primary);
     --color-sidebar-foreground: var(--sidebar-foreground);
     --color-sidebar: var(--sidebar);
+    --color-chart-8: var(--chart-8);
+    --color-chart-7: var(--chart-7);
+    --color-chart-6: var(--chart-6);
     --color-chart-5: var(--chart-5);
     --color-chart-4: var(--chart-4);
     --color-chart-3: var(--chart-3);
@@ -39,6 +42,7 @@
     --color-input: var(--input);
     --color-border: var(--border);
     --color-destructive: var(--destructive);
+    --color-destructive-foreground: var(--destructive-foreground);
     --color-accent-foreground: var(--accent-foreground);
     --color-accent: var(--accent);
     --color-muted-foreground: var(--muted-foreground);
@@ -63,14 +67,19 @@
     --shadow-hairline: var(--shadow-hairline);
     --shadow-raised: var(--shadow-raised);
     --shadow-overlay: var(--shadow-overlay);
+    /* Two steps below text-xs for pills, eyebrows and dense table meta. */
+    --text-2xs: 0.6875rem;
+    --text-2xs--line-height: 1rem;
+    --text-3xs: 0.625rem;
+    --text-3xs--line-height: 0.875rem;
 }
 
 /* ------------------------------------------------------------------ */
 /* Design tokens                                                       */
-/* Neutrals carry a whisper of cool blue (hue ≈ 262, chroma ≤ 0.012)  */
+/* Neutrals carry a whisper of cool blue (hue near 262, chroma <= 0.012) */
 /* so greys read as "paper" rather than "concrete". Light mode keeps   */
 /* cards pure white on a faintly tinted canvas; dark mode layers four  */
-/* surfaces (background → sidebar → card → popover) by lightness.      */
+/* surfaces (background, sidebar, card, popover) by lightness.          */
 /* ------------------------------------------------------------------ */
 :root {
     --background: oklch(0.993 0.0015 262);
@@ -88,6 +97,7 @@
     --accent: oklch(0.955 0.005 262);
     --accent-foreground: oklch(0.215 0.014 265);
     --destructive: oklch(0.577 0.245 27.325);
+    --destructive-foreground: oklch(0.985 0.002 262);
     --border: oklch(0.905 0.006 262);
     --input: oklch(0.89 0.007 262);
     --ring: oklch(0.66 0.02 262);
@@ -96,6 +106,12 @@
     --chart-3: #1baf7a;
     --chart-4: #eda100;
     --chart-5: #e87ba4;
+    /* Slots 6 to 8 extend the categorical order (green, violet, red). The
+       eight-slot sequence passes adjacent-pair colour-vision checks in both
+       modes; never cycle past slot 8, fold extra series into "Other". */
+    --chart-6: #008300;
+    --chart-7: #6250d6;
+    --chart-8: #e34948;
     --success: oklch(0.64 0.17 150);
     --success-foreground: oklch(0.985 0.002 262);
     --success-text: oklch(0.44 0.13 150);
@@ -143,6 +159,7 @@
     --accent: oklch(0.272 0.009 262);
     --accent-foreground: oklch(0.958 0.004 262);
     --destructive: oklch(0.704 0.191 22.216);
+    --destructive-foreground: oklch(0.985 0.002 262);
     --border: oklch(1 0 0 / 10%);
     --input: oklch(1 0 0 / 14%);
     --ring: oklch(0.6 0.015 262);
@@ -151,6 +168,9 @@
     --chart-3: #199e70;
     --chart-4: #c98500;
     --chart-5: #d55181;
+    --chart-6: #008300;
+    --chart-7: #9085e9;
+    --chart-8: #e66767;
     --success: oklch(0.72 0.17 152);
     --success-foreground: oklch(0.198 0.007 262);
     --success-text: oklch(0.78 0.15 152);
@@ -313,12 +333,23 @@ html.theme-transition *::after {
   }
 }
 
-/* Small uppercase label used above titles and section headings. */
+/* Small uppercase label used above titles and section headings. Prefer the
+   <Eyebrow /> component in components/shared/eyebrow.tsx, which applies this. */
 @utility eyebrow {
-  font-size: 0.6875rem;
+  font-size: var(--text-2xs);
   line-height: 1rem;
   font-weight: 600;
   letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+/* Monospace flavour for error and status pages. */
+@utility eyebrow-mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  line-height: 1rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--muted-foreground);
 }

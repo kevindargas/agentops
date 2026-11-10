@@ -1,22 +1,16 @@
 import type { Metadata } from "next"
 import Link from "next/link"
 import {
-  AlertTriangleIcon,
   ArrowRightIcon,
   BellIcon,
   BotIcon,
-  CheckCircle2Icon,
   ChevronRightIcon,
   ClipboardCheckIcon,
   ClockIcon,
-  CoinsIcon,
-  FlaskConicalIcon,
   GitBranchIcon,
   InboxIcon,
   PackageIcon,
   RadioIcon,
-  ShieldCheckIcon,
-  TimerIcon,
   WavesIcon,
 } from "lucide-react"
 
@@ -29,32 +23,26 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty"
 import { ChartCard } from "@/components/charts/chart-card"
+import { CHART_HEIGHT } from "@/components/charts/chart-primitives"
 import { HorizontalBarChart } from "@/components/charts/horizontal-bar-chart"
 import { IncidentTrendChart } from "@/components/charts/incident-trend-chart"
 import { Sparkline } from "@/components/charts/sparkline"
+import { EmptyState } from "@/components/shared/empty-state"
 import { PageHeader } from "@/components/shared/page-header"
 import { StatCard } from "@/components/shared/stat-card"
+import { StatGrid } from "@/components/shared/stat-grid"
 import { PriorityBadge, StateBadge } from "@/components/shared/status-badge"
 import { UserChip } from "@/components/shared/user-chip"
-import { fmtCost } from "@/features/agentops/format"
 import { AgentProposalsCard } from "@/features/ai/agent-proposals-card"
 import {
   FleetTrafficChart,
   SpendByAgentChart,
 } from "@/features/workspace/fleet-charts"
-import { priorityLabels } from "@/lib/constants"
+import { priorityLabels, slaComplianceTarget } from "@/lib/constants"
 import {
   agentTraces,
   alerts,
-  approvals,
   changes,
   createRng,
   daysAgo,
@@ -67,13 +55,16 @@ import {
   getGroup,
   incidents,
   modelRecommendations,
+  pendingApprovalCount,
   requests,
   reviewItems,
   serviceHealth,
   NOW,
 } from "@/lib/data"
+import { openIncidentDelta, slaComplianceDelta } from "@/lib/data/metrics"
 import { currentUser } from "@/lib/data/users"
 import {
+  formatCost,
   formatDateTime,
   formatNumber,
   formatPercent,
@@ -95,19 +86,31 @@ function buildTrend() {
   })
 }
 
-/** 14-point KPI sparklines, deterministic so SSR and CSR agree. */
-function buildSparks() {
+/**
+ * 14-point KPI sparklines, deterministic so SSR and CSR agree. Each walk is
+ * anchored so its last point equals the figure shown beside it.
+ */
+function buildSparks(openNow: number, slaNow: number) {
   const rng = createRng(1106)
-  const walk = (start: number, drift: number, noise: number) => {
-    let v = start
-    return Array.from({ length: 14 }, () => {
-      v = v + drift + (rng() - 0.5) * noise
-      return Math.round(v * 10) / 10
-    })
+  const walk = (end: number, drift: number, noise: number, digits = 1) => {
+    const steps = Array.from(
+      { length: 13 },
+      () => drift + (rng() - 0.5) * noise
+    )
+    const total = steps.reduce((a, b) => a + b, 0)
+    let v = end - total
+    const factor = 10 ** digits
+    const points = [Math.round(v * factor) / factor]
+    for (const step of steps) {
+      v += step
+      points.push(Math.round(v * factor) / factor)
+    }
+    points[points.length - 1] = end
+    return points
   }
   return {
-    open: walk(31, -0.4, 4),
-    sla: walk(93.2, 0.12, 0.8),
+    open: walk(openNow, -0.4, 4, 0),
+    sla: walk(slaNow, 0.12, 0.8),
   }
 }
 
@@ -163,13 +166,13 @@ function ListEmpty({
   description?: string
 }) {
   return (
-    <Empty className="border py-8">
-      <EmptyHeader>
-        <EmptyMedia variant="icon">{icon}</EmptyMedia>
-        <EmptyTitle>{title}</EmptyTitle>
-        {description && <EmptyDescription>{description}</EmptyDescription>}
-      </EmptyHeader>
-    </Empty>
+    <EmptyState
+      size="sm"
+      bare
+      icon={icon}
+      title={title}
+      description={description}
+    />
   )
 }
 
@@ -268,8 +271,11 @@ export default function DashboardPage() {
   const myWork = [
     ...open.filter((i) => i.assignedToId === currentUser.id),
   ].slice(0, 5)
+  const slaPct = Math.round((slaMet / Math.max(1, slaTotal)) * 1000) / 10
   const trend = buildTrend()
-  const sparks = buildSparks()
+  const sparks = buildSparks(open.length, slaPct)
+  const incidentDelta = openIncidentDelta(14)
+  const slaDelta = slaComplianceDelta(14)
   const netBacklog = trend
     .slice(-7)
     .reduce((acc, d) => acc + d.opened - d.resolved, 0)
@@ -278,11 +284,9 @@ export default function DashboardPage() {
   return (
     <>
       <PageHeader
-        title={
-          <span className="flex flex-wrap items-baseline gap-x-3">
-            {greeting(NOW)}, {currentUser.name.split(" ")[0]}
-          </span>
-        }
+        nav="/dashboard"
+        size="lg"
+        title={`${greeting(NOW)}, ${currentUser.name.split(" ")[0]}`}
         description={
           <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span>
@@ -321,10 +325,10 @@ export default function DashboardPage() {
         actions={
           <>
             <Button variant="outline" render={<Link href="/agentops" />}>
-              Fleet overview
+              Fleet Overview
             </Button>
             <Button render={<Link href="/agentops/reviews" />}>
-              <ClipboardCheckIcon /> Review queue
+              <ClipboardCheckIcon /> Review Queue
             </Button>
           </>
         }
@@ -350,7 +354,7 @@ export default function DashboardPage() {
           </span>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <p className="text-sm font-semibold text-destructive">
+              <p className="text-sm font-semibold text-danger-text">
                 {majors.length === 1
                   ? "Major incident in progress"
                   : `${majors.length} major incidents in progress`}
@@ -360,12 +364,12 @@ export default function DashboardPage() {
             </div>
             <p className="mt-0.5 truncate text-sm">
               <span className="font-medium tabular-nums">{lead.number}</span>{" "}
-              <span className="text-muted-foreground">—</span>{" "}
+              <span className="text-muted-foreground">·</span>{" "}
               {lead.shortDescription}
             </p>
             <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
               <span className="inline-flex items-center gap-1 tabular-nums">
-                <ClockIcon className="size-3" /> Opened {timeAgo(lead.opened)}
+                <ClockIcon className="size-3.5" /> Opened {timeAgo(lead.opened)}
               </span>
               {leadService && <span>Affects {leadService.name}</span>}
               <span>
@@ -373,7 +377,7 @@ export default function DashboardPage() {
               </span>
               {majors.length > 1 && (
                 <Link
-                  href="/itsm/incidents?major=1"
+                  href="/itsm/incidents?view=major"
                   className="underline-offset-4 hover:underline"
                 >
                   +{majors.length - 1} more
@@ -390,7 +394,6 @@ export default function DashboardPage() {
               View incident
             </Button>
             <Button
-              variant="destructive"
               size="sm"
               render={<Link href={`/itsm/incidents/${lead.number}`} />}
             >
@@ -401,12 +404,11 @@ export default function DashboardPage() {
       )}
 
       {/* ---- Agent-ops signals ------------------------------------------- */}
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+      <StatGrid columns={5}>
         <StatCard
           label="Fleet health"
           value={`${live.length - unhealthy.length}/${live.length}`}
           unit="healthy"
-          icon={<BotIcon />}
           href="/agentops/agents"
           delta={qualityDelta}
           deltaUnit="pt"
@@ -421,8 +423,7 @@ export default function DashboardPage() {
         </StatCard>
         <StatCard
           label="Spend today"
-          value={fmtCost(spendToday, 0)}
-          icon={<CoinsIcon />}
+          value={formatCost(spendToday, 0)}
           href="/agentops/recommendations"
           delta={spendDelta}
           upIsGood={false}
@@ -438,7 +439,6 @@ export default function DashboardPage() {
         <StatCard
           label="Review queue"
           value={pendingReviews.length}
-          icon={<ClipboardCheckIcon />}
           href="/agentops/reviews"
           hint={`${urgentReviews} high priority · ${pendingReviews.filter((r) => r.assignedToId === currentUser.id).length} assigned to you`}
         >
@@ -451,7 +451,6 @@ export default function DashboardPage() {
         <StatCard
           label="Open drift signals"
           value={openDrift.length}
-          icon={<WavesIcon />}
           href="/agentops/drift"
           upIsGood={false}
           hint={`${criticalDrift} critical · ${openDrift.filter((d) => d.state === "Acknowledged").length} acknowledged`}
@@ -459,7 +458,6 @@ export default function DashboardPage() {
         <StatCard
           label="Failing evals (24h)"
           value={failingEvals.length}
-          icon={<FlaskConicalIcon />}
           href="/agentops/traces?status=Failed"
           upIsGood={false}
           hint={
@@ -474,7 +472,7 @@ export default function DashboardPage() {
             className="h-9 w-full"
           />
         </StatCard>
-      </div>
+      </StatGrid>
 
       <div className="grid gap-4 xl:grid-cols-3">
         <ChartCard
@@ -489,7 +487,7 @@ export default function DashboardPage() {
               />
               {qualityDelta >= 0
                 ? `Quality held at ${avg(last7, "quality").toFixed(1)} this week`
-                : `Quality slipped ${Math.abs(qualityDelta).toFixed(1)} pts this week — ${openDrift[0] ? `${openDrift[0].metric} on ${getDeployedAgent(openDrift[0].agentId)?.name}` : "see drift signals"}`}
+                : `Quality slipped ${Math.abs(qualityDelta).toFixed(1)} pts this week: ${openDrift[0] ? `${openDrift[0].metric} on ${getDeployedAgent(openDrift[0].agentId)?.name}` : "see drift signals"}`}
             </span>
           }
         >
@@ -651,14 +649,14 @@ export default function DashboardPage() {
       <AgentProposalsCard />
 
       {/* ---- Service management ------------------------------------------ */}
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <StatGrid columns={4}>
         <StatCard
           label="Open incidents"
           value={open.length}
-          delta={-8}
+          delta={incidentDelta.delta}
+          deltaUnit=""
           upIsGood={false}
-          icon={<AlertTriangleIcon />}
-          deltaLabel="vs last 14 days"
+          deltaLabel="vs 14 days ago"
           href="/itsm/incidents"
           hint={`${majors.length} major · ${highPriority} high priority`}
         >
@@ -670,34 +668,33 @@ export default function DashboardPage() {
         </StatCard>
         <StatCard
           label="SLA compliance"
-          value={formatPercent((slaMet / Math.max(1, slaTotal)) * 100)}
-          delta={2.1}
-          icon={<TimerIcon />}
+          value={formatPercent(slaPct)}
+          delta={slaDelta.delta}
+          deltaUnit="pt"
+          deltaLabel="vs previous 14 days"
           hint={`${breached} open incident${breached === 1 ? "" : "s"} already breached`}
         >
           <Sparkline
             data={sparks.sla}
             color="var(--chart-1)"
             className="h-9 w-full"
-            baseline={95}
+            baseline={slaComplianceTarget}
           />
         </StatCard>
         <StatCard
           label="Service health"
           value={`${serviceHealth.length - degraded}/${serviceHealth.length}`}
           unit="healthy"
-          icon={<CheckCircle2Icon />}
           href="/itom/health"
           hint={`${openAlerts.length} open alert${openAlerts.length === 1 ? "" : "s"}`}
         />
         <StatCard
           label="Pending approvals"
-          value={approvals.length}
-          icon={<ShieldCheckIcon />}
+          value={pendingApprovalCount()}
           href="/approvals"
           hint="Changes and requests waiting on a decision"
         />
-      </div>
+      </StatGrid>
 
       <div className="grid gap-4 xl:grid-cols-3">
         <ChartCard
@@ -716,7 +713,7 @@ export default function DashboardPage() {
             </span>
           }
         >
-          <IncidentTrendChart data={trend} height={248} />
+          <IncidentTrendChart data={trend} height={CHART_HEIGHT.md} />
         </ChartCard>
         <ChartCard
           title="Open by priority"
@@ -726,7 +723,7 @@ export default function DashboardPage() {
           <HorizontalBarChart
             data={byPriority}
             label="Incidents"
-            height={200}
+            height={CHART_HEIGHT.sm}
             labelWidth={110}
           />
         </ChartCard>

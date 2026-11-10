@@ -205,6 +205,42 @@ export const frameworks: FrameworkDef[] = [
       },
     ],
   },
+  {
+    id: "iso-42001",
+    name: "ISO/IEC 42001:2023 AI management system: Annex A controls",
+    short: "ISO/IEC 42001",
+    url: "https://www.iso.org/standard/42001",
+    items: [
+      { id: "A.2", title: "Policies related to AI" },
+      {
+        id: "A.3",
+        title: "Internal organization (roles, responsibilities, concerns)",
+      },
+      { id: "A.4", title: "Resources for AI systems (data, tooling, people)" },
+      { id: "A.5", title: "Assessing impacts of AI systems" },
+      {
+        id: "A.6",
+        title:
+          "AI system life cycle (requirements, verification, deployment, operation)",
+      },
+      {
+        id: "A.7",
+        title: "Data for AI systems (provenance, quality, preparation)",
+      },
+      {
+        id: "A.8",
+        title: "Information for interested parties (documentation, incidents)",
+      },
+      {
+        id: "A.9",
+        title: "Use of AI systems (responsible use, intended use, objectives)",
+      },
+      {
+        id: "A.10",
+        title: "Third-party and customer relationships (suppliers)",
+      },
+    ],
+  },
 ]
 
 export const frameworkKey: Record<FrameworkId, keyof FrameworkRefs> = {
@@ -212,6 +248,7 @@ export const frameworkKey: Record<FrameworkId, keyof FrameworkRefs> = {
   nist: "nist",
   "eu-ai-act": "euAiAct",
   otel: "otel",
+  "iso-42001": "iso42001",
 }
 
 export function getFramework(id: FrameworkId) {

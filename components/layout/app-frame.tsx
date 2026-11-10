@@ -5,8 +5,10 @@ import { MotionConfig } from "motion/react"
 
 import { useCustomizer } from "@/components/theme/customizer-provider"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
+import type { NavCounts } from "@/config/nav"
 import { AppSidebar } from "./app-sidebar"
 import { CommandMenu } from "./command-menu"
+import type { SearchEntry } from "./search-index"
 import { SiteHeader } from "./site-header"
 
 /**
@@ -22,9 +24,13 @@ const AssistantPanel = dynamic(
 export function AppFrame({
   children,
   defaultSidebarOpen = true,
+  navCounts,
+  searchIndex,
 }: {
   children: React.ReactNode
   defaultSidebarOpen?: boolean
+  navCounts?: NavCounts
+  searchIndex?: SearchEntry[]
 }) {
   const { settings } = useCustomizer()
   return (
@@ -45,7 +51,7 @@ export function AppFrame({
         >
           Skip to content
         </a>
-        <AppSidebar variant={settings.sidebar} />
+        <AppSidebar variant={settings.sidebar} navCounts={navCounts} />
         <SidebarInset className="min-w-0">
           <SiteHeader />
           <div
@@ -57,7 +63,7 @@ export function AppFrame({
           </div>
         </SidebarInset>
         <AssistantPanel />
-        <CommandMenu />
+        <CommandMenu searchIndex={searchIndex} navCounts={navCounts} />
       </SidebarProvider>
     </MotionConfig>
   )

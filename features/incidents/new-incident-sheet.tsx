@@ -1,7 +1,8 @@
 "use client"
 
 import * as React from "react"
-import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import { useSearchParams } from "next/navigation"
+import { cn } from "cn"
 import { PlusIcon, SparklesIcon } from "lucide-react"
 import { toast } from "sonner"
 
@@ -15,6 +16,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import { setQueryParam } from "@/hooks/use-query-param"
 import { Button } from "@/components/ui/button"
 import {
   Field,
@@ -36,11 +38,15 @@ import {
   Sheet,
   SheetContent,
   SheetDescription,
-  SheetFooter,
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
 import { Textarea } from "@/components/ui/textarea"
+import {
+  SheetBody,
+  SheetFooterActions,
+  sheetWidths,
+} from "@/components/shared/sheet-frame"
 import { PriorityBadge } from "@/components/shared/status-badge"
 import {
   calculatePriority,
@@ -50,8 +56,11 @@ import {
   slaTargetHours,
   urgencyLabels,
 } from "@/lib/constants"
-import { configurationItems, groups, users } from "@/lib/data"
-import type { Impact, Urgency } from "@/lib/types"
+import { configurationItems } from "@/lib/data/cmdb"
+import { NOW } from "@/lib/data/seed"
+import { currentUser, groups, users } from "@/lib/data/users"
+import type { Impact, Incident, Urgency } from "@/lib/types"
+import { incidentsStore, nextIncidentNumber } from "./incidents-store"
 
 const channels = {
   "Self-service": "Self-service",
@@ -61,11 +70,13 @@ const channels = {
   "Walk-in": "Walk-in",
 } as const
 
-/** Opens automatically when the URL contains ?new=1 (used by quick-create). */
+/**
+ * Create sheet for incidents. Opens automatically when the URL contains
+ * `?new=1` (quick create and the command menu link there) and appends the new
+ * record to `incidentsStore`, so it appears at the top of the list.
+ */
 export function NewIncidentSheet() {
   const params = useSearchParams()
-  const router = useRouter()
-  const pathname = usePathname()
   // Opens from ?new=1 until the user closes it; the button opens it manually.
   const [openState, setOpenState] = React.useState<boolean | null>(null)
   const open = openState ?? params.get("new") === "1"
@@ -86,35 +97,64 @@ export function NewIncidentSheet() {
     setDirty(false)
   }
 
+  function leave() {
+    setOpen(false)
+    reset()
+    if (params.get("new")) setQueryParam("new", null)
+  }
+
   function close(next: boolean) {
     if (!next && dirty) {
       setDiscardOpen(true)
       return
     }
-    setOpen(next)
-    if (!next) {
-      reset()
-      if (params.get("new")) router.replace(pathname)
-    }
+    if (next) setOpen(true)
+    else leave()
   }
 
   function discard() {
     setDiscardOpen(false)
-    setOpen(false)
-    reset()
-    if (params.get("new")) router.replace(pathname)
+    leave()
   }
 
   function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
     const data = new FormData(e.currentTarget)
-    toast.success("Incident INC0010079 created", {
-      description: `P${priority} · ${String(data.get("shortDescription") ?? "")}`,
+    const number = nextIncidentNumber()
+    const subcategory =
+      String(data.get("subcategory") ?? "") || incidentCategories[category][0]
+    const ciId = String(data.get("ci") ?? "")
+    const now = NOW.toISOString()
+    const incident: Incident = {
+      number,
+      shortDescription: shortDescription.trim(),
+      description: String(data.get("description") ?? "").trim(),
+      callerId: String(data.get("caller") ?? currentUser.id),
+      category,
+      subcategory,
+      impact,
+      urgency,
+      priority,
+      state: "New",
+      assignmentGroupId: String(data.get("group") ?? "g-sd"),
+      ciId: ciId || undefined,
+      channel: (String(data.get("channel")) ||
+        "Self-service") as Incident["channel"],
+      opened: now,
+      updated: now,
+      slaDue: new Date(
+        NOW.getTime() + slaTargetHours[priority] * 3_600_000
+      ).toISOString(),
+      slaBreached: false,
+      majorIncident: false,
+      reopenCount: 0,
+    }
+    incidentsStore.add(incident)
+    toast.success(`Incident ${number} created`, {
+      description: `P${priority} · ${incident.shortDescription}`,
     })
     setDirty(false)
-    setOpen(false)
-    reset()
-    if (params.get("new")) router.replace(pathname)
+    leave()
   }
 
   return (
@@ -122,20 +162,22 @@ export function NewIncidentSheet() {
       <Button onClick={() => setOpen(true)}>
         <PlusIcon /> New incident
       </Button>
-      <SheetContent className="flex w-full flex-col gap-0 p-0 sm:max-w-xl">
+      <SheetContent
+        className={cn(sheetWidths.editor, "flex flex-col gap-0 p-0")}
+      >
         <form
           onSubmit={submit}
           onChange={() => setDirty(true)}
-          className="flex h-full flex-col"
+          className="flex h-full min-h-0 flex-col"
         >
-          <SheetHeader className="border-b">
+          <SheetHeader className="border-b px-6 py-5">
             <SheetTitle>New incident</SheetTitle>
             <SheetDescription>
               Capture what is broken, who is affected and how urgently it needs
               attention.
             </SheetDescription>
           </SheetHeader>
-          <div className="flex-1 overflow-y-auto p-4">
+          <SheetBody>
             <FieldGroup className="gap-6">
               <FieldSet>
                 <FieldLegend variant="label">Who is affected</FieldLegend>
@@ -144,7 +186,7 @@ export function NewIncidentSheet() {
                     <FieldLabel htmlFor="caller">Caller</FieldLabel>
                     <Select
                       name="caller"
-                      defaultValue={users[0].id}
+                      defaultValue={currentUser.id}
                       items={users.map((u) => ({ value: u.id, label: u.name }))}
                     >
                       <SelectTrigger id="caller" className="w-full">
@@ -224,7 +266,7 @@ export function NewIncidentSheet() {
                   </FieldDescription>
                 </Field>
                 <Field>
-                  <FieldLabel htmlFor="ci">Configuration item</FieldLabel>
+                  <FieldLabel htmlFor="ci">Affected service</FieldLabel>
                   <Select
                     name="ci"
                     items={configurationItems.map((ci) => ({
@@ -244,8 +286,8 @@ export function NewIncidentSheet() {
                     </SelectContent>
                   </Select>
                   <FieldDescription>
-                    Optional — links the incident to monitoring alerts and the
-                    dependency map.
+                    Optional. Links the incident to monitoring alerts and
+                    Service Health.
                   </FieldDescription>
                 </Field>
               </FieldSet>
@@ -274,6 +316,7 @@ export function NewIncidentSheet() {
                   <Field>
                     <FieldLabel htmlFor="subcategory">Subcategory</FieldLabel>
                     <Select
+                      name="subcategory"
                       defaultValue={incidentCategories[category][0]}
                       key={category}
                     >
@@ -386,29 +429,25 @@ export function NewIncidentSheet() {
                     </SelectContent>
                   </Select>
                   <FieldDescription>
-                    Assignment rules may re-route based on category and CI.
+                    Assignment rules may re-route based on category and affected
+                    service.
                   </FieldDescription>
                 </Field>
               </FieldSet>
             </FieldGroup>
-          </div>
-          <SheetFooter className="flex-row items-center justify-between border-t">
-            <span className="text-xs text-muted-foreground">
-              {dirty ? "Unsaved draft" : "Nothing entered yet"}
-            </span>
-            <div className="flex gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => close(false)}
-              >
-                Cancel
-              </Button>
+          </SheetBody>
+          <SheetFooterActions
+            tertiary={
+              <span className="text-xs text-muted-foreground">
+                {dirty ? "Unsaved draft" : "Nothing entered yet"}
+              </span>
+            }
+            primary={
               <Button type="submit">
                 <PlusIcon /> Create incident
               </Button>
-            </div>
-          </SheetFooter>
+            }
+          />
         </form>
       </SheetContent>
 

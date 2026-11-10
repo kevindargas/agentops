@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { useRouter, useSearchParams } from "next/navigation"
+import { useSearchParams } from "next/navigation"
 import { createColumnHelper } from "@tanstack/react-table"
 import { cn } from "cn"
 import {
@@ -23,12 +23,23 @@ import {
   type DataTableFeatures,
   type FacetDef,
 } from "@/components/data-table"
+import { setQueryParam } from "@/hooks/use-query-param"
 import { CopyButton } from "@/components/shared/copy-button"
+import { MetricTile } from "@/components/shared/metric-tile"
+import {
+  SheetBody,
+  SheetFooterActions,
+  sheetWidths,
+} from "@/components/shared/sheet-frame"
+import { StatCard } from "@/components/shared/stat-card"
+import { StatGrid } from "@/components/shared/stat-grid"
 import { StateBadge } from "@/components/shared/status-badge"
 import { UserChip } from "@/components/shared/user-chip"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import {
   Sheet,
   SheetContent,
@@ -36,12 +47,18 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
-import { semanticEntities as seed } from "@/lib/data"
+import { Textarea } from "@/components/ui/textarea"
+import { semanticEntities as seed } from "@/lib/data/agentops"
+import { clock } from "@/lib/data/seed"
+import { currentUser } from "@/lib/data/users"
 import { formatNumber } from "@/lib/format"
-import type { SemanticEntity, SemanticKind } from "@/lib/types"
+import type { SemanticDomain, SemanticEntity, SemanticKind } from "@/lib/types"
 import { AgentChip } from "./shared"
+import { semanticStore } from "./stores"
 
 const col = createColumnHelper<DataTableFeatures, SemanticEntity>()
+const kinds: SemanticKind[] = ["metric", "dimension", "entity", "glossary"]
+const domains = [...new Set(seed.map((s) => s.domain))].sort()
 const kindTone: Record<SemanticKind, string> = {
   metric: "border-brand/30 bg-brand/10 text-brand",
   dimension: "border-chart-4/30 bg-chart-4/15 text-chart-4",
@@ -54,7 +71,7 @@ export function KindBadge({ kind }: { kind: SemanticKind }) {
     <Badge
       variant="outline"
       className={cn(
-        "h-5 px-1.5 text-[11px] font-medium capitalize",
+        "h-5 px-1.5 text-2xs font-medium capitalize",
         kindTone[kind]
       )}
     >
@@ -114,7 +131,11 @@ const columns = col.columns([
   col.accessor((r) => r.usedByAgentIds.length, {
     id: "agents",
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Agents" />
+      <DataTableColumnHeader
+        column={column}
+        title="Agents"
+        hint="Agents allowed to resolve user phrases to this definition."
+      />
     ),
     cell: ({ getValue }) => (
       <NumericCell value={getValue()} muted={getValue() === 0} />
@@ -163,7 +184,7 @@ const facets: FacetDef<SemanticEntity>[] = [
   {
     id: "kind",
     title: "Kind",
-    options: ["metric", "dimension", "entity", "glossary"].map((v) => ({
+    options: kinds.map((v) => ({
       value: v,
       label: v.charAt(0).toUpperCase() + v.slice(1),
     })),
@@ -172,9 +193,7 @@ const facets: FacetDef<SemanticEntity>[] = [
   {
     id: "domain",
     title: "Domain",
-    options: [...new Set(seed.map((s) => s.domain))]
-      .sort()
-      .map((v) => ({ value: v, label: v })),
+    options: domains.map((v) => ({ value: v, label: v })),
     getValue: (r) => r.domain,
   },
   {
@@ -197,23 +216,53 @@ const facets: FacetDef<SemanticEntity>[] = [
   },
 ]
 
+/** Stat row for the Semantic Layer page, read from the same store as the table. */
+export function SemanticStats() {
+  const items = semanticStore.use()
+  const verified = items.filter((s) => s.status === "Verified").length
+  const issues = items.reduce((n, s) => n + s.issues.length, 0)
+  const draftInUse = items.filter(
+    (s) => s.status !== "Verified" && s.usedByAgentIds.length > 0
+  ).length
+  return (
+    <StatGrid columns={4}>
+      <StatCard
+        label="Definitions"
+        value={items.length}
+        hint={`${verified} verified`}
+      />
+      <StatCard
+        label="Lint issues"
+        value={issues}
+        upIsGood={false}
+        hint="Stale, ambiguous or unowned"
+      />
+      <StatCard
+        label="Unverified in use"
+        value={draftInUse}
+        upIsGood={false}
+        hint="Referenced by agents"
+      />
+      <StatCard
+        label="Queries · 30d"
+        value={formatNumber(
+          items.reduce((n, s) => n + s.queries30d, 0),
+          true
+        )}
+        hint="Resolutions through the semantic-layer server"
+      />
+    </StatGrid>
+  )
+}
+
 export function SemanticLayer() {
-  const router = useRouter()
   const params = useSearchParams()
-  const [items, setItems] = React.useState<SemanticEntity[]>(seed)
+  const items = semanticStore.use()
+  const [creating, setCreating] = React.useState(false)
   const openId = params.get("entity")
   const open = items.find((s) => s.id === openId) ?? null
 
-  const setOpen = (id: string | null) => {
-    const next = new URLSearchParams(params.toString())
-    if (id) next.set("entity", id)
-    else next.delete("entity")
-    router.replace(`/agentops/semantic-layer${next.size ? `?${next}` : ""}`, {
-      scroll: false,
-    })
-  }
-  const patch = (id: string, p: Partial<SemanticEntity>) =>
-    setItems((prev) => prev.map((s) => (s.id === id ? { ...s, ...p } : s)))
+  const setOpen = (id: string | null) => setQueryParam("entity", id)
 
   return (
     <>
@@ -230,38 +279,225 @@ export function SemanticLayer() {
         initialColumnVisibility={{ synonyms: false, ownerId: false }}
         onRowClick={(r) => setOpen(r.id)}
         totalLabel="definitions"
+        caption="Semantic layer definitions"
         selectionLabel={(n) => (n === 1 ? "definition" : "definitions")}
         toolbar={
-          <Button
-            size="sm"
-            onClick={() => toast("New definition editor opened")}
-          >
+          <Button size="sm" onClick={() => setCreating(true)}>
             <PlusIcon /> New definition
           </Button>
         }
       />
-      <EntitySheet
-        entity={open}
-        onClose={() => setOpen(null)}
-        onPatch={patch}
+      <EntitySheet entity={open} onClose={() => setOpen(null)} />
+      <NewDefinitionSheet
+        open={creating}
+        onOpenChange={setCreating}
+        onCreated={(id) => setOpen(id)}
       />
     </>
+  )
+}
+
+const slug = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "")
+
+function NewDefinitionSheet({
+  open,
+  onOpenChange,
+  onCreated,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onCreated: (id: string) => void
+}) {
+  const [name, setName] = React.useState("")
+  const [kind, setKind] = React.useState<SemanticKind>("metric")
+  const [domain, setDomain] = React.useState<SemanticDomain>(domains[0])
+  const [definition, setDefinition] = React.useState("")
+  const [formula, setFormula] = React.useState("")
+  const valid = name.trim().length > 1 && definition.trim().length > 10
+
+  const create = () => {
+    const id = `sem-${slug(name)}`
+    if (semanticStore.get().some((s) => s.id === id)) {
+      toast.error("A definition with this name already exists")
+      return
+    }
+    const entity: SemanticEntity = {
+      id,
+      name: name.trim(),
+      kind,
+      domain,
+      definition: definition.trim(),
+      formula: kind === "metric" && formula.trim() ? formula.trim() : undefined,
+      sources: [],
+      synonyms: [],
+      ownerId: currentUser.id,
+      status: "Draft",
+      usedByAgentIds: [],
+      queries30d: 0,
+      issues: ["No owner sign-off"],
+    }
+    semanticStore.add(entity, "start")
+    onOpenChange(false)
+    setName("")
+    setDefinition("")
+    setFormula("")
+    toast.success(`${entity.name} created as a draft`, {
+      description: "Add sources and synonyms, then mark it verified.",
+    })
+    onCreated(id)
+  }
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent
+        className={cn(sheetWidths.detail, "flex flex-col gap-0 p-0")}
+      >
+        <SheetHeader className="border-b px-6 py-5">
+          <SheetTitle>New definition</SheetTitle>
+          <SheetDescription>
+            Starts as a Draft owned by you. Agents cannot resolve to it until it
+            is verified and added to their allowlist.
+          </SheetDescription>
+        </SheetHeader>
+        <SheetBody>
+          <form
+            id="new-definition"
+            className="flex flex-col gap-5"
+            onSubmit={(e) => {
+              e.preventDefault()
+              if (valid) create()
+            }}
+          >
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="sem-name">Name</Label>
+              <Input
+                id="sem-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="First response time"
+                required
+              />
+              <p className="text-xs text-muted-foreground">
+                Id becomes{" "}
+                <span className="font-mono">sem-{slug(name) || "name"}</span>
+              </p>
+            </div>
+            <fieldset className="flex flex-col gap-2">
+              <legend className="text-sm font-medium">Kind</legend>
+              <RadioGroup
+                value={kind}
+                onValueChange={(v) => setKind(v as SemanticKind)}
+                className="grid grid-cols-2 gap-2 sm:grid-cols-4"
+                aria-label="Kind"
+              >
+                {kinds.map((k) => (
+                  <Label
+                    key={k}
+                    htmlFor={`kind-${k}`}
+                    className="flex cursor-pointer items-center gap-2 rounded-lg border p-2.5 text-sm capitalize has-data-checked:border-ring has-data-checked:bg-muted/40"
+                  >
+                    <RadioGroupItem id={`kind-${k}`} value={k} />
+                    {k}
+                  </Label>
+                ))}
+              </RadioGroup>
+            </fieldset>
+            <fieldset className="flex flex-col gap-2">
+              <legend className="text-sm font-medium">Domain</legend>
+              <RadioGroup
+                value={domain}
+                onValueChange={(v) => setDomain(v as SemanticDomain)}
+                className="grid grid-cols-2 gap-2 sm:grid-cols-3"
+                aria-label="Domain"
+              >
+                {domains.map((d) => (
+                  <Label
+                    key={d}
+                    htmlFor={`domain-${d}`}
+                    className="flex cursor-pointer items-center gap-2 rounded-lg border p-2.5 text-sm has-data-checked:border-ring has-data-checked:bg-muted/40"
+                  >
+                    <RadioGroupItem id={`domain-${d}`} value={d} />
+                    {d}
+                  </Label>
+                ))}
+              </RadioGroup>
+            </fieldset>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="sem-definition">Definition</Label>
+              <Textarea
+                id="sem-definition"
+                value={definition}
+                onChange={(e) => setDefinition(e.target.value)}
+                placeholder="Plain-language meaning, including period and currency rules where relevant"
+                className="min-h-24 text-sm"
+                required
+              />
+            </div>
+            {kind === "metric" && (
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="sem-formula">Formula (optional)</Label>
+                <Textarea
+                  id="sem-formula"
+                  value={formula}
+                  onChange={(e) => setFormula(e.target.value)}
+                  placeholder="SELECT ..."
+                  className="min-h-16 font-mono text-xs"
+                />
+              </div>
+            )}
+          </form>
+        </SheetBody>
+        <SheetFooterActions
+          primary={
+            <Button type="submit" form="new-definition" disabled={!valid}>
+              <PlusIcon /> Create draft
+            </Button>
+          }
+        />
+      </SheetContent>
+    </Sheet>
   )
 }
 
 function EntitySheet({
   entity: s,
   onClose,
-  onPatch,
 }: {
   entity: SemanticEntity | null
   onClose: () => void
-  onPatch: (id: string, p: Partial<SemanticEntity>) => void
 }) {
   const [synonym, setSynonym] = React.useState("")
+  const patch = (id: string, p: Partial<SemanticEntity>) =>
+    semanticStore.patch(id, p)
+  const undoable = (
+    entity: SemanticEntity,
+    p: Partial<SemanticEntity>,
+    title: string,
+    description: string
+  ) => {
+    patch(entity.id, p)
+    toast(title, {
+      description,
+      action: {
+        label: "Undo",
+        onClick: () =>
+          semanticStore.set((prev) =>
+            prev.map((x) => (x.id === entity.id ? entity : x))
+          ),
+      },
+      duration: 6000,
+    })
+  }
+
   return (
     <Sheet open={s !== null} onOpenChange={(o) => !o && onClose()}>
-      <SheetContent className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-xl">
+      <SheetContent
+        className={cn(sheetWidths.detail, "flex flex-col gap-0 p-0")}
+      >
         {s && (
           <>
             <SheetHeader className="gap-3 border-b px-6 py-5">
@@ -271,7 +507,7 @@ function EntitySheet({
                 <Badge variant="outline" className="text-muted-foreground">
                   {s.domain}
                 </Badge>
-                <span className="ml-auto inline-flex items-center gap-1 font-mono text-[11px] text-muted-foreground">
+                <span className="ml-auto inline-flex items-center gap-1 font-mono text-2xs text-muted-foreground">
                   {s.id} <CopyButton value={s.id} label="Copy id" />
                 </span>
               </div>
@@ -283,7 +519,7 @@ function EntitySheet({
               </SheetDescription>
             </SheetHeader>
 
-            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+            <SheetBody>
               <div className="flex flex-col gap-6">
                 {s.issues.length > 0 && (
                   <section className="rounded-lg border border-warning/40 bg-warning/5 px-4 py-3">
@@ -303,10 +539,12 @@ function EntitySheet({
                             size="sm"
                             className="h-6 text-xs"
                             onClick={() => {
-                              onPatch(s.id, {
+                              patch(s.id, {
                                 issues: s.issues.filter((x) => x !== issue),
                               })
-                              toast.success("Issue resolved")
+                              toast.success("Issue resolved", {
+                                description: issue,
+                              })
                             }}
                           >
                             Resolve
@@ -331,13 +569,15 @@ function EntitySheet({
                     <h3 className="text-sm font-semibold">Sources</h3>
                     {s.sources.length === 0 ? (
                       <p className="text-xs text-muted-foreground">
-                        Glossary term, no physical source.
+                        {s.kind === "glossary"
+                          ? "Glossary term, no physical source."
+                          : "No source recorded yet."}
                       </p>
                     ) : (
                       <ul className="flex flex-wrap gap-1.5">
                         {s.sources.map((src) => (
                           <li key={src}>
-                            <code className="rounded-md border bg-background px-1.5 py-0.5 font-mono text-[11px]">
+                            <code className="rounded-md border bg-background px-1.5 py-0.5 font-mono text-2xs">
                               {src}
                             </code>
                           </li>
@@ -382,7 +622,7 @@ function EntitySheet({
                           aria-label={`Remove synonym ${syn}`}
                           className="rounded-sm p-0.5 hover:bg-background/60"
                           onClick={() =>
-                            onPatch(s.id, {
+                            patch(s.id, {
                               synonyms: s.synonyms.filter((x) => x !== syn),
                             })
                           }
@@ -398,7 +638,7 @@ function EntitySheet({
                       e.preventDefault()
                       const v = synonym.trim()
                       if (!v || s.synonyms.includes(v)) return
-                      onPatch(s.id, { synonyms: [...s.synonyms, v] })
+                      patch(s.id, { synonyms: [...s.synonyms, v] })
                       setSynonym("")
                     }}
                   >
@@ -421,99 +661,98 @@ function EntitySheet({
                 </section>
 
                 <section className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
-                  <Fact label="Owner">
-                    <UserChip userId={s.ownerId} size="xs" />
-                  </Fact>
-                  <Fact label="Queries · 30d">
-                    {formatNumber(s.queries30d)}
-                  </Fact>
-                  <Fact label="Last verified">
-                    {s.lastVerified ? (
-                      <DateCell value={s.lastVerified} tone="default" />
-                    ) : (
-                      "Never"
-                    )}
-                  </Fact>
+                  <MetricTile
+                    label="Owner"
+                    value={<UserChip userId={s.ownerId} size="xs" />}
+                  />
+                  <MetricTile
+                    label="Queries · 30d"
+                    value={formatNumber(s.queries30d)}
+                  />
+                  <MetricTile
+                    label="Last verified"
+                    value={
+                      s.lastVerified ? (
+                        <DateCell value={s.lastVerified} tone="default" />
+                      ) : (
+                        <span className="text-muted-foreground">Never</span>
+                      )
+                    }
+                  />
                 </section>
               </div>
-            </div>
+            </SheetBody>
 
-            <div className="flex flex-wrap items-center justify-end gap-2 border-t px-6 py-4">
-              {s.status !== "Deprecated" && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    onPatch(s.id, { status: "Deprecated" })
-                    toast("Definition deprecated", {
-                      description:
-                        "Agents will stop resolving to it after the next sync",
-                    })
-                  }}
-                >
-                  Deprecate
-                </Button>
-              )}
-              {s.status === "Verified" ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    onPatch(s.id, { status: "Needs review" })
-                    toast("Review requested from the owner")
-                  }}
-                >
-                  <BookMarkedIcon /> Request review
-                </Button>
-              ) : (
-                <Button
-                  size="sm"
-                  onClick={() => {
-                    onPatch(s.id, {
-                      status: "Verified",
-                      lastVerified: new Date().toISOString(),
-                      issues: s.issues.filter(
-                        (i) => !i.startsWith("Last verified")
-                      ),
-                    })
-                    toast.success(`${s.name} verified`)
-                  }}
-                >
-                  <ShieldCheckIcon /> Mark verified
-                </Button>
-              )}
-              {s.status === "Deprecated" && (
-                <Button
-                  size="sm"
-                  onClick={() => {
-                    onPatch(s.id, { status: "Draft" })
-                    toast("Restored as draft")
-                  }}
-                >
-                  <CheckIcon /> Restore
-                </Button>
-              )}
-            </div>
+            <SheetFooterActions
+              tertiary={
+                s.status !== "Deprecated" ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() =>
+                      undoable(
+                        s,
+                        { status: "Deprecated" },
+                        "Definition deprecated",
+                        "Agents keep resolving to it until their next sync; Restore from this sheet if needed."
+                      )
+                    }
+                  >
+                    Deprecate
+                  </Button>
+                ) : undefined
+              }
+              secondary={
+                s.status === "Verified" ? (
+                  <Button
+                    variant="outline"
+                    onClick={() =>
+                      undoable(
+                        s,
+                        { status: "Needs review" },
+                        "Marked for review",
+                        `${s.name} shows as Needs review until the owner verifies it again.`
+                      )
+                    }
+                  >
+                    <BookMarkedIcon /> Request review
+                  </Button>
+                ) : s.status === "Deprecated" ? (
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      patch(s.id, { status: "Draft" })
+                      toast("Restored as draft")
+                    }}
+                  >
+                    <CheckIcon /> Restore
+                  </Button>
+                ) : undefined
+              }
+              primary={
+                s.status !== "Verified" ? (
+                  <Button
+                    onClick={() => {
+                      patch(s.id, {
+                        status: "Verified",
+                        lastVerified: clock().toISOString(),
+                        issues: s.issues.filter(
+                          (i) => !i.startsWith("Last verified")
+                        ),
+                      })
+                      toast.success(`${s.name} verified`, {
+                        description: "Verification date set to today.",
+                      })
+                    }}
+                  >
+                    <ShieldCheckIcon /> Mark verified
+                  </Button>
+                ) : undefined
+              }
+            />
           </>
         )}
       </SheetContent>
     </Sheet>
-  )
-}
-
-function Fact({
-  label,
-  children,
-}: {
-  label: string
-  children: React.ReactNode
-}) {
-  return (
-    <div className="rounded-lg border bg-muted/30 px-3 py-2">
-      <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-        {label}
-      </p>
-      <div className="mt-1 text-sm">{children}</div>
-    </div>
   )
 }

@@ -1,12 +1,13 @@
 import type { Metadata } from "next"
 import Link from "next/link"
 import {
-  ClipboardCheckIcon,
   ClockIcon,
   CoinsIcon,
-  FlaskConicalIcon,
+  GitCommitHorizontalIcon,
   MessageSquareIcon,
+  RadioIcon,
   RouteIcon,
+  ShieldAlertIcon,
   ThumbsDownIcon,
   ThumbsUpIcon,
 } from "lucide-react"
@@ -16,20 +17,29 @@ import { RecordLayout } from "@/components/record/record-layout"
 import { RecordNotFound } from "@/components/record/record-not-found"
 import { RecordSection } from "@/components/record/record-section"
 import { DetailList } from "@/components/shared/detail-list"
+import { Eyebrow } from "@/components/shared/eyebrow"
+import { MetricTile } from "@/components/shared/metric-tile"
 import { StateBadge } from "@/components/shared/status-badge"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import { AgentGraph } from "@/features/agentops/agent-graph"
-import { fmtCost, fmtMs, fmtTokens } from "@/features/agentops/format"
-import { AgentChip, ModelChip, ScoreBar } from "@/features/agentops/shared"
-import { TraceWaterfall } from "@/features/agentops/trace-waterfall"
 import {
-  getDeployedAgent,
-  getExperiment,
-  getTrace,
-  reviewItems,
-} from "@/lib/data"
-import { formatDateTime, timeAgo } from "@/lib/format"
+  AgentChip,
+  BoundHitFlag,
+  ModelChip,
+  OutcomeBadge,
+  ScoreBar,
+} from "@/features/agentops/shared"
+import { TraceActions } from "@/features/agentops/trace-actions"
+import { TraceWaterfall } from "@/features/agentops/trace-waterfall"
+import { getDeployedAgent, getExperiment, getTrace } from "@/lib/data/agentops"
+import { getGuardrail, guardrailViolations } from "@/lib/data/guardrails"
+import { getPromptForAgent } from "@/lib/data/prompts"
+import {
+  formatCost,
+  formatDateTime,
+  formatMs,
+  formatTokens,
+  timeAgo,
+} from "@/lib/format"
 
 export async function generateMetadata({
   params,
@@ -56,50 +66,49 @@ export default async function TracePage({
       />
     )
   const agent = getDeployedAgent(trace.agentId)
-  const review = reviewItems.find((r) => r.traceId === trace.id)
   const experiment = trace.experimentId
     ? getExperiment(trace.experimentId)
     : undefined
   const llm = trace.spans.filter((s) => s.type === "llm")
+  const prompt = getPromptForAgent(trace.agentId)
+  const promptHref = prompt
+    ? `/agentops/prompts/${prompt.id}`
+    : "/agentops/prompts"
+  const toolVersions = Object.entries(trace.lineage.toolSchemaVersions ?? {})
   const visited = trace.spans
     .map((s) => agent?.graph.find((n) => n.label === s.name)?.id)
     .filter((x): x is string => Boolean(x))
+  const violations = guardrailViolations.filter((v) => v.traceId === trace.id)
+  const none = <span className="text-muted-foreground">None</span>
 
   return (
     <>
       <RecordHeader
         number={trace.id}
         title={trace.userQuery}
-        backHref="/agentops/traces"
+        backHref={`/agentops/traces?agent=${trace.agentId}`}
         backLabel="traces"
-        editable={false}
         badges={
           <>
             <StateBadge state={trace.status} />
+            <OutcomeBadge outcome={trace.outcome} />
+            {trace.boundHit && <BoundHitFlag bound={trace.boundHit} />}
             {trace.userFeedback === "down" && (
-              <Badge
-                variant="outline"
-                className="gap-1 border-destructive/30 text-danger-text"
-              >
-                <ThumbsDownIcon className="size-3" /> Thumbs-down
-              </Badge>
+              <StateBadge
+                state="Thumbs-down"
+                tone="danger"
+                icon={<ThumbsDownIcon className="size-3" />}
+              />
             )}
             {trace.userFeedback === "up" && (
-              <Badge
-                variant="outline"
-                className="gap-1 border-success/30 text-success-text"
-              >
-                <ThumbsUpIcon className="size-3" /> Thumbs-up
-              </Badge>
+              <StateBadge
+                state="Thumbs-up"
+                tone="success"
+                icon={<ThumbsUpIcon className="size-3" />}
+              />
             )}
             {trace.flags.map((f) => (
-              <Badge
-                key={f}
-                variant="outline"
-                className="border-warning/40 bg-warning/10 text-warning-text"
-              >
-                {f}
-              </Badge>
+              <StateBadge key={f} state={f} tone="warning" />
             ))}
           </>
         }
@@ -120,11 +129,11 @@ export default async function TracePage({
                   : "default"
               }
             >
-              {fmtMs(trace.durationMs)}
+              {formatMs(trace.durationMs)}
             </MetaItem>
             <MetaItem label="Cost" icon={<CoinsIcon />}>
-              {fmtCost(trace.cost, 3)} ·{" "}
-              {fmtTokens(trace.tokensIn + trace.tokensOut)} tokens
+              {formatCost(trace.cost, 3)} ·{" "}
+              {formatTokens(trace.tokensIn + trace.tokensOut)} tokens
             </MetaItem>
             <MetaItem label="Channel" icon={<MessageSquareIcon />}>
               {trace.channel}
@@ -132,41 +141,13 @@ export default async function TracePage({
           </>
         }
         actions={
-          <>
-            {review ? (
-              <Button
-                variant="outline"
-                render={<Link href="/agentops/reviews" />}
-              >
-                <ClipboardCheckIcon /> In review queue · {review.status}
-              </Button>
-            ) : (
-              <Button variant="outline">
-                <ClipboardCheckIcon /> Send to review
-              </Button>
-            )}
-            {experiment && (
-              <Button
-                render={
-                  <Link href={`/agentops/experiments?open=${experiment.id}`} />
-                }
-              >
-                <FlaskConicalIcon /> Variant {trace.variant}
-              </Button>
-            )}
-          </>
+          <TraceActions
+            trace={trace}
+            experimentId={experiment?.id}
+            evalDataset={agent?.evalDataset}
+            promptId={prompt?.id}
+          />
         }
-        overflow={[
-          {
-            label: "Replay with current prompt",
-            message: "Replay queued — results land in the Traces tab",
-          },
-          {
-            label: "Add to eval set",
-            message: `Added to ${agent?.evalDataset ?? "the eval set"}`,
-          },
-          { label: "Copy trace JSON", message: "Trace JSON copied" },
-        ]}
       />
 
       <RecordLayout
@@ -180,7 +161,7 @@ export default async function TracePage({
                     max={1}
                     thresholds={{ good: 85, ok: 70 }}
                   />
-                  <p className="mt-1 text-[11px] text-muted-foreground">
+                  <p className="mt-1 text-2xs text-muted-foreground">
                     Grounded
                   </p>
                 </div>
@@ -190,9 +171,7 @@ export default async function TracePage({
                     max={1}
                     thresholds={{ good: 85, ok: 70 }}
                   />
-                  <p className="mt-1 text-[11px] text-muted-foreground">
-                    Helpful
-                  </p>
+                  <p className="mt-1 text-2xs text-muted-foreground">Helpful</p>
                 </div>
                 <div>
                   <ScoreBar
@@ -200,7 +179,7 @@ export default async function TracePage({
                     max={1}
                     thresholds={{ good: 99, ok: 90 }}
                   />
-                  <p className="mt-1 text-[11px] text-muted-foreground">Safe</p>
+                  <p className="mt-1 text-2xs text-muted-foreground">Safe</p>
                 </div>
               </div>
             </RecordSection>
@@ -215,7 +194,18 @@ export default async function TracePage({
                       <ModelChip modelId={trace.modelId} className="text-xs" />
                     ),
                   },
-                  { label: "Version", value: trace.version, mono: true },
+                  {
+                    label: "Version",
+                    value: (
+                      <Link
+                        href={`/agentops/deployments?agent=${trace.agentId}`}
+                        className="font-mono hover:underline"
+                      >
+                        {trace.version}
+                      </Link>
+                    ),
+                    hint: "Opens the agent's releases",
+                  },
                   {
                     label: "Session",
                     value: trace.sessionId,
@@ -225,7 +215,7 @@ export default async function TracePage({
                   { label: "Started", value: formatDateTime(trace.startedAt) },
                   {
                     label: "LLM calls",
-                    value: `${llm.length} · ${fmtTokens(trace.tokensIn)} in / ${fmtTokens(trace.tokensOut)} out`,
+                    value: `${llm.length} · ${formatTokens(trace.tokensIn)} in / ${formatTokens(trace.tokensOut)} out`,
                   },
                   {
                     label: "Experiment",
@@ -237,13 +227,149 @@ export default async function TracePage({
                         {experiment.name}
                       </Link>
                     ) : (
-                      "—"
+                      none
                     ),
                     wide: true,
                   },
                 ]}
               />
             </RecordSection>
+            <RecordSection
+              title="Lineage"
+              description="Exact versions needed to reproduce this run"
+              size="sm"
+              icon={<GitCommitHorizontalIcon />}
+            >
+              <DetailList
+                variant="rows"
+                dense
+                items={[
+                  {
+                    label: "Code",
+                    value: trace.lineage.codeSha.slice(0, 7),
+                    mono: true,
+                    copyable: true,
+                    copyValue: trace.lineage.codeSha,
+                    hint: "Git SHA of the agent build",
+                  },
+                  {
+                    label: "Prompt",
+                    value: (
+                      <Link
+                        href={promptHref}
+                        className="font-mono hover:underline"
+                      >
+                        {trace.lineage.promptVersion}
+                      </Link>
+                    ),
+                  },
+                  {
+                    label: "Params",
+                    value: trace.lineage.paramsHash,
+                    mono: true,
+                    copyable: true,
+                    hint: "Hash of the ModelParams used for this run",
+                  },
+                  {
+                    label: "Index build",
+                    value: trace.lineage.indexBuildId ?? none,
+                    mono: Boolean(trace.lineage.indexBuildId),
+                  },
+                  {
+                    label: "Policy",
+                    value: (
+                      <Link
+                        href="/agentops/guardrails?tab=policies"
+                        className="font-mono hover:underline"
+                      >
+                        {trace.lineage.policyVersion}
+                      </Link>
+                    ),
+                  },
+                  ...(toolVersions.length
+                    ? [
+                        {
+                          label: "Tool schemas",
+                          value: (
+                            <span className="flex flex-wrap gap-1">
+                              {toolVersions.map(([tool, v]) => (
+                                <Link
+                                  key={tool}
+                                  href={`/agentops/tools?tool=${tool}`}
+                                  className="rounded-sm bg-muted px-1 py-0.5 font-mono text-2xs hover:underline"
+                                >
+                                  {tool}@{v}
+                                </Link>
+                              ))}
+                            </span>
+                          ),
+                          wide: true,
+                        },
+                      ]
+                    : []),
+                ]}
+              />
+            </RecordSection>
+            {violations.length > 0 && (
+              <RecordSection
+                title="Guardrail violations"
+                count={violations.length}
+                size="sm"
+                icon={<ShieldAlertIcon />}
+              >
+                <ul className="flex flex-col gap-2">
+                  {violations.map((v) => (
+                    <li key={v.id} className="flex flex-col gap-1 text-sm">
+                      <span className="flex items-center justify-between gap-2">
+                        <Link
+                          href={`/agentops/guardrails?policy=${v.policyId}&tab=violations`}
+                          className="truncate font-medium hover:underline"
+                        >
+                          {getGuardrail(v.policyId)?.name ?? v.policyId}
+                        </Link>
+                        <span className="flex shrink-0 items-center gap-1">
+                          <StateBadge state={v.action} size="sm" />
+                          <StateBadge state={v.verdict} size="sm" />
+                        </span>
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {v.severity} · {v.snippet}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </RecordSection>
+            )}
+            {trace.streaming && (
+              <RecordSection title="Streaming" size="sm" icon={<RadioIcon />}>
+                <div className="grid grid-cols-2 gap-3">
+                  <MetricTile
+                    label="Time to first token"
+                    value={formatMs(trace.streaming.ttftMs)}
+                    tone={trace.streaming.ttftMs > 1500 ? "warning" : undefined}
+                  />
+                  <MetricTile
+                    label="Throughput"
+                    value={trace.streaming.tokensPerSec}
+                    unit="tok/s"
+                  />
+                  <MetricTile
+                    label="Client"
+                    value={
+                      trace.streaming.disconnected
+                        ? "Disconnected"
+                        : "Connected"
+                    }
+                    tone={trace.streaming.disconnected ? "danger" : undefined}
+                  />
+                  <MetricTile
+                    label="Stream"
+                    value={trace.streaming.truncated ? "Truncated" : "Complete"}
+                    tone={trace.streaming.truncated ? "warning" : undefined}
+                  />
+                </div>
+              </RecordSection>
+            )}
             {agent && (
               <RecordSection title="Path through graph" size="sm">
                 <AgentGraph
@@ -259,17 +385,13 @@ export default async function TracePage({
         <RecordSection title="Conversation" icon={<MessageSquareIcon />}>
           <div className="flex flex-col gap-4">
             <div className="flex flex-col items-end gap-1">
-              <span className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-                User
-              </span>
+              <Eyebrow as="span">User</Eyebrow>
               <p className="max-w-[48rem] rounded-2xl rounded-tr-md bg-muted px-4 py-3 text-sm leading-relaxed">
                 {trace.userQuery}
               </p>
             </div>
             <div className="flex flex-col gap-1">
-              <span className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-                {agent?.name ?? "Agent"}
-              </span>
+              <Eyebrow as="span">{agent?.name ?? "Agent"}</Eyebrow>
               <p
                 className={`max-w-[48rem] rounded-2xl rounded-tl-md border px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap ${trace.status === "Failed" ? "border-destructive/30 bg-destructive/5" : "bg-background"}`}
               >
@@ -281,7 +403,7 @@ export default async function TracePage({
 
         <RecordSection
           title="Spans"
-          description={`${trace.spans.length} spans · ${fmtMs(trace.durationMs)} total`}
+          description={`${trace.spans.length} spans · ${formatMs(trace.durationMs)} total`}
           icon={<RouteIcon />}
         >
           <TraceWaterfall spans={trace.spans} totalMs={trace.durationMs} />

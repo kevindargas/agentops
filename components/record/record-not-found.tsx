@@ -37,7 +37,7 @@ export function RecordNotFound({
           {number}
         </span>
         <EmptyTitle className="text-base">
-          We couldn’t find that record
+          We could not find that record
         </EmptyTitle>
         <EmptyDescription>{description}</EmptyDescription>
       </EmptyHeader>
@@ -46,8 +46,8 @@ export function RecordNotFound({
           <Button render={<Link href={backHref} />}>
             <ArrowLeftIcon /> Back to {backLabel}
           </Button>
-          <Button variant="outline" render={<Link href="/my-work" />}>
-            Go to my work
+          <Button variant="outline" render={<Link href="/dashboard" />}>
+            Back to overview
           </Button>
         </div>
         <p className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">

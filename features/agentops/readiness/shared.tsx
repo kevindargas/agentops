@@ -60,15 +60,6 @@ export const readinessTabs: ReadinessTab[] = [
   "share",
 ]
 
-/** Sync a query param without a navigation (see guardrails-view). */
-export function setQueryParam(key: string, value: string | null) {
-  if (typeof window === "undefined") return
-  const url = new URL(window.location.href)
-  if (value) url.searchParams.set(key, value)
-  else url.searchParams.delete(key)
-  window.history.replaceState(null, "", url)
-}
-
 export function ControlStatusBadge({
   status,
   size = "default",
@@ -167,7 +158,7 @@ export function DomainChip({
   )
 }
 
-/** Risk 1–5 as filled dots. */
+/** Risk 1 to 5 as filled dots. */
 export function RiskDots({
   risk,
   className,
@@ -201,7 +192,7 @@ export function RiskDots({
   )
 }
 
-/** Tone for a 0–100 coverage score; shared by meters, heatmap cells and tiles. */
+/** Tone for a 0 to 100 coverage score; shared by meters, heatmap cells and tiles. */
 export function scoreTone(
   score: number
 ): "success" | "brand" | "warning" | "danger" {

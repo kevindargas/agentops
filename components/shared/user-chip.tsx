@@ -13,11 +13,11 @@ const sizeClasses: Record<
   xs: {
     avatar: "size-5 text-[9px]",
     name: "text-xs",
-    sub: "text-[11px]",
+    sub: "text-2xs",
     gap: "gap-1.5",
   },
   sm: {
-    avatar: "size-6 text-[10px]",
+    avatar: "size-6 text-3xs",
     name: "text-sm",
     sub: "text-xs",
     gap: "gap-2",
@@ -127,7 +127,7 @@ export function UserChip({
           <span className={cn("truncate", s.name)}>
             {user.name}
             {showVip && user.vip && (
-              <span className="ml-1.5 inline-flex h-4 items-center rounded-sm bg-warning/15 px-1 align-middle text-[10px] font-semibold tracking-wide text-warning-text">
+              <span className="ml-1.5 inline-flex h-4 items-center rounded-sm bg-warning/15 px-1 align-middle text-3xs font-semibold tracking-wide text-warning-text">
                 VIP
               </span>
             )}
@@ -154,7 +154,14 @@ export function GroupChip({
 }) {
   const group = getGroup(groupId)
   if (!group)
-    return <span className={cn("text-muted-foreground", className)}>—</span>
+    return (
+      <span
+        aria-label="No group"
+        className={cn("text-muted-foreground", className)}
+      >
+        -
+      </span>
+    )
   return (
     <span
       className={cn(

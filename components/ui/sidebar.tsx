@@ -597,6 +597,8 @@ function SidebarMenuBadge({
   )
 }
 
+let skeletonSeq = 0
+
 function SidebarMenuSkeleton({
   className,
   showIcon = false,
@@ -604,9 +606,11 @@ function SidebarMenuSkeleton({
 }: React.ComponentProps<"div"> & {
   showIcon?: boolean
 }) {
-  // Random width between 50 to 90%.
+  // Deterministic width between 50 and 90% (derived from the index via a
+  // counter) so server and client render the same skeleton.
   const [width] = React.useState(() => {
-    return `${Math.floor(Math.random() * 40) + 50}%`
+    skeletonSeq = (skeletonSeq + 1) % 5
+    return `${50 + skeletonSeq * 10}%`
   })
 
   return (

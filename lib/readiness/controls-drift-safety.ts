@@ -1,0 +1,466 @@
+import type { ControlDef, FailureMode } from "./types"
+
+/**
+ * Wave-2 controls (drift-safety). Composed into `defaultControlSet` by
+ * `controls.ts`; failure modes are merged by `library.ts`. Keep ids stable.
+ */
+
+const agentic = ["agent", "multi-agent"] as const
+const retrieval = ["rag", "agent", "multi-agent"] as const
+
+export const controls: ControlDef[] = [
+  // --------------------------------------------------------------------- Drift
+  {
+    id: "DRF-09",
+    domain: "drift",
+    title: "Versioned lineage on every result",
+    what: "Every production run records the code SHA, prompt version, params hash, requested and resolved model, index build id, dataset snapshot, tool schema versions and policy version that produced it, and deployments ship as signed manifests.",
+    why: "When an answer is wrong a week later you need to know exactly which prompt, model snapshot and index produced it. Without lineage you cannot reproduce it, scope the blast radius or roll back only the artifact that changed.",
+    how: [
+      "Define a lineage record (code SHA, prompt version, params hash, gen_ai.request.model and gen_ai.response.model, index build id, dataset snapshot, tool schema digests, policy version) and attach it as attributes on the root span of every run.",
+      "Resolve model aliases at request time and log the concrete snapshot, not the alias.",
+      "Build deployment manifests that pin every artifact and sign them (Sigstore/cosign); deploy only from a manifest.",
+      "Add a lineage-completeness check to the trace pipeline and alert when any field is missing on more than 1% of runs.",
+    ],
+    done: "Pick any production trace from the last 30 days; every lineage field resolves to an immutable artifact, and the signed manifest for that deploy verifies.",
+    risk: 4,
+    effort: "medium",
+    requiredAt: "pilot",
+    gate: true,
+    frameworks: {
+      nist: ["MANAGE 2.4", "GOVERN 1.7"],
+      euAiAct: ["Art. 11", "Art. 12"],
+      otel: ["gen_ai.request.model", "gen_ai.response.model"],
+      iso42001: ["A.6"],
+    },
+    tools: ["mlflow", "langfuse", "sigstore", "langsmith", "braintrust"],
+    metrics: ["lineage-completeness"],
+    learnMore: [
+      {
+        label: "Sigstore: signing and verifying artifacts",
+        href: "https://docs.sigstore.dev/",
+      },
+    ],
+  },
+  {
+    id: "DRF-10",
+    domain: "drift",
+    title: "Embedding and index compatibility",
+    what: "The embedding model, chunker, normalisation and distance metric, and the index build are versioned as one coupled unit; mixed-version vectors are detected and every index can be rebuilt and rolled back.",
+    why: "Swapping the embedding model without rebuilding the index does not error: it quietly returns nonsense neighbours. Retrieval quality collapses while every dashboard stays green.",
+    how: [
+      "Store an index manifest per collection: embedding model and dimensions, normalisation, distance metric, chunker version and build id; stamp every vector with the build id.",
+      "Reject queries whose embedding model or dimensions do not match the collection manifest, and alert on any collection containing more than one build id.",
+      "Keep the previous index build alive behind an alias so a rollback is an alias switch, not a re-ingest.",
+      "Run a retrieval regression set (hit rate, context recall) against every rebuilt index before promotion.",
+    ],
+    done: "Embedding a query with a mismatched model in staging is rejected and logged; the index manifest shows one build id per collection and the last rebuild passed the retrieval regression set.",
+    risk: 4,
+    effort: "medium",
+    requiredAt: "pilot",
+    applicability: { systemTypes: [...retrieval] },
+    frameworks: {
+      owasp: ["LLM08"],
+      nist: ["MANAGE 2.4", "MEASURE 2.5"],
+      otel: ["gen_ai.operation.name=retrieve", "db.vector.query.top_k"],
+    },
+    tools: ["phoenix", "ragas", "mlflow", "langfuse", "arize"],
+    metrics: ["index-version-mismatch", "retrieval-hit-rate"],
+    learnMore: [
+      {
+        label: "OWASP LLM08: Vector and Embedding Weaknesses",
+        href: "https://genai.owasp.org/llmrisk/llm082025-vector-and-embedding-weaknesses/",
+      },
+    ],
+  },
+  {
+    id: "DRF-11",
+    domain: "drift",
+    title: "Output distribution and action-rate drift",
+    what: "Distributions of what the system does (refusal and abstention rate, answer length, tool-write rate, approval-request rate, intent and class mix) are tracked per cohort against a reference window with persistence rules before alerting.",
+    why: "Judge scores lag and labels arrive late. A doubled refusal rate or a halved tool-write rate shows up within an hour and is often the first sign that a prompt, model or upstream input changed.",
+    how: [
+      "Compute hourly and daily distributions for refusal rate, abstention rate, output length, tool-write rate, approval requests and intent mix from traces, split by agent, tenant and channel.",
+      "Pick a reference window (e.g. the trailing 14 days) and alert only when a shift persists across three consecutive windows or crosses a hard threshold.",
+      "Reset the reference window on every tracked release so a deliberate change is not flagged as drift.",
+      "Link each alert to the diff of prompt, model and index versions since the reference window.",
+    ],
+    done: "A dashboard shows action-rate and refusal-rate deltas per cohort; a staged prompt change that triples refusals raises a drift alert within three windows and the alert names the version diff.",
+    risk: 3,
+    effort: "medium",
+    requiredAt: "pilot",
+    frameworks: {
+      nist: ["MEASURE 2.4", "MANAGE 4.1"],
+      euAiAct: ["Art. 72"],
+      otel: ["gen_ai.response.finish_reasons", "gen_ai.operation.name"],
+    },
+    tools: ["evidently", "arize", "phoenix", "datadog", "grafana"],
+    metrics: ["action-rate-delta", "refusal-rate"],
+    snippets: ["alert-rules"],
+    cadence: {
+      every: "monthly",
+      label: "Review drift thresholds and reference windows",
+    },
+  },
+  {
+    id: "DRF-12",
+    domain: "drift",
+    title: "Feedback-loop and selection effects",
+    what: "Labelled data is not drawn only from flagged or complained-about runs: a random sample stream is reviewed, exposure is logged, policy-induced shift is monitored and training and eval sets are kept free of self-generated contamination.",
+    why: "If reviewers only see the runs users complained about, quality looks worse than it is where users are vocal and better than it is where they have given up. A model that quietly steers users away from hard questions will look like it improved.",
+    how: [
+      "Route a fixed random share of production runs (e.g. 2%) into the review queue regardless of flags or feedback and tag them as the unbiased stream.",
+      "Log which variant, prompt version and retrieved documents each user was exposed to so observed outcomes can be weighted.",
+      "Compare quality on the random stream with quality on the flagged stream every month and investigate when they diverge.",
+      "Exclude model-generated text and judge-labelled samples from training and golden datasets unless a human has reviewed them; record the source of every eval case.",
+    ],
+    done: "The review queue shows a random-sample share at or above target for the last month, the random and flagged streams are charted side by side, and the dataset changelog records the origin of every case.",
+    risk: 3,
+    effort: "medium",
+    requiredAt: "production",
+    frameworks: {
+      nist: ["MEASURE 2.3", "MEASURE 4.2", "MAP 2.3"],
+      euAiAct: ["Art. 10"],
+      iso42001: ["A.7"],
+    },
+    tools: ["langfuse", "braintrust", "langsmith", "evidently", "fairlearn"],
+    metrics: ["random-sample-share", "label-coverage"],
+    cadence: {
+      every: "monthly",
+      label: "Compare random-stream and flagged-stream quality",
+    },
+  },
+  {
+    id: "DRF-13",
+    domain: "drift",
+    title: "Knowledge-source and ingestion health",
+    what: "Every knowledge source and tool data feed is checked on each ingestion run for missing and duplicate documents, invalid content, volume anomalies, late or failed ingestion, connector errors and backfill completion.",
+    why: "DRF-06 tells you an index is stale; this tells you it is wrong. A connector that silently drops half the documents or ingests empty PDFs produces an index that is fresh, fully synced and useless.",
+    how: [
+      "Define expectations per source (minimum document count, maximum duplicate share, schema and encoding checks, chunk length bounds) and run them as a gate in the ingestion pipeline.",
+      "Record connector errors, late arrivals and backfill progress per run; fail the run, not the index, when expectations are violated.",
+      "Alert when document volume changes more than 10% between runs or when any expectation fails twice in a row.",
+      "Surface source health next to freshness so reviewers see both before trusting a citation.",
+    ],
+    done: "Each source has an expectation suite that runs on every ingestion; a planted batch of empty and duplicated documents in staging fails the run and raises an alert without touching the live index.",
+    risk: 3,
+    effort: "medium",
+    requiredAt: "pilot",
+    applicability: { systemTypes: [...retrieval] },
+    frameworks: {
+      owasp: ["LLM04", "LLM08"],
+      nist: ["MAP 2.3", "MEASURE 2.4"],
+      euAiAct: ["Art. 10"],
+      iso42001: ["A.7"],
+    },
+    tools: ["great-expectations", "dbt", "evidently", "datadog", "grafana"],
+    metrics: ["source-health-failures", "index-staleness"],
+    learnMore: [
+      {
+        label: "Great Expectations: data quality checks",
+        href: "https://docs.greatexpectations.io/",
+      },
+    ],
+  },
+
+  // -------------------------------------------------------------------- Safety
+  {
+    id: "SAF-12",
+    domain: "safety",
+    title: "Safe identity delegation",
+    what: "Agents act with scoped, short-lived, audience-bound credentials tied to the requesting principal; no shared human tokens are passed through, every hop re-authorizes, replay is prevented and the delegated principal is recorded on every tool span.",
+    why: "Confused-deputy failures turn one user's limited access into the agent's broad access. An agent holding a long-lived service token will eventually use it on behalf of the wrong user.",
+    how: [
+      "Exchange the caller's token for a delegated, audience-bound token per downstream tool (OAuth token exchange or workload identity); never forward the original user or service token.",
+      "Cap delegated token lifetime (minutes, not hours) and bind scopes to the tool's declared permissions.",
+      "Authorize at every hop (orchestrator, sub-agent and tool) against the delegated principal, not the agent's own identity.",
+      "Record the delegated principal and token audience on the gen_ai.tool.name span and reject replayed tokens by nonce or jti.",
+    ],
+    done: "A tool span picked at random shows the delegated principal and audience; a replayed token and a token issued for another tool are both rejected in staging and logged.",
+    risk: 5,
+    effort: "high",
+    requiredAt: "pilot",
+    applicability: { systemTypes: [...agentic], minAutonomy: "supervised" },
+    frameworks: {
+      owasp: ["LLM06", "LLM02"],
+      nist: ["MANAGE 2.3", "GOVERN 1.5"],
+      euAiAct: ["Art. 15"],
+      otel: ["gen_ai.tool.name", "gen_ai.tool.call.id"],
+    },
+    tools: ["spiffe", "vault", "opa", "langfuse"],
+    metrics: ["delegated-token-ttl"],
+    learnMore: [
+      {
+        label: "MCP authorization specification",
+        href: "https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization",
+      },
+    ],
+  },
+  {
+    id: "SAF-13",
+    domain: "safety",
+    title: "Side-effect safety: idempotency, dry runs and limits",
+    what: "Every write tool takes an idempotency key, offers a preview or dry run before commit, enforces transaction and value limits, detects duplicate effects and has a compensating action.",
+    why: "Retries and hallucinated intent are how an agent sends the same refund twice, deletes the wrong records or emails a customer three times. Read tools fail safe; write tools need to be made safe.",
+    how: [
+      "Require an idempotency key derived from the run id and step on every write tool; the tool returns the original result on a repeat call.",
+      "Implement a prepare → preview → commit flow so the agent (or approver, SAF-05) sees the exact effect before it happens.",
+      "Enforce per-call and per-run value limits (amount, record count, recipients) in the tool, not the prompt; fail closed above the limit.",
+      "Detect duplicate effects downstream (same key, same target in a window) and define a compensating action for every irreversible tool.",
+    ],
+    done: "Replaying a completed write in staging returns the original result without a second effect; a call above the value limit is refused, and the duplicate-effect dashboard reads zero for the last 30 days.",
+    risk: 5,
+    effort: "medium",
+    requiredAt: "pilot",
+    gate: true,
+    applicability: { systemTypes: [...agentic], minAutonomy: "supervised" },
+    frameworks: {
+      owasp: ["LLM06"],
+      nist: ["MANAGE 2.3", "MANAGE 2.4"],
+      euAiAct: ["Art. 14", "Art. 15"],
+    },
+    tools: ["temporal", "langfuse", "nemo-guardrails", "datadog"],
+    metrics: ["duplicate-effect-rate", "tool-error-rate"],
+    snippets: ["otel-tool-span"],
+    learnMore: [
+      {
+        label: "OWASP LLM06: Excessive Agency",
+        href: "https://genai.owasp.org/llmrisk/llm062025-excessive-agency/",
+      },
+    ],
+  },
+  {
+    id: "SAF-14",
+    domain: "safety",
+    title: "Memory safety and lifecycle",
+    what: "Long-term agent memory has explicit write permissions and provenance, is isolated per tenant and user, expires or can be deleted on request, filters instruction-like content and is tested for poisoning.",
+    why: "Memory is a prompt injection that persists. A poisoned fact or an instruction written once is replayed into every future conversation, and memory shared across users is a data leak waiting for the right question.",
+    how: [
+      "Type memory entries (user fact, preference, task state, instruction) and allow writes only from designated steps; tag every entry with source span, author and timestamp.",
+      "Partition memory by tenant and user at the storage layer and include the identity in every read; never merge across partitions.",
+      "Set a TTL per memory type, implement deletion on user request and reject entries that match instruction-like patterns before they are stored.",
+      "Add memory-poisoning cases to the red-team suite: a planted instruction in a document must not appear in memory or alter later runs.",
+    ],
+    done: "Every memory entry shows provenance and a tenant; a planted instruction is rejected and counted, a deletion request removes the entries within the SLA, and the poisoning test passes in CI.",
+    risk: 4,
+    effort: "medium",
+    requiredAt: "pilot",
+    applicability: { systemTypes: [...agentic] },
+    frameworks: {
+      owasp: ["LLM04", "LLM08", "LLM01"],
+      nist: ["MANAGE 2.3", "MEASURE 2.10"],
+      euAiAct: ["Art. 10"],
+    },
+    tools: ["langfuse", "guardrails-ai", "lakera", "promptfoo", "presidio"],
+    metrics: ["memory-write-rejects"],
+    learnMore: [
+      {
+        label: "OWASP LLM04: Data and Model Poisoning",
+        href: "https://genai.owasp.org/llmrisk/llm042025-data-and-model-poisoning/",
+      },
+    ],
+  },
+  {
+    id: "SAF-15",
+    domain: "safety",
+    title: "Threat model for the agent system",
+    what: "A written threat model names trust boundaries, attacker-controlled inputs (documents, tool results, other agents, memory), assets, attack chains and misuse cases; it is reviewed whenever tools or data sources change and drives the red-team plan.",
+    why: "Generic jailbreak suites miss the application-specific chain: injected document → tool call → data out. The threat model is what turns red-teaming (SAF-08) from a checklist into a test of your actual attack surface.",
+    how: [
+      "Draw the data-flow diagram with every trust boundary and mark each input the attacker can influence; list assets (credentials, customer data, write tools) and their value.",
+      "Enumerate attack chains and misuse cases using OWASP LLM Top 10 and MITRE ATLAS as prompts; assign severity and a mitigation or accepted-risk entry to each.",
+      "Re-review the model when a tool, MCP server, data source or autonomy level is added; record the review date and reviewer.",
+      "Export the open chains as red-team scenarios so SAF-08 tests what the model says matters.",
+    ],
+    done: "The threat model document lists trust boundaries, attacker-controlled inputs and attack chains with owners, was reviewed within the last quarter or since the last tool change, and the red-team plan references its scenarios.",
+    risk: 4,
+    effort: "medium",
+    requiredAt: "pilot",
+    frameworks: {
+      owasp: ["LLM01", "LLM06"],
+      nist: ["MAP 5.1", "MEASURE 2.7", "GOVERN 1.3"],
+      euAiAct: ["Art. 9", "Art. 15"],
+      iso42001: ["A.5"],
+    },
+    tools: ["promptfoo", "garak", "inspect"],
+    metrics: ["threat-model-age"],
+    cadence: {
+      every: "quarterly",
+      label: "Review the threat model against current tools and data sources",
+    },
+    learnMore: [
+      {
+        label: "MITRE ATLAS: adversarial threat landscape for AI systems",
+        href: "https://atlas.mitre.org/",
+      },
+    ],
+  },
+  {
+    id: "SAF-16",
+    domain: "safety",
+    title: "Identity, authorization and tenant isolation",
+    what: "End-user and service identity is propagated end to end; object-level authorization is enforced by a policy engine outside the model (OPA/ABAC) on every tool and data call; tenant boundaries and denied actions are tested continuously.",
+    why: "A model saying an action is allowed is not an access-control decision. If the tool trusts the model's claim about who the user is, a single injected sentence becomes a cross-tenant breach.",
+    how: [
+      "Carry the authenticated principal and tenant in trace context and pass it to every tool and retrieval call; tools reject calls with no principal.",
+      "Put authorization in a policy enforcement point (OPA, Cedar, workload identity) that checks object-level permissions, never in the prompt or the model's output.",
+      "Run a denied-action and tenant-boundary suite in CI: each tool is called with another tenant's ids and with revoked principals, and every call must be refused.",
+      "Alert on any successful call where the principal's tenant differs from the object's tenant.",
+    ],
+    done: "A tool call with another tenant's object id is refused and logged in staging; the policy bundle is versioned, and the cross-tenant leak counter has read zero for the last 90 days.",
+    risk: 5,
+    effort: "high",
+    requiredAt: "pilot",
+    gate: true,
+    applicability: { minSensitivity: "internal", otherwise: "reduced" },
+    frameworks: {
+      owasp: ["LLM06", "LLM02"],
+      nist: ["MANAGE 2.3", "GOVERN 1.5"],
+      euAiAct: ["Art. 15"],
+      iso42001: ["A.6"],
+    },
+    tools: ["opa", "spiffe", "vault", "langfuse", "datadog"],
+    metrics: ["cross-tenant-leaks"],
+    learnMore: [
+      {
+        label: "Open Policy Agent documentation",
+        href: "https://www.openpolicyagent.org/docs/latest/",
+      },
+    ],
+  },
+  {
+    id: "SAF-17",
+    domain: "safety",
+    title: "Safe consumption of generated output",
+    what: "Generated SQL, HTML and markdown, URLs, code and shell commands are treated as untrusted input at every sink: parameterised queries, output encoding and CSP, URL and SSRF allowlists, sandboxed execution and allowlisted commands.",
+    why: "Model output that reaches a database, a browser or a shell unfiltered is an ordinary injection vulnerability with a new entry point. The classic web fixes still work; they just have to be applied to the model's text.",
+    how: [
+      "Never interpolate generated SQL or filters into queries; use parameterised queries or a constrained query builder with a read-only role.",
+      "Encode generated text before rendering, strip or sandbox active content, and serve chat UIs with a CSP that blocks inline scripts and untrusted image hosts.",
+      "Validate every generated URL against an allowlist and resolve it server-side with SSRF protection before fetching or rendering.",
+      "Execute generated code only in the sandbox (SAF-06) and generated commands only from an allowlist with argument validation.",
+    ],
+    done: "A test set of outputs containing SQL injection, script tags, markdown image exfiltration URLs and shell metacharacters is neutralised at every sink in CI, and the unsafe-sink rate in production reads zero.",
+    risk: 4,
+    effort: "medium",
+    requiredAt: "pilot",
+    frameworks: {
+      owasp: ["LLM05", "LLM01"],
+      nist: ["MEASURE 2.7", "MANAGE 2.3"],
+      euAiAct: ["Art. 15"],
+    },
+    tools: ["guardrails-ai", "nemo-guardrails", "e2b", "promptfoo", "lakera"],
+    metrics: ["unsafe-sink-rate"],
+    learnMore: [
+      {
+        label: "OWASP LLM05: Improper Output Handling",
+        href: "https://genai.owasp.org/llmrisk/llm052025-improper-output-handling/",
+      },
+    ],
+  },
+  {
+    id: "SAF-18",
+    domain: "safety",
+    title: "Authorization-aware retrieval",
+    what: "Retrieval filters by the caller's identity and the document ACL at query time, every chunk carries provenance and permission metadata, and revoked-access and cross-tenant leak tests run on each index build.",
+    why: "A shared index answers from documents the asking user was never allowed to open, and it does so fluently. DRF-06 keeps the index fresh; this control keeps it from becoming the easiest way to read someone else's files.",
+    how: [
+      "Store tenant, owner and ACL on every chunk at ingestion and pass the authenticated principal into the retrieval call so the filter runs inside the vector query, not after it.",
+      "Sync permission changes and deletions from source systems with a bounded lag and treat a missed sync as an incident, not a warning.",
+      "Run a revoked-access regression suite on every index build: a user whose access was removed must get zero chunks from that document.",
+      "Record the retrieved chunk ids and their ACL on the retrieval span so a leak can be traced to its source.",
+    ],
+    done: "Querying as a user without access to a seeded confidential document returns no chunks from it in staging; the revoked-access suite passes on the latest index build and the ACL-leak counter is zero.",
+    risk: 5,
+    effort: "medium",
+    requiredAt: "pilot",
+    applicability: { systemTypes: [...retrieval] },
+    frameworks: {
+      owasp: ["LLM08", "LLM02"],
+      nist: ["MANAGE 2.3", "MEASURE 2.10"],
+      euAiAct: ["Art. 10", "Art. 15"],
+      otel: ["gen_ai.operation.name=retrieve"],
+    },
+    tools: ["opa", "phoenix", "langfuse", "ragas", "presidio"],
+    metrics: ["acl-leak-rate"],
+    learnMore: [
+      {
+        label: "OWASP LLM02: Sensitive Information Disclosure",
+        href: "https://genai.owasp.org/llmrisk/llm022025-sensitive-information-disclosure/",
+      },
+    ],
+  },
+  {
+    id: "SAF-19",
+    domain: "safety",
+    title: "Tool and MCP definition integrity",
+    what: "Tool and MCP server definitions are pinned by digest, changes to schemas and descriptions are detected and reviewed, new capabilities require approval, tool responses are validated against the schema and server egress is allowlisted with verified provenance.",
+    why: "A tool description is a prompt the model obeys. An MCP server that changes one sentence in a description can redirect the agent to exfiltrate data, and nothing in the inventory (SAF-10) moves because the version did not.",
+    how: [
+      "Hash every tool definition (name, description, schema, annotations) at registration and store the digest; refuse to call a tool whose live definition no longer matches.",
+      "Diff definitions on every connect; route added tools, widened schemas or changed descriptions to a review queue before they are usable.",
+      "Validate tool responses against the declared schema and length bounds; treat response text as untrusted content, not instructions.",
+      "Run MCP servers in isolated connectors with an egress allowlist and verify server images and packages (signatures, SBOM scan) before deploy.",
+    ],
+    done: "Editing a tool description on a staging MCP server blocks that tool and opens a review item within one connect cycle; every registered tool shows a digest and reviewer, and the connector egress log contains only allowlisted hosts.",
+    risk: 4,
+    effort: "medium",
+    requiredAt: "pilot",
+    applicability: { systemTypes: [...agentic] },
+    frameworks: {
+      owasp: ["LLM03", "LLM01", "LLM06"],
+      nist: ["GOVERN 6.1", "MAP 4.1"],
+      euAiAct: ["Art. 15"],
+      iso42001: ["A.10"],
+    },
+    tools: ["sigstore", "trivy", "opa", "langfuse", "litellm"],
+    metrics: ["tool-definition-changes"],
+    cadence: {
+      every: "monthly",
+      label: "Review tool-definition diffs and new MCP capabilities",
+    },
+    learnMore: [
+      {
+        label: "MCP specification: security best practices",
+        href: "https://modelcontextprotocol.io/specification/2025-06-18/basic/security_best_practices",
+      },
+    ],
+  },
+]
+
+export const failureModes: FailureMode[] = [
+  {
+    id: "fm-duplicate-refund",
+    title: "Agent re-sends a refund because the retry had no idempotency key",
+    summary:
+      "A payments tool times out after committing. The orchestrator retries, the agent re-plans and issues the refund again; the customer is paid twice and the duplicate is found in month-end reconciliation.",
+    domain: "safety",
+    controls: ["SAF-13", "SAF-05", "SAF-11", "VIS-04"],
+  },
+  {
+    id: "fm-tool-description-swap",
+    title: "MCP server silently changes a tool description to exfiltrate data",
+    summary:
+      "A community MCP server ships the same version but its search tool's description now says to include the user's recent messages in every query. The agent complies, and the data leaves through a legitimate-looking tool call.",
+    realWorld:
+      "Tool-poisoning and 'rug pull' demonstrations against MCP servers published by security researchers in 2025.",
+    domain: "safety",
+    controls: ["SAF-19", "SAF-10", "SAF-15", "SAF-04", "VIS-04"],
+  },
+  {
+    id: "fm-shared-service-account-leak",
+    title: "Shared service account lets one tenant read another's documents",
+    summary:
+      "The retrieval service authenticates to the document store with one service account and filters by tenant in a prompt instruction. An injected question for 'all contracts' returns another customer's files, fluently summarised.",
+    domain: "safety",
+    controls: ["SAF-16", "SAF-18", "SAF-12", "SAF-02"],
+  },
+  {
+    id: "fm-embedding-model-swap",
+    title: "Embedding model upgrade leaves the index half-migrated",
+    summary:
+      "The team switches to a new embedding model for new documents without re-indexing the old ones. Queries now sit in a different vector space from most of the corpus; hit rate halves while freshness and uptime stay green.",
+    domain: "drift",
+    controls: ["DRF-10", "DRF-09", "QUA-02", "DRF-06"],
+  },
+]

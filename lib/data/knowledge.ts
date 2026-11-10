@@ -1,5 +1,5 @@
 /**
- * Knowledge & Memory — the retrieval and memory infrastructure agents use:
+ * Knowledge & Memory: the retrieval and memory infrastructure agents use:
  * vector indexes, ingestion sources and jobs, per-agent memory stores and
  * retrieval-quality telemetry. Distinct from the human-facing ITSM knowledge
  * base in `catalog.ts` (`knowledgeArticles`), which is one of the sources here.
@@ -40,7 +40,7 @@ export interface RetrievalConfig {
   hybridWeight: number
   /** Cross-encoder used to rerank the candidate set, or null for none. */
   reranker: string | null
-  /** Minimum similarity for a chunk to reach the model, 0–1. */
+  /** Minimum similarity for a chunk to reach the model, 0 to 1. */
   scoreThreshold: number
   /** Maximal marginal relevance to diversify the result set. */
   mmr: boolean
@@ -126,7 +126,7 @@ export interface IngestionJob {
   docsTotal: number
   docsProcessed: number
   chunksWritten: number
-  /** 0–100. */
+  /** 0 to 100. */
   progress: number
   error?: string
 }
@@ -142,7 +142,7 @@ export interface MemoryRecord {
   key: string
   summary: string
   created: string
-  /** 0–1 confidence the memory is still true. */
+  /** 0 to 1 confidence the memory is still true. */
   confidence: number
   pinned: boolean
   /** Source that wrote the memory. */
@@ -171,9 +171,9 @@ export interface MemoryStore {
 export interface RetrievalDaily {
   date: string
   queries: number
-  /** Percent, 0–100. */
+  /** Percent, 0 to 100. */
   hitRate: number
-  /** Percent, 0–100. */
+  /** Percent, 0 to 100. */
   contextPrecision: number
   chunksRetrieved: number
   chunksUsed: number
@@ -192,7 +192,7 @@ export interface LowRecallQuery {
   agentId: string
   kbId: string
   traceId: string
-  /** Best similarity among retrieved chunks, 0–1. */
+  /** Best similarity among retrieved chunks, 0 to 1. */
   topScore: number
   retrieved: number
   outcome: LowRecallOutcome
@@ -209,9 +209,9 @@ export interface KbChunk {
 
 export interface RetrievalResult {
   chunk: KbChunk
-  /** Dense/hybrid similarity, 0–1. */
+  /** Dense/hybrid similarity, 0 to 1. */
   score: number
-  /** Score after the cross-encoder reranker, 0–1. */
+  /** Score after the cross-encoder reranker, 0 to 1. */
   rerankScore: number
   matchedTerms: string[]
   belowThreshold: boolean
@@ -341,7 +341,7 @@ export const knowledgeBases: KnowledgeBase[] = [
     lastSync: hoursAgo(26),
     sizeGb: 0.6,
     status: "Healthy",
-    ownerId: "u-012",
+    ownerId: "u-007",
     queries14d: series(14, 940, 220),
     hitRate: 95.2,
     latency: { p50Ms: 188, p95Ms: 520 },
@@ -409,7 +409,7 @@ export const knowledgeBases: KnowledgeBase[] = [
     lastSync: hoursAgo(3.1),
     sizeGb: 1.9,
     status: "Healthy",
-    ownerId: "u-009",
+    ownerId: "u-014",
     queries14d: series(14, 2600, 420),
     hitRate: 91.8,
     latency: { p50Ms: 110, p95Ms: 330 },
@@ -511,7 +511,7 @@ export const knowledgeBases: KnowledgeBase[] = [
     lastSync: daysAgo(3),
     sizeGb: 1.1,
     status: "Error",
-    ownerId: "u-019",
+    ownerId: "u-013",
     queries14d: series(14, 260, 80),
     hitRate: 76.9,
     latency: { p50Ms: 160, p95Ms: 540 },
@@ -669,7 +669,7 @@ const sourceSeeds: SourceSeed[] = [
     href: "https://github.com/example/oncall-playbooks",
   },
   {
-    name: "People Ops – Policies",
+    name: "People Ops / Policies",
     type: "SharePoint",
     connector: "sharepoint-graph@2.0",
     kbId: "kb-policy-handbook",
@@ -832,7 +832,7 @@ const sourceSeeds: SourceSeed[] = [
     href: "/itsm/knowledge",
   },
   {
-    name: "Procurement – Contracts",
+    name: "Procurement / Contracts",
     type: "SharePoint",
     connector: "sharepoint-graph@2.0",
     kbId: "kb-vendor-contracts",
@@ -870,7 +870,7 @@ const sourceSeeds: SourceSeed[] = [
     href: "https://github.com/example/adr",
   },
   {
-    name: "Security – Standards",
+    name: "Security / Standards",
     type: "Confluence",
     connector: "confluence-cloud@2.4",
     kbId: "kb-policy-handbook",
@@ -1003,10 +1003,10 @@ function buildJobs(): IngestionJob[] {
     durationMin: 2,
     error: "403 Forbidden: installation token lacks contents:read",
   })
-  push(byName("People Ops – Policies"), "Completed", "schedule", 26, {
+  push(byName("People Ops / Policies"), "Completed", "schedule", 26, {
     durationMin: 12,
   })
-  push(byName("Procurement – Contracts"), "Completed", "schedule", 31, {
+  push(byName("Procurement / Contracts"), "Completed", "schedule", 31, {
     durationMin: 15,
   })
   push(byName("Sales Enablement"), "Failed", "schedule", 72, {
@@ -1242,7 +1242,7 @@ export const memoryStores: MemoryStore[] = [
       ],
       [
         "env/eu-central/maintenance-window",
-        "Standard maintenance window Tuesdays 02:00–04:00 CET.",
+        "Standard maintenance window Tuesdays 02:00-04:00 CET.",
         45,
       ],
     ]),
@@ -1655,12 +1655,12 @@ const chunkSeeds: Record<string, ChunkSeed[]> = {
   ],
   "kb-policy-handbook": [
     [
-      "People Ops – Policies",
+      "People Ops / Policies",
       "Parental leave (Netherlands)",
       "Employees in the Netherlands are entitled to 6 weeks of partner leave at 70% pay, in addition to one week of fully paid birth leave. Contractors are not covered by this policy.",
     ],
     [
-      "People Ops – Policies",
+      "People Ops / Policies",
       "Home office equipment",
       "Employees may expense up to €500 per year for home office equipment including desks and chairs; country-specific tax treatment applies. Submit receipts through the expense tool.",
     ],
@@ -1670,7 +1670,7 @@ const chunkSeeds: Record<string, ChunkSeed[]> = {
       "Up to 5 days of annual leave can be carried into the next year and must be used by 31 March. Balances are shown in the HR portal.",
     ],
     [
-      "Security – Standards",
+      "Security / Standards",
       "Acceptable use of AI tools",
       "Do not paste customer personal data into external AI tools. Approved assistants are listed in the internal AI catalog.",
     ],
@@ -1678,12 +1678,12 @@ const chunkSeeds: Record<string, ChunkSeed[]> = {
   "kb-change-history": [
     [
       "Closed changes (CHG)",
-      "CHG0039810 – orders table schema migration",
+      "CHG0039810: orders table schema migration",
       "Added a nullable column to the orders table using an online migration during business hours. Completed without incident; lock wait stayed under 200 ms.",
     ],
     [
       "Closed changes (CHG)",
-      "CHG0039422 – auth service rollout",
+      "CHG0039422: auth service rollout",
       "Rolled out auth service 4.2 at 14:00; login failures spiked for 9 minutes. Postmortem recommends off-hours windows for auth changes.",
     ],
     [
@@ -1693,7 +1693,7 @@ const chunkSeeds: Record<string, ChunkSeed[]> = {
     ],
     [
       "Closed changes (CHG)",
-      "CHG0039960 – logging level change",
+      "CHG0039960: logging level change",
       "Config-only change lowering log level on the API gateway. Standard change, auto-approved.",
     ],
   ],
@@ -1773,28 +1773,28 @@ const chunkSeeds: Record<string, ChunkSeed[]> = {
   "kb-itsm-knowledge": [
     [
       "ITSM knowledge articles",
-      "KB0010231 – How to connect to the VPN (GlobalProtect)",
+      "KB0010231: How to connect to the VPN (GlobalProtect)",
       "Install GlobalProtect, sign in with your corporate account and complete MFA. If the client reports an invalid certificate after a macOS update, remove the stale certificate from Keychain and reconnect.",
     ],
     [
       "ITSM knowledge articles",
-      "KB0010245 – Resetting your password with self-service",
+      "KB0010245: Resetting your password with self-service",
       "Use the self-service portal to reset or unlock your account. MFA re-enrollment must be requested from the identity team.",
     ],
     [
       "ITSM knowledge articles",
-      "KB0010260 – Requesting software",
+      "KB0010260: Requesting software",
       "Software requests go through the service catalog; licensed software requires manager approval and takes up to two business days.",
     ],
   ],
   "kb-vendor-contracts": [
     [
-      "Procurement – Contracts",
+      "Procurement / Contracts",
       "CDN services agreement",
       "Term renews annually on 1 March. Either party may terminate with 90 days written notice before the renewal date. Commercial terms redacted.",
     ],
     [
-      "Procurement – Contracts",
+      "Procurement / Contracts",
       "Cloud enterprise agreement",
       "Three-year committed spend with annual true-up each March; overage billed at list price.",
     ],

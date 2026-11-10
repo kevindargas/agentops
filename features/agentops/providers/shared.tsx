@@ -1,5 +1,4 @@
-"use client"
-
+import Link from "next/link"
 import { cn } from "cn"
 
 import { ModelSelectorLogo } from "@/components/ai-elements/model-selector"
@@ -75,7 +74,15 @@ export function ProviderLogo({
   )
 }
 
-/** Logo + name for a gateway provider, used in table cells and chains. */
+/** Anchor of a provider card on the Providers tab. */
+export function providerHref(providerId: string) {
+  return `/agentops/providers?tab=providers#${providerId}`
+}
+
+/**
+ * Logo + name for a gateway provider, used in table cells and chains. Links
+ * to the provider card so a key or a rule can hop to its connection.
+ */
 export function ProviderChip({
   providerId,
   className,
@@ -88,9 +95,10 @@ export function ProviderChip({
   const p = getProvider(providerId)
   if (!p) return <span className="text-muted-foreground">Unknown</span>
   return (
-    <span
+    <Link
+      href={providerHref(p.id)}
       className={cn(
-        "inline-flex min-w-0 items-center gap-1.5",
+        "inline-flex min-w-0 items-center gap-1.5 hover:underline",
         size === "sm" ? "text-xs" : "text-sm",
         className
       )}
@@ -98,7 +106,7 @@ export function ProviderChip({
     >
       <ProviderLogo logo={p.logo} size="sm" />
       <span className="truncate">{p.name}</span>
-    </span>
+    </Link>
   )
 }
 

@@ -11,7 +11,7 @@ import {
 } from "@/lib/data/guardrails"
 
 describe("guardrails data", () => {
-  it("has 14–20 policies with unique ids and real owners", () => {
+  it("has 14-20 policies with unique ids and real owners", () => {
     expect(guardrails.length).toBeGreaterThanOrEqual(14)
     expect(guardrails.length).toBeLessThanOrEqual(20)
     expect(new Set(guardrails.map((g) => g.id)).size).toBe(guardrails.length)

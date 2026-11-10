@@ -4,8 +4,7 @@ import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { createColumnHelper, type Row } from "@tanstack/react-table"
 import { cn } from "cn"
-import { CalendarDaysIcon, PlusIcon } from "lucide-react"
-import { toast } from "sonner"
+import { CalendarDaysIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -20,15 +19,16 @@ import { RecordLink } from "@/components/shared/record-link"
 import { RiskBadge, StateBadge } from "@/components/shared/status-badge"
 import { GroupChip, UserChip } from "@/components/shared/user-chip"
 import { changeRisks, changeStates, changeTypes } from "@/lib/constants"
-import { changes, getCi } from "@/lib/data"
+import { getCi } from "@/lib/data/cmdb"
 import type { Change } from "@/lib/types"
+import { changesStore } from "./changes-store"
 
 const col = createColumnHelper<DataTableFeatures, Change>()
 
 const typeTone: Record<Change["type"], string> = {
   Standard: "bg-muted text-muted-foreground",
-  Normal: "bg-info/10 text-info",
-  Emergency: "bg-destructive/10 text-destructive",
+  Normal: "bg-info/10 text-info-text",
+  Emergency: "bg-destructive/10 text-danger-text",
 }
 
 export function ChangeTypePill({
@@ -106,7 +106,11 @@ const columns = col.columns([
   }),
   col.accessor("risk", {
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Risk" />
+      <DataTableColumnHeader
+        column={column}
+        title="Risk"
+        hint="Assessed risk. Normal changes above Low go to the CAB."
+      />
     ),
     cell: ({ getValue }) => <RiskBadge risk={getValue()} />,
     sortFn: (
@@ -182,8 +186,13 @@ const facets: FacetDef<Change>[] = [
   },
 ]
 
+/**
+ * Change list. Reads `changesStore` so a change created from the New change
+ * sheet appears without a reload. `?view=cab` narrows to the CAB agenda.
+ */
 export function ChangesTable() {
   const params = useSearchParams()
+  const changes = changesStore.use()
   const view = params.get("view")
   const data =
     view === "cab"
@@ -204,6 +213,7 @@ export function ChangesTable() {
       initialColumnVisibility={{ assignedTo: false, plannedEnd: false }}
       rowHref={(r) => `/itsm/changes/${r.number}`}
       totalLabel="changes"
+      caption="Changes"
       emptyTitle={view === "cab" ? "CAB agenda is empty" : undefined}
       emptyMessage={
         view === "cab"
@@ -211,21 +221,13 @@ export function ChangesTable() {
           : undefined
       }
       toolbar={
-        <>
-          <Button
-            variant="outline"
-            size="sm"
-            render={<Link href="/itsm/changes/calendar" />}
-          >
-            <CalendarDaysIcon /> Calendar
-          </Button>
-          <Button
-            size="sm"
-            onClick={() => toast.success("Change CHG0031126 created as draft")}
-          >
-            <PlusIcon /> New change
-          </Button>
-        </>
+        <Button
+          variant="outline"
+          size="sm"
+          render={<Link href="/itsm/changes/calendar" />}
+        >
+          <CalendarDaysIcon /> Calendar
+        </Button>
       }
     />
   )

@@ -1,5 +1,6 @@
 import { cn } from "cn"
 
+import { Eyebrow } from "@/components/shared/eyebrow"
 import {
   StateBadge,
   type BadgeSize,
@@ -17,9 +18,9 @@ import { ModelChip } from "../shared"
 
 /**
  * `production` and `staging` already have tones in status-badge; `draft` and
- * `archived` are passed explicitly until they are added to `stateTone`.
+ * `archived` are passed explicitly so the four labels read as one family.
  */
-export const labelTone: Record<PromptLabel, Tone> = {
+const labelTone: Record<PromptLabel, Tone> = {
   production: "success",
   staging: "info",
   draft: "muted",
@@ -72,7 +73,7 @@ export function VersionTag({
   return (
     <code
       className={cn(
-        "rounded-sm bg-muted px-1 py-0.5 font-mono text-[11px] tabular-nums",
+        "rounded-sm bg-muted px-1 py-0.5 font-mono text-2xs tabular-nums",
         className
       )}
     >
@@ -137,32 +138,37 @@ export function TemplateView({
 /* Model parameters                                                          */
 /* ------------------------------------------------------------------------ */
 
-export const reasoningLabel: Record<ReasoningEffort, string> = {
+const reasoningLabel: Record<ReasoningEffort, string> = {
   none: "Off",
   low: "Low",
   medium: "Medium",
   high: "High",
 }
 
-export const toolChoiceLabel: Record<ModelParams["toolChoice"], string> = {
+const toolChoiceLabel: Record<ModelParams["toolChoice"], string> = {
   auto: "Auto",
   required: "Required",
   none: "None",
 }
 
-export const responseFormatLabel: Record<
-  ModelParams["responseFormat"],
-  string
-> = {
+const responseFormatLabel: Record<ModelParams["responseFormat"], string> = {
   text: "Text",
   json_schema: "JSON schema",
 }
+
+const optionalNumber = (v: number | undefined, digits = 1) =>
+  v === undefined ? (
+    <span className="text-muted-foreground">None</span>
+  ) : (
+    v.toFixed(digits)
+  )
 
 /** One-line summary for dense table cells. */
 export function paramsSummary(p: ModelParams) {
   return `t ${p.temperature.toFixed(1)} · top_p ${p.topP} · ${p.maxOutputTokens.toLocaleString("en-US")} tok · ${reasoningLabel[p.reasoningEffort].toLowerCase()} reasoning`
 }
 
+/** Every `ModelParams` field as a label/value grid, read-only. */
 export function ParamsGrid({
   params: p,
   modelId,
@@ -197,7 +203,7 @@ export function ParamsGrid({
           {p.stopSequences.map((s) => (
             <code
               key={s}
-              className="rounded-sm bg-muted px-1 font-mono text-[11px]"
+              className="rounded-sm bg-muted px-1 font-mono text-2xs"
             >
               {s}
             </code>
@@ -208,16 +214,18 @@ export function ParamsGrid({
       ),
     },
     { label: "Response format", value: responseFormatLabel[p.responseFormat] },
+    { label: "Seed", value: optionalNumber(p.seed, 0) },
+    { label: "Frequency penalty", value: optionalNumber(p.frequencyPenalty) },
+    { label: "Presence penalty", value: optionalNumber(p.presencePenalty) },
     { label: "Timeout", value: `${(p.timeoutMs / 1000).toFixed(0)} s` },
     { label: "Tool-call budget", value: p.maxToolCalls },
+    { label: "Max retries", value: p.maxRetries },
   ]
   return (
     <dl className={cn("grid grid-cols-2 gap-x-4 gap-y-3", className)}>
       {items.map((it) => (
         <div key={it.label} className="min-w-0">
-          <dt className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-            {it.label}
-          </dt>
+          <Eyebrow as="span">{it.label}</Eyebrow>
           <dd className="mt-0.5 truncate text-sm font-medium tabular-nums">
             {it.value}
           </dd>

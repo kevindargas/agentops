@@ -1,9 +1,8 @@
-"use client"
-
 import { cn } from "cn"
 import { BarChart3Icon } from "lucide-react"
 
 import { Skeleton } from "@/components/ui/skeleton"
+import { formatNumber } from "@/lib/format"
 
 /**
  * Shared chart tokens so every card's plot area lines up. Cartesian charts use
@@ -12,6 +11,12 @@ import { Skeleton } from "@/components/ui/skeleton"
  */
 export const CHART_MARGIN = { top: 12, right: 12, bottom: 0, left: 0 } as const
 export const Y_AXIS_WIDTH = 32
+
+/**
+ * Named plot heights so cards in the same row share a baseline. Pass
+ * `height={CHART_HEIGHT.md}` instead of an ad hoc pixel value.
+ */
+export const CHART_HEIGHT = { sm: 180, md: 240, lg: 280 } as const
 
 /** Recessive, muted axis ticks with aligned digits. */
 export const axisTick = {
@@ -37,12 +42,9 @@ export const lineCursor = {
   strokeWidth: 1,
 } as const
 
-/** Compact axis numbers: 0 / 1K / 2.4M. */
+/** Compact axis numbers: 0 / 1K / 2.4M. Same output as `formatNumber(v, true)`. */
 export function compactNumber(v: number) {
-  return new Intl.NumberFormat("en-US", {
-    notation: "compact",
-    maximumFractionDigits: 1,
-  }).format(v)
+  return formatNumber(v, true)
 }
 
 export function shortDate(iso: string) {
@@ -69,7 +71,7 @@ export function gradientId(prefix: string, key: string) {
 
 /** Placeholder shown while chart data is loading. Matches the card's plot footprint. */
 export function ChartSkeleton({
-  height = 240,
+  height = CHART_HEIGHT.md,
   className,
   bars = 7,
 }: {
@@ -97,7 +99,7 @@ export function ChartSkeleton({
 
 /** Empty case when a chart has no rows. Same footprint as the plot it replaces. */
 export function ChartEmpty({
-  height = 240,
+  height = CHART_HEIGHT.md,
   title = "No data",
   description,
   className,

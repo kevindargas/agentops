@@ -1,11 +1,13 @@
 /**
- * Guardrails & policies — the rules that bound what agents may read, say and
+ * Guardrails & policies: the rules that bound what agents may read, say and
  * do. Policies are "policy-as-code": every record carries its YAML source next
  * to the readable configuration. Violations are a deterministic sample of
  * events that link back to real traces.
  */
 
+import type { Severity } from "@/lib/types"
 import { agentTraces, deployedAgents } from "./agentops"
+import { evalRuns } from "./evals"
 import { createRng, daysAgo, hoursAgo, int, pick, weighted } from "./seed"
 
 /* -------------------------------------------------------------------------- */
@@ -17,6 +19,11 @@ export type GuardrailMode = "Block" | "Flag" | "Redact" | "Require approval"
 export type GuardrailEngine =
   "regex" | "classifier" | "llm-judge" | "schema" | "policy-engine"
 export type GuardrailStatus = "Active" | "Disabled" | "Draft"
+/**
+ * What happens when the engine itself errors or times out: `fail_closed`
+ * rejects the turn, `fail_open` lets it through unguarded.
+ */
+export type GuardrailFailMode = "fail_open" | "fail_closed"
 
 export interface GuardrailThreshold {
   /** Config key the slider edits, e.g. `confidence`. */
@@ -56,8 +63,25 @@ export interface Guardrail {
   triggers24h: number
   /** 14-day daily trigger history, oldest first. */
   history: number[]
-  /** Share of reviewed triggers that were false positives, 0–1. */
+  /**
+   * Seed weight only: how often the violation generator dismisses this
+   * policy's hits. The rate shown in the UI is derived from verdicts with
+   * `falsePositiveRate()` below; do not read this field for display.
+   */
   falsePositiveRate: number
+  /** Behaviour when the engine errors or times out. */
+  failMode: GuardrailFailMode
+  /** Evaluation latency added to the turn, p95 in ms. */
+  p95Ms: number
+  /**
+   * Share of red-team attack cases that got through on the last run, 0 to 1.
+   * Always 0 for policies that are not attack surfaces.
+   */
+  bypassRate: number
+  /** Eval run (`ev-…`) the bypass rate was measured on. */
+  lastRedTeamRunId?: string
+  /** ISO-639-1 codes the engine is validated for; empty = language-agnostic. */
+  languages: string[]
   status: GuardrailStatus
   ownerId: string
   updated: string
@@ -66,7 +90,7 @@ export interface Guardrail {
 
 export type ViolationAction =
   "Blocked" | "Flagged" | "Redacted" | "Approval requested"
-export type ViolationSeverity = "Critical" | "Warning" | "Info"
+export type ViolationSeverity = Severity
 export type ViolationVerdict = "Verified" | "Dismissed" | "Pending"
 
 export interface GuardrailViolation {
@@ -77,7 +101,7 @@ export interface GuardrailViolation {
   category: GuardrailCategory
   action: ViolationAction
   severity: ViolationSeverity
-  /** Already redacted — safe to render. */
+  /** Already redacted; safe to render. */
   snippet: string
   traceId: string
   verdict: ViolationVerdict
@@ -88,7 +112,7 @@ export interface GuardrailCoverage {
   agentId: string
   counts: Record<GuardrailCategory, number>
   gaps: GuardrailCategory[]
-  /** 0–100: weighted share of categories covered, with depth bonus. */
+  /** 0 to 100: weighted share of categories covered, with depth bonus. */
   score: number
 }
 
@@ -177,8 +201,165 @@ function versions(
   ]
 }
 
-type Seed = Omit<Guardrail, "history" | "versions" | "updated"> & {
+type Effectiveness = Pick<
+  Guardrail,
+  "failMode" | "p95Ms" | "bypassRate" | "lastRedTeamRunId" | "languages"
+>
+
+type Seed = Omit<
+  Guardrail,
+  "history" | "versions" | "updated" | keyof Effectiveness
+> & {
   versionNotes: [string, string, string]
+}
+
+/**
+ * Most recent completed run of the red-team dataset; security policies link
+ * their bypass rate to it.
+ */
+const redTeamRunId =
+  evalRuns.find(
+    (r) =>
+      r.datasetId === "red-team-injections-v2" &&
+      (r.status === "Passed" || r.status === "Failed")
+  )?.id ?? "ev-2104"
+
+const euLangs = ["en", "de", "fr", "es", "pt"]
+const agnostic: string[] = []
+
+/** Measured effectiveness per policy. Red-team figures come from `redTeamRunId`. */
+const effectiveness: Record<string, Effectiveness> = {
+  "grd-pii-redaction": {
+    failMode: "fail_closed",
+    p95Ms: 18,
+    bypassRate: 0.034,
+    lastRedTeamRunId: redTeamRunId,
+    languages: euLangs,
+  },
+  "grd-prompt-injection": {
+    failMode: "fail_open",
+    p95Ms: 640,
+    bypassRate: 0.072,
+    lastRedTeamRunId: redTeamRunId,
+    languages: ["en", "de", "fr"],
+  },
+  "grd-topic-restriction": {
+    failMode: "fail_open",
+    p95Ms: 1_450,
+    bypassRate: 0,
+    languages: ["en", "de", "fr", "es"],
+  },
+  "grd-language-allowlist": {
+    failMode: "fail_closed",
+    p95Ms: 210,
+    bypassRate: 0,
+    languages: euLangs,
+  },
+  "grd-max-input-tokens": {
+    failMode: "fail_closed",
+    p95Ms: 4,
+    bypassRate: 0,
+    languages: agnostic,
+  },
+  "grd-toxicity": {
+    failMode: "fail_open",
+    p95Ms: 520,
+    bypassRate: 0,
+    languages: ["en", "de"],
+  },
+  "grd-grounding": {
+    failMode: "fail_open",
+    p95Ms: 2_100,
+    bypassRate: 0,
+    languages: ["en", "de", "fr"],
+  },
+  "grd-schema-validation": {
+    failMode: "fail_closed",
+    p95Ms: 6,
+    bypassRate: 0,
+    languages: agnostic,
+  },
+  "grd-secret-leakage": {
+    failMode: "fail_closed",
+    p95Ms: 12,
+    bypassRate: 0.018,
+    lastRedTeamRunId: redTeamRunId,
+    languages: agnostic,
+  },
+  "grd-competitor-mention": {
+    failMode: "fail_open",
+    p95Ms: 9,
+    bypassRate: 0,
+    languages: ["en"],
+  },
+  "grd-citation-required": {
+    failMode: "fail_open",
+    p95Ms: 1_800,
+    bypassRate: 0,
+    languages: ["en", "de", "fr"],
+  },
+  "grd-tool-allowlist": {
+    failMode: "fail_closed",
+    p95Ms: 3,
+    bypassRate: 0,
+    languages: agnostic,
+  },
+  "grd-destructive-approval": {
+    failMode: "fail_closed",
+    p95Ms: 5,
+    bypassRate: 0,
+    languages: agnostic,
+  },
+  "grd-spend-cap": {
+    failMode: "fail_closed",
+    p95Ms: 4,
+    bypassRate: 0,
+    languages: agnostic,
+  },
+  "grd-max-tool-calls": {
+    failMode: "fail_closed",
+    p95Ms: 2,
+    bypassRate: 0,
+    languages: agnostic,
+  },
+  "grd-hitl-confidence": {
+    failMode: "fail_open",
+    p95Ms: 8,
+    bypassRate: 0,
+    languages: agnostic,
+  },
+  "grd-rate-limit-user": {
+    failMode: "fail_open",
+    p95Ms: 3,
+    bypassRate: 0,
+    languages: agnostic,
+  },
+  "grd-retention-window": {
+    failMode: "fail_closed",
+    p95Ms: 7,
+    bypassRate: 0,
+    languages: agnostic,
+  },
+  "grd-region-pinning": {
+    failMode: "fail_closed",
+    p95Ms: 5,
+    bypassRate: 0,
+    languages: agnostic,
+  },
+  "grd-no-training": {
+    failMode: "fail_closed",
+    p95Ms: 4,
+    bypassRate: 0,
+    languages: agnostic,
+  },
+}
+
+/** Fallback for policies added without an entry in `effectiveness`. */
+const defaultEffectiveness: Effectiveness = {
+  failMode: "fail_closed",
+  p95Ms: 10,
+  bypassRate: 0,
+  languages: agnostic,
 }
 
 const seeds: Seed[] = [
@@ -598,7 +779,7 @@ ui_notice: true`,
     versionNotes: [
       "Eligibility statements require a citation",
       "Show a UI notice instead of blocking",
-      "Initial rule for HR Answers",
+      "Initial rule for Policy Answers",
     ],
   },
 
@@ -901,7 +1082,7 @@ fallback: fail_closed`,
     versionNotes: [
       "Fail closed when no EU endpoint is available",
       "Storage included alongside inference",
-      "Initial EU pin for HR Answers",
+      "Initial EU pin for Policy Answers",
     ],
   },
   {
@@ -942,6 +1123,7 @@ export const guardrails: Guardrail[] = seeds.map(({ versionNotes, ...s }) => {
   const v = versions(s.id, s.ownerId, versionNotes)
   return {
     ...s,
+    ...(effectiveness[s.id] ?? defaultEffectiveness),
     history:
       s.status === "Active"
         ? [
@@ -1041,7 +1223,7 @@ const snippets: Record<string, string[]> = {
   "grd-grounding": [
     "Claim 'refunds are processed within 3 days' not in sources",
     "Cited KB0010342 does not mention the VPN split tunnel",
-    "Grounded 0.58 — two of five claims unsupported",
+    "Grounded 0.58: two of five claims unsupported",
   ],
   "grd-schema-validation": [
     "risk_score is required but missing",
@@ -1055,8 +1237,8 @@ const snippets: Record<string, string[]> = {
   ],
   "grd-competitor-mention": ["Compared to Zendesk, our SLA timers…"],
   "grd-citation-required": [
-    "Parental leave is 16 weeks — no source attached",
-    "Expense cap is $75/day — no source attached",
+    "Parental leave is 16 weeks: no source attached",
+    "Expense cap is $75/day: no source attached",
   ],
   "grd-tool-allowlist": [
     'Attempted tool call: shell("df -h")',
@@ -1073,8 +1255,8 @@ const snippets: Record<string, string[]> = {
     "Run reached $1.50 on 3rd reasoning pass",
   ],
   "grd-max-tool-calls": [
-    "12 tool calls reached — loop on read_account",
-    "12 tool calls reached — alternating search/read",
+    "12 tool calls reached: loop on read_account",
+    "12 tool calls reached: alternating search/read",
   ],
   "grd-hitl-confidence": [
     "Confidence 0.41 on 'change CHG0041233 is low risk'",
@@ -1087,8 +1269,8 @@ const snippets: Record<string, string[]> = {
   ],
   "grd-retention-window": ["Purged 1,240 transcripts older than 30 days"],
   "grd-region-pinning": [
-    "Inference routed to us-east-1 — blocked",
-    "Embedding store replica outside EU — blocked",
+    "Inference routed to us-east-1: blocked",
+    "Embedding store replica outside EU: blocked",
   ],
 }
 
@@ -1109,13 +1291,29 @@ function buildViolations(count: number): GuardrailViolation[] {
   const weights = eligible.map(
     (g) => [g, Math.max(1, g.triggers24h)] as [Guardrail, number]
   )
+  // Only agents that actually ran can have violations; a paused agent with no
+  // traces must not be blamed for another agent's run.
+  const tracesByAgent = new Map<string, typeof agentTraces>()
+  for (const t of agentTraces)
+    tracesByAgent.set(t.agentId, [...(tracesByAgent.get(t.agentId) ?? []), t])
   const out: GuardrailViolation[] = []
   for (let i = 0; i < count; i++) {
     const g = weighted(vr, weights)
-    const agents = g.scope === "all" ? deployedAgents.map((a) => a.id) : g.scope
-    const agentId = pick(vr, agents)
-    const candidates = agentTraces.filter((t) => t.agentId === agentId)
-    const trace = pick(vr, candidates.length ? candidates : agentTraces)
+    const inScope =
+      g.scope === "all" ? deployedAgents.map((a) => a.id) : g.scope
+    const agents = inScope.filter((id) => tracesByAgent.has(id))
+    const agentId = pick(vr, agents.length ? agents : [...tracesByAgent.keys()])
+    const candidates = tracesByAgent.get(agentId) ?? agentTraces
+    // Prefer traces that already carry a policy flag so the waterfall agrees.
+    const flagged = candidates.filter((t) =>
+      t.flags.some((f) => f.startsWith("Policy"))
+    )
+    const trace = pick(
+      vr,
+      flagged.length && (g.category === "Output" || g.category === "Data")
+        ? flagged
+        : candidates
+    )
     const verdict = weighted<ViolationVerdict>(vr, [
       ["Pending", 4],
       ["Verified", 4],
@@ -1402,7 +1600,7 @@ export const guardrailPresets: GuardrailPreset[] = [
     id: "secrets",
     label: "Credential in model output",
     description: "An answer that pastes API keys from a retrieved document.",
-    text: "Sure — for the staging environment use sk-live-3f9aK2mP8qRt0wXyZ and the AWS pair AKIAIOSFODNN7EXAMPLE. You can also curl the endpoint directly.",
+    text: "Sure, for the staging environment use sk-live-3f9aK2mP8qRt0wXyZ and the AWS pair AKIAIOSFODNN7EXAMPLE. You can also curl the endpoint directly.",
   },
   {
     id: "destructive",
@@ -1416,7 +1614,37 @@ export const guardrailPresets: GuardrailPreset[] = [
 /* Fleet stats                                                                 */
 /* -------------------------------------------------------------------------- */
 
-export function guardrailStats(list: Guardrail[] = guardrails) {
+/**
+ * The one definition of a false-positive rate: dismissed verdicts divided by
+ * all decided verdicts (Verified plus Dismissed) in the violations log, for
+ * the whole fleet or for a single policy. Returns `null` when nothing has been
+ * decided yet, so callers can render "no verdicts" instead of a fake 0%.
+ */
+export function falsePositiveRate(
+  violations: GuardrailViolation[],
+  policyId?: string
+): { rate: number | null; decided: number; dismissed: number } {
+  const scoped = policyId
+    ? violations.filter((v) => v.policyId === policyId)
+    : violations
+  const decided = scoped.filter((v) => v.verdict !== "Pending")
+  const dismissed = decided.filter((v) => v.verdict === "Dismissed").length
+  return {
+    rate: decided.length ? dismissed / decided.length : null,
+    decided: decided.length,
+    dismissed,
+  }
+}
+
+/**
+ * Fleet stats for the guardrails page. Takes the policy and violation lists
+ * so client stores can pass their current copies and the cards follow
+ * verdicts and status changes made in the session.
+ */
+export function guardrailStats(
+  list: Guardrail[] = guardrails,
+  violations: GuardrailViolation[] = guardrailViolations
+) {
   const active = list.filter((g) => g.status === "Active")
   const blocked24h = active
     .filter((g) => g.mode === "Block")
@@ -1424,9 +1652,7 @@ export function guardrailStats(list: Guardrail[] = guardrails) {
   const flagged24h = active
     .filter((g) => g.mode === "Flag")
     .reduce((s, g) => s + g.triggers24h, 0)
-  const decided = guardrailViolations.filter((v) => v.verdict !== "Pending")
-  const dismissed = decided.filter((v) => v.verdict === "Dismissed").length
-  const fpRate = decided.length ? dismissed / decided.length : 0
+  const fp = falsePositiveRate(violations)
   const withoutOutput = deployedAgents.filter(
     (a) => guardrailCoverage(a.id, list).counts.Output === 0
   )
@@ -1435,8 +1661,9 @@ export function guardrailStats(list: Guardrail[] = guardrails) {
     total: list.length,
     blocked24h,
     flagged24h,
-    fpRate,
-    decided: decided.length,
+    fpRate: fp.rate,
+    decided: fp.decided,
+    pending: violations.filter((v) => v.verdict === "Pending").length,
     withoutOutput,
   }
 }

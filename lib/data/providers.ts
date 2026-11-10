@@ -1,16 +1,18 @@
 /**
- * Providers, API keys, routing and rate limits — the gateway layer between
+ * Providers, API keys, routing and rate limits: the gateway layer between
  * deployed agents and model vendors. Deterministic mock data anchored to NOW.
  */
 
+import type { AgentEnvironment, ConnectionStatus } from "@/lib/types"
 import { deployedAgents } from "./agentops"
+import { spendByProvider, spendTodayByProvider } from "./costs"
 import { createRng, daysAgo, daysFromNow, hoursAgo, int } from "./seed"
 
 /* -------------------------------------------------------------------------- */
 /* Types                                                                       */
 /* -------------------------------------------------------------------------- */
 
-export type ProviderStatus = "Connected" | "Degraded" | "Disconnected"
+export type ProviderStatus = ConnectionStatus
 export type CredentialType =
   | "API key"
   | "Service account"
@@ -46,7 +48,7 @@ export interface Provider {
   availableModels: string[]
   credentialType: CredentialType
   requests24h: number
-  /** 0–100 */
+  /** 0 to 100 */
   errorRate: number
   p95Ms: number
   spendToday: number
@@ -58,7 +60,10 @@ export interface Provider {
 }
 
 export type ApiKeyStatus = "Active" | "Expiring" | "Revoked" | "Rotating"
-export type KeyEnvironment = "production" | "staging"
+export type KeyEnvironment = AgentEnvironment
+
+/** Hours a rotated key keeps working before the old secret stops. */
+export const keyRotationGraceHours = 24
 
 export interface ApiKey {
   id: string
@@ -90,7 +95,7 @@ export type RoutingStatus = "Active" | "Paused" | "Draft"
 export interface RoutingTarget {
   modelId: string
   providerId: string
-  /** Traffic weight for weighted strategies, 0–100. */
+  /** Traffic weight for weighted strategies, 0 to 100. */
   weight?: number
   /** Pinned region for region-pinned strategies. */
   region?: string
@@ -101,7 +106,7 @@ export interface RoutingRule {
   name: string
   description: string
   agentIds: string[]
-  /** Share of gateway requests matched by this rule, 0–100. */
+  /** Share of gateway requests matched by this rule, 0 to 100. */
   trafficShare: number
   strategy: RoutingStrategy
   /** Ordered chain: primary first. */
@@ -149,7 +154,13 @@ const trend = (base: number, spread: number, spike?: number) =>
     )
   )
 
-export const providers: Provider[] = [
+type ProviderSeed = Omit<Provider, "spendToday">
+
+/**
+ * `spendToday` is derived from `costDaily` (lib/data/costs.ts) so the
+ * provider cards, Costs & Budgets and the fleet overview agree to the cent.
+ */
+const providerSeeds: ProviderSeed[] = [
   {
     id: "prv-anthropic",
     name: "Anthropic",
@@ -179,7 +190,6 @@ export const providers: Provider[] = [
     requests24h: 6240,
     errorRate: 0.4,
     p95Ms: 2840,
-    spendToday: 446.5,
     latencyTrend: trend(2800, 400),
     lastHealthCheck: hoursAgo(0.05),
     testLatencyMs: 312,
@@ -206,7 +216,6 @@ export const providers: Provider[] = [
     requests24h: 7310,
     errorRate: 0.6,
     p95Ms: 1920,
-    spendToday: 104.8,
     latencyTrend: trend(1900, 320),
     lastHealthCheck: hoursAgo(0.08),
     testLatencyMs: 268,
@@ -235,7 +244,6 @@ export const providers: Provider[] = [
     requests24h: 2080,
     errorRate: 3.8,
     p95Ms: 4610,
-    spendToday: 21.6,
     latencyTrend: trend(1500, 260, 11),
     lastHealthCheck: hoursAgo(0.05),
     testLatencyMs: 1480,
@@ -264,7 +272,6 @@ export const providers: Provider[] = [
     requests24h: 1410,
     errorRate: 0.3,
     p95Ms: 3120,
-    spendToday: 64.2,
     latencyTrend: trend(3100, 380),
     lastHealthCheck: hoursAgo(0.12),
     testLatencyMs: 402,
@@ -290,7 +297,6 @@ export const providers: Provider[] = [
     requests24h: 960,
     errorRate: 0.2,
     p95Ms: 2210,
-    spendToday: 38.9,
     latencyTrend: trend(2200, 300),
     lastHealthCheck: hoursAgo(0.1),
     testLatencyMs: 355,
@@ -320,7 +326,6 @@ export const providers: Provider[] = [
     requests24h: 1520,
     errorRate: 1.1,
     p95Ms: 2680,
-    spendToday: 11.4,
     latencyTrend: trend(2600, 420),
     lastHealthCheck: hoursAgo(0.07),
     testLatencyMs: 489,
@@ -345,7 +350,6 @@ export const providers: Provider[] = [
     requests24h: 140,
     errorRate: 0,
     p95Ms: 1640,
-    spendToday: 2.1,
     latencyTrend: trend(1650, 240),
     lastHealthCheck: hoursAgo(0.2),
     testLatencyMs: 221,
@@ -370,7 +374,6 @@ export const providers: Provider[] = [
     requests24h: 310,
     errorRate: 42.6,
     p95Ms: 0,
-    spendToday: 0,
     latencyTrend: [...trend(880, 160).slice(0, 12), 0, 0],
     lastHealthCheck: hoursAgo(0.68),
     testLatencyMs: 0,
@@ -391,12 +394,16 @@ export const providers: Provider[] = [
     requests24h: 4120,
     errorRate: 0.1,
     p95Ms: 240,
-    spendToday: 6.8,
     latencyTrend: trend(240, 40),
     lastHealthCheck: hoursAgo(0.05),
     testLatencyMs: 96,
   },
 ]
+
+export const providers: Provider[] = providerSeeds.map((p) => ({
+  ...p,
+  spendToday: Math.round(spendTodayByProvider(p.id) * 100) / 100,
+}))
 
 export function getProvider(id: string) {
   return providers.find((p) => p.id === id)
@@ -414,7 +421,7 @@ export const providerIncidents: ProviderIncident[] = [
   {
     id: "inc-prv-002",
     providerId: "prv-vllm",
-    title: "Health check failing — GPU node pool fra-gpu-a unreachable",
+    title: "Health check failing: GPU node pool fra-gpu-a unreachable",
     severity: "major",
     status: "Investigating",
     started: hoursAgo(0.7),
@@ -486,7 +493,12 @@ const key = (
   status,
 })
 
-export const apiKeys: ApiKey[] = [
+/**
+ * Key records before `monthlySpend` is scaled. The seeded figure is only the
+ * key's share of its provider; the real amount is the provider's 30-day spend
+ * from `costDaily` split by those shares, so keys never out-spend the fleet.
+ */
+const keySeeds: ApiKey[] = [
   key(
     "key-001",
     "gateway-prod-anthropic",
@@ -515,9 +527,9 @@ export const apiKeys: ApiKey[] = [
   ),
   key(
     "key-003",
-    "vertex-sa-hr-answers",
+    "vertex-sa-policy-answers",
     "prv-vertex",
-    "u-009",
+    "u-007",
     ["aiplatform.endpoints.predict"],
     "production",
     120,
@@ -530,7 +542,7 @@ export const apiKeys: ApiKey[] = [
     "key-004",
     "bedrock-sre-role",
     "prv-bedrock",
-    "u-011",
+    "u-018",
     ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
     "production",
     88,
@@ -541,9 +553,9 @@ export const apiKeys: ApiKey[] = [
   ),
   key(
     "key-005",
-    "azure-finance-copilot",
+    "azure-openai-gateway",
     "prv-azure",
-    "u-012",
+    "u-001",
     ["chat.completions"],
     "staging",
     41,
@@ -599,7 +611,8 @@ export const apiKeys: ApiKey[] = [
     ["completions", "chat.completions"],
     "production",
     304,
-    0.7,
+    // Last used before the certificate expired and was revoked.
+    60,
     daysAgo(2),
     0,
     "Revoked"
@@ -651,7 +664,8 @@ export const apiKeys: ApiKey[] = [
     ["messages"],
     "production",
     402,
-    720,
+    // Last used before it expired and was revoked.
+    800,
     daysAgo(31),
     0,
     "Revoked"
@@ -696,6 +710,28 @@ export const apiKeys: ApiKey[] = [
     "Active"
   ),
 ]
+
+const provider30d = spendByProvider()
+
+export const apiKeys: ApiKey[] = keySeeds.map((k) => {
+  const siblings = keySeeds.filter((x) => x.providerId === k.providerId)
+  const weightSum = siblings.reduce((s, x) => s + x.monthlySpend, 0)
+  const total = provider30d[k.providerId] ?? 0
+  return {
+    ...k,
+    monthlySpend: weightSum
+      ? Math.round((total * k.monthlySpend) / weightSum)
+      : 0,
+  }
+})
+
+/** Keys that expire within `days` and still carry traffic. */
+export function expiringKeyCount(days = 30, list: ApiKey[] = apiKeys) {
+  const limit = daysFromNow(days)
+  return list.filter(
+    (k) => k.status !== "Revoked" && k.expires !== null && k.expires <= limit
+  ).length
+}
 
 export function getApiKey(id: string) {
   return apiKeys.find((k) => k.id === id)
@@ -766,7 +802,7 @@ export const routingRules: RoutingRule[] = [
   },
   {
     id: "rt-004",
-    name: "HR Answers · EU region pinned",
+    name: "Policy Answers · EU region pinned",
     description:
       "Employee data must stay in the EU: Vertex europe-west4 first, Azure Sweden as the only fallback.",
     agentIds: ["agt-hr-answers"],
@@ -795,19 +831,19 @@ export const routingRules: RoutingRule[] = [
     id: "rt-005",
     name: "Alert Correlator · cheapest open-weight",
     description:
-      "High-volume classification; the gateway picks the cheapest healthy target each minute.",
+      "High-volume classification; the gateway picks the cheapest healthy target each minute. The self-hosted cluster is disconnected, so every request is served by OpenRouter.",
     agentIds: ["agt-alert-correlator"],
     trafficShare: 8,
     strategy: "Lowest cost",
     chain: [
-      { modelId: "meta-llama/llama-4-scout", providerId: "prv-vllm" },
       { modelId: "deepseek/deepseek-v3.2", providerId: "prv-openrouter" },
+      { modelId: "meta-llama/llama-4-scout", providerId: "prv-vllm" },
       { modelId: "openai/gpt-5.4-mini", providerId: "prv-openai" },
     ],
     conditions: ["on 5xx", "on timeout"],
     timeoutMs: 8_000,
     retries: 1,
-    fallbackHits24h: 1440,
+    fallbackHits24h: 0,
     status: "Active",
     updated: daysAgo(1),
   },

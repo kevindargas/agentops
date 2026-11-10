@@ -1,20 +1,14 @@
 import { Suspense } from "react"
 import type { Metadata } from "next"
-import Link from "next/link"
-import {
-  BookOpenIcon,
-  EyeIcon,
-  FileClockIcon,
-  PlusIcon,
-  ThumbsUpIcon,
-} from "lucide-react"
 
-import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { PageHeader } from "@/components/shared/page-header"
+import { TableSkeleton } from "@/components/shared/skeletons"
 import { StatCard } from "@/components/shared/stat-card"
+import { StatGrid } from "@/components/shared/stat-grid"
 import { KnowledgeTable } from "@/features/knowledge/knowledge-table"
-import { knowledgeArticles } from "@/lib/data"
+import { NewArticleSheet } from "@/features/knowledge/new-article-sheet"
+import { knowledgeArticles } from "@/lib/data/catalog"
 import { formatNumber } from "@/lib/format"
 
 export const metadata: Metadata = { title: "Knowledge" }
@@ -33,43 +27,37 @@ export default function KnowledgePage() {
   return (
     <>
       <PageHeader
-        title="Knowledge"
+        nav="/itsm/knowledge"
         description="Capture, review and publish articles so employees can self-serve and agents resolve faster. Known errors are linked from problems."
         actions={
-          <>
-            <Button render={<Link href="/itsm/knowledge?new=1" />}>
-              <PlusIcon /> New article
-            </Button>
-          </>
+          <Suspense fallback={<Skeleton className="h-8 w-32" />}>
+            <NewArticleSheet />
+          </Suspense>
         }
       />
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <StatGrid columns={4}>
         <StatCard
           label="Published articles"
           value={published.length}
-          icon={<BookOpenIcon />}
           hint={`Across ${bases} knowledge bases`}
         />
         <StatCard
           label="Awaiting review"
           value={review}
-          icon={<FileClockIcon />}
           hint={`${drafts} draft${drafts === 1 ? "" : "s"} in progress`}
         />
         <StatCard
           label="Total views"
           value={formatNumber(views, true)}
-          delta={9}
-          icon={<EyeIcon />}
+          hint="All articles, lifetime"
         />
         <StatCard
           label="Helpful rating"
           value={`${Math.round((helpful / Math.max(1, total)) * 100)}%`}
-          delta={1.4}
-          icon={<ThumbsUpIcon />}
+          hint={`${formatNumber(total, true)} votes`}
         />
-      </div>
-      <Suspense fallback={<Skeleton className="h-96" />}>
+      </StatGrid>
+      <Suspense fallback={<TableSkeleton columns={7} />}>
         <KnowledgeTable />
       </Suspense>
     </>

@@ -28,6 +28,8 @@ export interface StatCardProps {
   deltaUnit?: string
   /** Whether an increase is good (green) or bad (red). */
   upIsGood?: boolean
+  /** Force the delta colour instead of deriving it from `upIsGood`. */
+  deltaTone?: "good" | "bad" | "neutral"
   hint?: React.ReactNode
   icon?: React.ReactNode
   className?: string
@@ -51,6 +53,7 @@ export function StatCard({
   deltaLabel = "vs last period",
   deltaUnit = "%",
   upIsGood = true,
+  deltaTone,
   hint,
   icon,
   className,
@@ -61,16 +64,8 @@ export function StatCard({
   size = "default",
   loading = false,
 }: StatCardProps) {
-  const direction =
-    delta === undefined
-      ? undefined
-      : delta > 0
-        ? "up"
-        : delta < 0
-          ? "down"
-          : "flat"
-  const good =
-    direction === "flat" ? undefined : direction === "up" ? upIsGood : !upIsGood
+  const direction = delta === undefined ? undefined : deltaDirection(delta)
+  const good = resolveDeltaGood(direction, upIsGood, deltaTone)
   const hasFooter = Boolean(hint || children || direction || loading)
   const deltaText = delta === undefined ? "" : formatDelta(delta, deltaUnit)
 
@@ -162,6 +157,57 @@ export function StatCard({
   )
 }
 
+export type DeltaDirection = "up" | "down" | "flat"
+
+export function deltaDirection(delta: number): DeltaDirection {
+  return delta > 0 ? "up" : delta < 0 ? "down" : "flat"
+}
+
+function resolveDeltaGood(
+  direction: DeltaDirection | undefined,
+  upIsGood: boolean,
+  tone?: "good" | "bad" | "neutral"
+) {
+  if (tone === "neutral") return undefined
+  if (tone === "good") return true
+  if (tone === "bad") return false
+  if (!direction || direction === "flat") return undefined
+  return direction === "up" ? upIsGood : !upIsGood
+}
+
+/**
+ * Formats a derived delta (previous period vs now) as a tinted pill. Use it
+ * inside `MetricTile`, table cells and custom tiles; `StatCard` renders the
+ * same pill from its `delta` prop.
+ */
+export function StatDelta({
+  value,
+  unit = "%",
+  upIsGood = true,
+  tone,
+  digits = 1,
+  className,
+}: {
+  value: number
+  /** Appended to the figure. Defaults to "%"; pass "" for counts or "pt" for points. */
+  unit?: string
+  upIsGood?: boolean
+  /** Force the colour instead of deriving it from `upIsGood`. */
+  tone?: "good" | "bad" | "neutral"
+  digits?: number
+  className?: string
+}) {
+  const direction = deltaDirection(value)
+  return (
+    <DeltaPill
+      direction={direction}
+      good={resolveDeltaGood(direction, upIsGood, tone)}
+      text={formatDelta(value, unit, digits)}
+      className={className}
+    />
+  )
+}
+
 /** Delta chip: tinted pill with a directional glyph. Exported for use in custom KPI tiles. */
 export function DeltaPill({
   direction,
@@ -184,7 +230,7 @@ export function DeltaPill({
   return (
     <span
       className={cn(
-        "inline-flex h-5 items-center gap-0.5 rounded-full border px-1.5 text-[11px] leading-none font-semibold tabular-nums",
+        "inline-flex h-5 items-center gap-0.5 rounded-full border px-1.5 text-2xs leading-none font-semibold tabular-nums",
         good === undefined
           ? "border-border bg-muted/60 text-muted-foreground"
           : good

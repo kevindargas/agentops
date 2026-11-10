@@ -3,6 +3,7 @@
 import * as React from "react"
 import { cn } from "cn"
 import {
+  AlertTriangleIcon,
   ArrowDownIcon,
   ArrowUpIcon,
   BracesIcon,
@@ -27,6 +28,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
+import { EmptyValue } from "@/components/data-table"
 import { CopyButton } from "@/components/shared/copy-button"
 import { DetailList } from "@/components/shared/detail-list"
 import { EmptyState } from "@/components/shared/empty-state"
@@ -62,6 +64,7 @@ import { Input } from "@/components/ui/input"
 import {
   Table,
   TableBody,
+  TableCaption,
   TableCell,
   TableHead,
   TableHeader,
@@ -71,9 +74,10 @@ import { Textarea } from "@/components/ui/textarea"
 import { getUser } from "@/lib/data/users"
 import { formatDateTime } from "@/lib/format"
 import {
+  decodeShareHash,
   diffAssessments,
   parseAssessment,
-  readShareHash,
+  SHARE_LINK_WARN_CHARS,
   shareUrl,
   toCsv,
   toJson,
@@ -86,7 +90,7 @@ import {
   evaluateAssessment,
   voteSpread,
 } from "@/lib/readiness/scoring"
-import { readinessActions } from "@/lib/readiness/store"
+import { BEFORE_IMPORT_LABEL, readinessActions } from "@/lib/readiness/store"
 import type {
   Assessment,
   AssessmentResult,
@@ -94,6 +98,7 @@ import type {
   ControlStatus,
   Snapshot,
 } from "@/lib/readiness/types"
+import { copyText, downloadText, slug } from "./download"
 import {
   ControlStatusBadge,
   scoreTextClass,
@@ -102,42 +107,8 @@ import {
 } from "./shared"
 
 /* ------------------------------------------------------------------------ */
-/* Helpers (event handlers only — nothing here runs during render)           */
+/* Helpers (event handlers only: nothing here runs during render)           */
 /* ------------------------------------------------------------------------ */
-
-function slug(s: string) {
-  return (
-    s
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 60) || "assessment"
-  )
-}
-
-function download(filename: string, content: string, mime: string) {
-  const blob = new Blob([content], { type: mime })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement("a")
-  a.href = url
-  a.download = filename
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
-  toast("Download started", { description: filename })
-}
-
-async function copyText(text: string, title: string) {
-  try {
-    await navigator.clipboard.writeText(text)
-    toast(title, { description: "Copied to the clipboard." })
-  } catch {
-    toast("Clipboard unavailable", {
-      description: "Copying requires a secure (https) context.",
-    })
-  }
-}
 
 function readFileText(file: File) {
   return new Promise<string>((resolve, reject) => {
@@ -148,23 +119,42 @@ function readFileText(file: File) {
   })
 }
 
-/** Accepts raw JSON, a full share URL or just the `#s=…` fragment. */
-function parseImport(text: string): Assessment {
+/**
+ * Accepts raw JSON, a full share URL or just the `#s=…` fragment. Every
+ * failure names what was wrong so the user can fix the input.
+ */
+function parseImport(text: string, controlSet: ControlSet): Assessment {
   const trimmed = text.trim()
   if (!trimmed) throw new Error("Paste an assessment first.")
+  let parsed: Assessment
   if (/(^|[#&?])s=/.test(trimmed)) {
     const hash = trimmed.startsWith("s=") ? `#${trimmed}` : trimmed
-    const parsed = readShareHash(hash)
-    if (!parsed) throw new Error("The share link could not be decoded.")
-    return parsed
+    parsed = decodeShareHash(hash)
+  } else {
+    let json: unknown
+    try {
+      json = JSON.parse(trimmed)
+    } catch {
+      throw new Error(
+        "Not valid JSON and not a share link. Paste the exported .json contents or a URL containing #s=."
+      )
+    }
+    parsed = parseAssessment(json)
   }
-  let json: unknown
-  try {
-    json = JSON.parse(trimmed)
-  } catch {
-    throw new Error("Not valid JSON and not a share link.")
-  }
-  return parseAssessment(json)
+  const known = new Set(controlSet.controls.map((c) => c.id))
+  const unknown = Object.keys(parsed.responses).filter((id) => !known.has(id))
+  if (unknown.length > 0)
+    throw new Error(
+      `${unknown.length} response${unknown.length === 1 ? "" : "s"} reference control ids missing from ${controlSet.name} v${controlSet.version}: ${unknown.slice(0, 4).join(", ")}${unknown.length > 4 ? ` and ${unknown.length - 4} more` : ""}. Import the matching control set under Customization first.`
+    )
+  if (
+    parsed.controlSetId !== "unknown" &&
+    parsed.controlSetId !== controlSet.id
+  )
+    throw new Error(
+      `The assessment was answered against control set "${parsed.controlSetId}" but "${controlSet.id}" is active. Import that control set first or export the assessment from the same catalog.`
+    )
+  return parsed
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -307,7 +297,7 @@ function ExportSection({
             variant="outline"
             size="sm"
             onClick={() =>
-              download(
+              downloadText(
                 `${slug(assessment.name)}-readiness.json`,
                 toJson(assessment),
                 "application/json"
@@ -321,7 +311,7 @@ function ExportSection({
             variant="outline"
             size="sm"
             onClick={() =>
-              download(
+              downloadText(
                 `${slug(assessment.name)}-readiness.md`,
                 toMarkdown(
                   assessment,
@@ -340,7 +330,7 @@ function ExportSection({
             variant="outline"
             size="sm"
             onClick={() =>
-              download(
+              downloadText(
                 `${slug(assessment.name)}-readiness.csv`,
                 toCsv(assessment, result),
                 "text/csv"
@@ -367,11 +357,12 @@ function ShareLinkSection({ assessment }: { assessment: Assessment | null }) {
     () => (assessment ? shareUrl(assessment) : ""),
     [assessment]
   )
+  const tooLong = link.length > SHARE_LINK_WARN_CHARS
   return (
     <Section
       icon={<Link2Icon />}
       title="Share link"
-      description="Send the current state to a colleague. Opening the link loads it into their browser."
+      description="Send the current state to a colleague. Opening the link loads it into their browser; if they already have an assessment they are asked before it is replaced."
     >
       {!assessment ? (
         <SetupRequired what="generate a share link" />
@@ -397,11 +388,30 @@ function ShareLinkSection({ assessment }: { assessment: Assessment | null }) {
             <Button
               type="button"
               size="sm"
-              onClick={() => copyText(link, "Share link")}
+              onClick={() =>
+                copyText(
+                  shareUrl(assessment),
+                  "Share link copied",
+                  "The full URL is on your clipboard. It holds every answer, owner and note."
+                )
+              }
             >
               <CopyIcon /> Copy link
             </Button>
           </div>
+          {tooLong && (
+            <Alert>
+              <AlertTriangleIcon />
+              <AlertTitle>
+                Long link ({link.length.toLocaleString("en-US")} characters)
+              </AlertTitle>
+              <AlertDescription>
+                Links over {SHARE_LINK_WARN_CHARS.toLocaleString("en-US")}{" "}
+                characters are cut off by some chat clients and proxies. Export
+                JSON instead, or trim notes and evidence before sharing.
+              </AlertDescription>
+            </Alert>
+          )}
         </>
       )}
     </Section>
@@ -412,15 +422,22 @@ function ShareLinkSection({ assessment }: { assessment: Assessment | null }) {
 /* Import                                                                    */
 /* ------------------------------------------------------------------------ */
 
-function ImportSection() {
+function ImportSection({
+  controlSet,
+  hasAssessment,
+}: {
+  controlSet: ControlSet
+  hasAssessment: boolean
+}) {
   const [text, setText] = React.useState("")
   const [error, setError] = React.useState<string | null>(null)
   const [preview, setPreview] = React.useState<Assessment | null>(null)
+  const [confirmReplace, setConfirmReplace] = React.useState(false)
   const fileRef = React.useRef<HTMLInputElement>(null)
 
   function tryParse(source: string) {
     try {
-      setPreview(parseImport(source))
+      setPreview(parseImport(source, controlSet))
       setError(null)
     } catch (e) {
       setPreview(null)
@@ -436,7 +453,9 @@ function ImportSection() {
       setText(content)
       tryParse(content)
     } catch {
-      setError("The file could not be read.")
+      setError(
+        "The file could not be read. Pick a UTF-8 .json file exported from this page."
+      )
     } finally {
       e.target.value = ""
     }
@@ -523,13 +542,53 @@ function ImportSection() {
               type="button"
               size="sm"
               onClick={() => {
+                if (hasAssessment) {
+                  setConfirmReplace(true)
+                  return
+                }
                 readinessActions.load(preview)
-                toast("Assessment replaced", { description: preview.name })
+                toast("Assessment loaded", { description: preview.name })
                 clear()
               }}
             >
-              Replace current assessment
+              {hasAssessment ? "Replace current assessment" : "Load assessment"}
             </Button>
+            <AlertDialog
+              open={confirmReplace}
+              onOpenChange={(o) => !o && setConfirmReplace(false)}
+            >
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>
+                    Replace the current assessment?
+                  </AlertDialogTitle>
+                  <AlertDialogDescription>
+                    The current answers are saved first as the snapshot{" "}
+                    <span className="font-medium text-foreground">
+                      {BEFORE_IMPORT_LABEL}
+                    </span>
+                    , then {preview.name} with{" "}
+                    {Object.keys(preview.responses).length} responses becomes
+                    the working assessment.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={() => {
+                      readinessActions.replace(preview, BEFORE_IMPORT_LABEL)
+                      toast("Assessment replaced", {
+                        description: `${preview.name} loaded; the previous assessment was saved as the snapshot "${BEFORE_IMPORT_LABEL}".`,
+                      })
+                      setConfirmReplace(false)
+                      clear()
+                    }}
+                  >
+                    Snapshot and replace
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
             <Button
               type="button"
               variant="outline"
@@ -630,6 +689,9 @@ function CompareView({
           ) : (
             <div className="overflow-hidden rounded-lg border">
               <Table>
+                <TableCaption className="sr-only">
+                  Controls whose status changed since {snapshot.label}
+                </TableCaption>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Control</TableHead>
@@ -678,6 +740,9 @@ function CompareView({
           </p>
           <div className="overflow-hidden rounded-lg border">
             <Table>
+              <TableCaption className="sr-only">
+                Domain scores before and after {snapshot.label}
+              </TableCaption>
               <TableHeader>
                 <TableRow>
                   <TableHead>Domain</TableHead>
@@ -712,7 +777,7 @@ function CompareView({
                     <TableRow key={d.domain.id}>
                       <TableCell>{d.domain.short}</TableCell>
                       <TableCell className="text-right text-muted-foreground tabular-nums">
-                        {prev?.score ?? "—"}
+                        {prev ? prev.score : <EmptyValue />}
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
                         {d.score}
@@ -721,7 +786,7 @@ function CompareView({
                         {prev ? (
                           <ScoreDelta from={prev.score} to={d.score} />
                         ) : (
-                          "—"
+                          <EmptyValue />
                         )}
                       </TableCell>
                     </TableRow>
@@ -869,7 +934,7 @@ function HistorySection({
                         <AlertDialogContent>
                           <AlertDialogHeader>
                             <AlertDialogTitle>
-                              Restore “{snapshot.label}”?
+                              Restore {snapshot.label}?
                             </AlertDialogTitle>
                             <AlertDialogDescription>
                               The current answers are replaced by the snapshot
@@ -893,22 +958,56 @@ function HistorySection({
                           </AlertDialogFooter>
                         </AlertDialogContent>
                       </AlertDialog>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-xs"
-                        aria-label={`Delete snapshot ${snapshot.label}`}
-                        className="text-muted-foreground hover:text-destructive"
-                        onClick={() => {
-                          readinessActions.deleteSnapshot(snapshot.id)
-                          if (active) setCompareId(null)
-                          toast("Snapshot deleted", {
-                            description: snapshot.label,
-                          })
-                        }}
-                      >
-                        <Trash2Icon />
-                      </Button>
+                      <AlertDialog>
+                        <AlertDialogTrigger
+                          render={
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-xs"
+                              aria-label={`Delete snapshot ${snapshot.label}`}
+                              className="text-muted-foreground hover:text-danger-text"
+                            />
+                          }
+                        >
+                          <Trash2Icon />
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>
+                              Delete snapshot {snapshot.label}?
+                            </AlertDialogTitle>
+                            <AlertDialogDescription>
+                              The snapshot from{" "}
+                              {formatDateTime(snapshot.takenAt)} (score{" "}
+                              {overall}) is removed from this browser. The
+                              current assessment is not affected. You can undo
+                              from the toast for a few seconds.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction
+                              variant="destructive"
+                              onClick={() => {
+                                readinessActions.deleteSnapshot(snapshot.id)
+                                if (active) setCompareId(null)
+                                toast("Snapshot deleted", {
+                                  description: snapshot.label,
+                                  duration: 8000,
+                                  action: {
+                                    label: "Undo",
+                                    onClick: () =>
+                                      readinessActions.addSnapshot(snapshot),
+                                  },
+                                })
+                              }}
+                            >
+                              Delete snapshot
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
                     </div>
                   </li>
                 )
@@ -987,11 +1086,12 @@ function TeamSection({
           id="respondent-name"
           value={respondent}
           onChange={(e) => readinessActions.setRespondent(e.target.value)}
-          placeholder="e.g. Amara"
+          placeholder="e.g. Amara Okafor"
           autoComplete="off"
         />
         <FieldDescription>
-          Stored locally; it labels your votes in the share link.
+          Use your full name so votes match the respondents list. Stored
+          locally; it labels your votes in the share link.
         </FieldDescription>
       </Field>
       {!assessment ? (
@@ -1023,22 +1123,48 @@ function TeamSection({
             <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
               <p className="text-xs font-medium text-muted-foreground">
                 Needs discussion{" "}
-                <span className="tabular-nums">({contested.length})</span> —
+                <span className="tabular-nums">({contested.length})</span>:
                 votes spread two or more steps apart
               </p>
               {contested.length > 0 && (
-                <Button type="button" size="xs" onClick={applyAll}>
-                  <CheckCheckIcon /> Apply consensus to all
-                </Button>
+                <AlertDialog>
+                  <AlertDialogTrigger
+                    render={<Button type="button" size="xs" />}
+                  >
+                    <CheckCheckIcon /> Apply consensus to all
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>
+                        Apply consensus to {contested.length} control
+                        {contested.length === 1 ? "" : "s"}?
+                      </AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Each contested control takes its majority vote (ties
+                        resolve to the lower status), overwriting the current
+                        status. Take a snapshot first if you want to compare.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction onClick={applyAll}>
+                        Apply to {contested.length}
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
               )}
             </div>
             {contested.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                No disagreements — every voted control has adjacent answers.
+                No disagreements: every voted control has adjacent answers.
               </p>
             ) : (
               <div className="overflow-hidden rounded-lg border">
                 <Table>
+                  <TableCaption className="sr-only">
+                    Contested controls with votes, current and consensus status
+                  </TableCaption>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Control</TableHead>
@@ -1144,7 +1270,10 @@ function PrivacySection() {
               variant="destructive"
               onClick={() => {
                 readinessActions.reset()
-                toast("Local data cleared")
+                toast("Local data cleared", {
+                  description:
+                    "Assessment, snapshots, respondent name and imported control set removed from this browser.",
+                })
               }}
             >
               Clear everything
@@ -1251,7 +1380,7 @@ function CustomizationSection({
           variant="outline"
           size="sm"
           onClick={() =>
-            download(
+            downloadText(
               `${slug(controlSet.id)}-v${controlSet.version}.json`,
               JSON.stringify(controlSet, null, 2),
               "application/json"
@@ -1261,19 +1390,42 @@ function CustomizationSection({
           <DownloadIcon /> Download current control set as JSON
         </Button>
         {customControlSet && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              readinessActions.setControlSet(null)
-              toast("Reverted to the default control set", {
-                description: `${defaultControlSet.name} v${defaultControlSet.version}`,
-              })
-            }}
-          >
-            <RotateCcwIcon /> Revert to default
-          </Button>
+          <AlertDialog>
+            <AlertDialogTrigger
+              render={<Button type="button" variant="ghost" size="sm" />}
+            >
+              <RotateCcwIcon /> Revert to default
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>
+                  Revert to the default control set?
+                </AlertDialogTitle>
+                <AlertDialogDescription>
+                  {customControlSet.name} v{customControlSet.version} is removed
+                  from this browser and every tab re-evaluates against{" "}
+                  {defaultControlSet.name} v{defaultControlSet.version}.
+                  Responses to control ids that only exist in the imported set
+                  stop counting. Download the imported set first if you want to
+                  keep it.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  variant="destructive"
+                  onClick={() => {
+                    readinessActions.setControlSet(null)
+                    toast("Reverted to the default control set", {
+                      description: `${defaultControlSet.name} v${defaultControlSet.version}`,
+                    })
+                  }}
+                >
+                  Revert
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         )}
       </div>
       {error && <FieldError>{error}</FieldError>}
@@ -1314,7 +1466,7 @@ function DeploySection() {
           <code className="font-mono text-xs">output: &quot;export&quot;</code>{" "}
           in <code className="font-mono text-xs">next.config.ts</code> and serve
           the <code className="font-mono text-xs">out/</code> folder. See
-          “Static Exports” in the Next.js docs (
+          &quot;Static Exports&quot; in the Next.js docs (
           <span className="font-mono text-xs">
             nextjs.org/docs/app/guides/static-exports
           </span>
@@ -1353,7 +1505,10 @@ export function ShareTab({
         onBeforePrint={onBeforePrint}
       />
       <ShareLinkSection assessment={assessment} />
-      <ImportSection />
+      <ImportSection
+        controlSet={controlSet}
+        hasAssessment={assessment !== null}
+      />
       <HistorySection
         assessment={assessment}
         result={result}

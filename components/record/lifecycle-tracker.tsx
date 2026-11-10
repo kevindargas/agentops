@@ -14,7 +14,7 @@ export function LifecycleTracker({
 }: {
   stages: readonly string[]
   current: string
-  /** A terminal, off-path state such as "Canceled" — shown as a stopped marker. */
+  /** A terminal, off-path state such as "Canceled", shown as a stopped marker. */
   terminal?: readonly string[]
   orientation?: "horizontal" | "vertical"
   className?: string
@@ -31,7 +31,11 @@ export function LifecycleTracker({
           const isCurrent = i === idx && !complete
           const last = i === stages.length - 1
           return (
-            <li key={s} className="relative flex gap-3 pb-3 last:pb-0">
+            <li
+              key={s}
+              aria-current={isCurrent ? "step" : undefined}
+              className="relative flex gap-3 pb-3 last:pb-0"
+            >
               {!last && (
                 <span
                   aria-hidden
@@ -68,7 +72,7 @@ export function LifecycleTracker({
               >
                 {s}
                 {isCurrent && (
-                  <span className="ml-2 text-[10px] font-medium tracking-wide text-brand uppercase">
+                  <span className="ml-2 text-3xs font-medium tracking-wide text-brand uppercase">
                     Current
                   </span>
                 )}

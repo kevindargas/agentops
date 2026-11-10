@@ -33,7 +33,7 @@ import type { PlaygroundResult } from "@/lib/data/playground"
  * the transcript only renders what the progress allows.
  */
 export interface StreamProgress {
-  /** 0–1 overall; 1 means complete. */
+  /** 0 to 1 overall; 1 means complete. */
   value: number
   streaming: boolean
 }
@@ -120,7 +120,7 @@ export function RunTranscript({
         </Message>
 
         <Message from="assistant" className="max-w-full gap-1.5">
-          <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+          <div className="flex items-center gap-1.5 text-2xs font-medium text-muted-foreground">
             <span className="flex size-4 items-center justify-center rounded-sm bg-brand/10 text-brand">
               <BotIcon
                 className={cn("size-2.5", streaming && "animate-pulse")}
@@ -130,7 +130,7 @@ export function RunTranscript({
           </div>
           <MessageContent className="w-full gap-3 bg-transparent px-0 py-0">
             {progress.value === 0 && streaming && (
-              <Shimmer className="text-sm">Thinking…</Shimmer>
+              <Shimmer className="text-sm">Thinking</Shimmer>
             )}
             {(v.reasoning.length > 0 || (result.reasoning && streaming)) && (
               <Reasoning
@@ -157,9 +157,9 @@ export function RunTranscript({
                         type={`tool-${t.name}`}
                         state={t.state}
                         title={t.title}
-                        className="px-3 py-2 **:data-[slot=badge]:h-5 **:data-[slot=badge]:text-[10px] [&>div>span]:text-xs"
+                        className="px-3 py-2 **:data-[slot=badge]:h-5 **:data-[slot=badge]:text-3xs [&>div>span]:text-xs"
                       />
-                      <ToolContent className="space-y-3 border-t p-3 **:[pre]:text-[11px]">
+                      <ToolContent className="space-y-3 border-t p-3 **:[pre]:text-2xs">
                         <ToolInput input={t.input} />
                         <ToolOutput
                           output={

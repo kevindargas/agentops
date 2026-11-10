@@ -24,9 +24,14 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { CountPill } from "@/components/shared/count-pill"
 import { EmptyState } from "@/components/shared/empty-state"
 import { Section } from "@/components/shared/page-header"
-import { PriorityBadge, StateBadge } from "@/components/shared/status-badge"
+import {
+  PriorityBadge,
+  StateBadge,
+  toneClasses,
+} from "@/components/shared/status-badge"
 import { UserChip } from "@/components/shared/user-chip"
 import { timeAgo } from "@/lib/format"
 import type { Priority } from "@/lib/types"
@@ -81,15 +86,15 @@ const typeIcon: Record<WorkItemType, LucideIcon> = {
 }
 
 const typeTint: Record<WorkItemType, string> = {
-  Review: "bg-brand/10 text-brand",
-  Experiment: "bg-success/10 text-success-text",
-  Agent: "bg-brand/10 text-brand",
-  Trace: "bg-muted text-muted-foreground",
-  Incident: "bg-destructive/10 text-destructive",
-  Problem: "bg-warning/15 text-warning-text",
-  Change: "bg-info/10 text-info",
-  Request: "bg-brand/10 text-brand",
-  Knowledge: "bg-muted text-muted-foreground",
+  Review: toneClasses.progress.soft,
+  Experiment: toneClasses.success.soft,
+  Agent: toneClasses.progress.soft,
+  Trace: toneClasses.muted.soft,
+  Incident: toneClasses.danger.soft,
+  Problem: toneClasses.warning.soft,
+  Change: toneClasses.info.soft,
+  Request: toneClasses.progress.soft,
+  Knowledge: toneClasses.muted.soft,
 }
 
 const filters: { value: "All" | WorkItemType; label: string }[] = [
@@ -118,13 +123,13 @@ function DueLabel({ due, nowIso }: { due: string; nowIso: string }) {
       className={cn(
         "inline-flex items-center gap-1 text-xs tabular-nums",
         overdue
-          ? "font-medium text-destructive"
+          ? "font-medium text-danger-text"
           : soon
             ? "text-warning-text"
             : "text-muted-foreground"
       )}
     >
-      <ClockIcon className="size-3" /> {text}
+      <ClockIcon className="size-3.5" /> {text}
     </span>
   )
 }
@@ -152,7 +157,7 @@ function Row({ item, nowIso }: { item: WorkItem; nowIso: string }) {
           {item.attention && (
             <Badge
               variant="outline"
-              className="h-4 border-destructive/30 bg-destructive/10 px-1.5 text-[10px] text-destructive"
+              className="h-4 border-destructive/30 bg-destructive/10 px-1.5 text-3xs text-danger-text"
             >
               Needs attention
             </Badge>
@@ -183,9 +188,7 @@ function Row({ item, nowIso }: { item: WorkItem; nowIso: string }) {
             {timeAgo(item.updated)}
           </span>
         )}
-        <span className="text-[11px] text-muted-foreground/70">
-          {item.type}
-        </span>
+        <span className="text-2xs text-muted-foreground/70">{item.type}</span>
       </div>
       {item.priority && (
         <PriorityBadge
@@ -217,7 +220,14 @@ function WorkList({
 }) {
   const [expanded, setExpanded] = React.useState(false)
   if (items.length === 0) {
-    return <Empty title={empty.title} description={empty.description} />
+    return (
+      <EmptyState
+        size="sm"
+        icon={<CheckSquareIcon />}
+        title={empty.title}
+        description={empty.description}
+      />
+    )
   }
   const shown = limit && !expanded ? items.slice(0, limit) : items
   return (
@@ -239,16 +249,6 @@ function WorkList({
         )}
       </CardContent>
     </Card>
-  )
-}
-
-function Empty({ title, description }: { title: string; description: string }) {
-  return (
-    <div className="flex flex-col items-center gap-1 rounded-xl border border-dashed px-4 py-8 text-center">
-      <CheckSquareIcon className="size-5 text-muted-foreground" />
-      <p className="text-sm font-medium">{title}</p>
-      <p className="text-xs text-muted-foreground">{description}</p>
-    </div>
   )
 }
 
@@ -375,7 +375,7 @@ export function MyWorkBoard({
               limit={4}
               empty={{
                 title: "No pending approvals",
-                description: "You're all caught up.",
+                description: "You are all caught up.",
               }}
             />
           </Section>
@@ -394,7 +394,7 @@ export function MyWorkBoard({
               nowIso={nowIso}
               limit={5}
               empty={{
-                title: "You haven't requested anything yet",
+                title: "You have not requested anything yet",
                 description:
                   "Incidents you report and items you order will show up here.",
               }}
@@ -439,9 +439,7 @@ function SectionTitle({
     <span className="inline-flex items-center gap-2">
       <Icon className="size-4 text-muted-foreground" />
       {label}
-      <span className="rounded-full bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground tabular-nums">
-        {count}
-      </span>
+      <CountPill count={count} size="default" />
     </span>
   )
 }

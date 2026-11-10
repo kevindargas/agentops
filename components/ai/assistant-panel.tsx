@@ -72,6 +72,7 @@ import {
   ToolInput,
   ToolOutput,
 } from "@/components/ai-elements/tool"
+import { CountPill } from "@/components/shared/count-pill"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
@@ -168,7 +169,7 @@ const sourceIcon: Record<Source["kind"], LucideIcon> = {
 const riskTone: Record<SuggestedAction["risk"], string> = {
   low: "text-muted-foreground",
   medium: "text-warning-text",
-  high: "text-destructive",
+  high: "text-danger-text",
 }
 
 /* ------------------------------------------------------------------ */
@@ -179,7 +180,7 @@ function SourcesPart({ items }: { items: Source[] }) {
   if (items.length === 0) return null
   return (
     <div className="flex flex-col gap-1.5">
-      <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+      <p className="text-2xs font-medium tracking-wide text-muted-foreground uppercase">
         Sources
       </p>
       <div className="flex flex-wrap gap-1.5">
@@ -191,7 +192,7 @@ function SourcesPart({ items }: { items: Source[] }) {
                 render={
                   <Link
                     href={s.href}
-                    className="inline-flex h-6 max-w-full items-center gap-1.5 rounded-md border bg-card px-1.5 text-[11px] text-muted-foreground transition-colors hover:border-brand/40 hover:bg-brand/5 hover:text-foreground"
+                    className="inline-flex h-6 max-w-full items-center gap-1.5 rounded-md border bg-card px-1.5 text-2xs text-muted-foreground transition-colors hover:border-brand/40 hover:bg-brand/5 hover:text-foreground"
                   />
                 }
               >
@@ -220,7 +221,7 @@ function ActionsPart({
   const { applyAction } = useAi()
   return (
     <div className="overflow-hidden rounded-lg border bg-card">
-      <div className="flex items-center gap-1.5 border-b bg-muted/40 px-3 py-1.5 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+      <div className="flex items-center gap-1.5 border-b bg-muted/40 px-3 py-1.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
         <SparklesIcon className="size-3 text-brand" /> Suggested actions
       </div>
       <ul className="divide-y">
@@ -276,9 +277,9 @@ function ToolPart({ part }: { part: Extract<MessagePart, { type: "tool" }> }) {
         type={`tool-${part.name}`}
         state={part.state}
         title={part.title}
-        className="px-3 py-2 **:data-[slot=badge]:h-5 **:data-[slot=badge]:text-[10px] [&>div>span]:text-xs"
+        className="px-3 py-2 **:data-[slot=badge]:h-5 **:data-[slot=badge]:text-3xs [&>div>span]:text-xs"
       />
-      <ToolContent className="space-y-3 border-t p-3 **:[pre]:text-[11px]">
+      <ToolContent className="space-y-3 border-t p-3 **:[pre]:text-2xs">
         <ToolInput input={part.input} />
         <ToolOutput output={part.output} errorText={undefined} />
       </ToolContent>
@@ -342,14 +343,22 @@ function MessageToolbar({ message }: { message: ChatMessage }) {
       <IconButton
         label="Good response"
         size="icon-xs"
-        onClick={() => toast("Thanks for the feedback")}
+        onClick={() =>
+          toast("Noted as a good response", {
+            description: "Feedback stays in this session.",
+          })
+        }
       >
         <ThumbsUpIcon />
       </IconButton>
       <IconButton
         label="Needs work"
         size="icon-xs"
-        onClick={() => toast("Thanks — we'll use this to improve")}
+        onClick={() =>
+          toast("Noted as needing work", {
+            description: "Feedback stays in this session.",
+          })
+        }
       >
         <ThumbsDownIcon />
       </IconButton>
@@ -369,7 +378,7 @@ function AssistantMessage({
 
   return (
     <Message from="assistant" className="max-w-full gap-1.5">
-      <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+      <div className="flex items-center gap-1.5 text-2xs font-medium text-muted-foreground">
         <span className="flex size-4 items-center justify-center rounded-sm bg-brand/10 text-brand">
           <SparklesIcon
             className={cn("size-2.5", streaming && "animate-pulse")}
@@ -479,7 +488,7 @@ function EmptyChat() {
           <SparklesIcon className="size-6" />
           <span
             aria-hidden
-            className="absolute -inset-1 -z-10 rounded-[20px] bg-brand/15 blur-md"
+            className="absolute -inset-1 -z-10 rounded-3xl bg-brand/15 blur-md"
           />
         </div>
         <div className="space-y-1">
@@ -500,7 +509,7 @@ function EmptyChat() {
         <div className="flex items-center gap-2.5 rounded-lg border bg-muted/40 px-3 py-2">
           <FileTextIcon className="size-4 shrink-0 text-muted-foreground" />
           <div className="min-w-0 flex-1 leading-tight">
-            <p className="text-[11px] text-muted-foreground">
+            <p className="text-2xs text-muted-foreground">
               {context.recordType
                 ? recordTypeLabel[context.recordType]
                 : "Record"}{" "}
@@ -522,7 +531,7 @@ function EmptyChat() {
       )}
 
       <div className="flex flex-col gap-1.5">
-        <p className="px-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+        <p className="px-1 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
           Try asking
         </p>
         {starters.map((s) => {
@@ -602,22 +611,16 @@ function Composer() {
           if (busy) return
           ask(text)
         }}
-        className="rounded-xl shadow-xs transition-shadow focus-within:shadow-sm"
+        className="rounded-xl shadow-hairline transition-shadow focus-within:shadow-raised"
       >
         <PromptInputBody>
           <PromptInputTextarea
             placeholder={
               context.recordNumber
-                ? `Ask about ${context.recordNumber}…`
-                : "Ask AgentOps Assist…"
+                ? `Ask about ${context.recordNumber}`
+                : "Ask AgentOps Assist"
             }
             className="min-h-11 text-sm leading-relaxed"
-            onKeyDown={(e) => {
-              if (e.key === "Escape" && busy) {
-                e.preventDefault()
-                stop()
-              }
-            }}
           />
         </PromptInputBody>
         <PromptInputFooter className="pt-0">
@@ -648,16 +651,16 @@ function Composer() {
             {context.recordNumber && (
               <Badge
                 variant="secondary"
-                className="hidden h-5 gap-1 px-1.5 font-mono text-[10px] @[420px]/panel:inline-flex"
+                className="hidden h-5 gap-1 px-1.5 font-mono text-3xs @[420px]/panel:inline-flex"
               >
                 <FileTextIcon className="size-3" /> {context.recordNumber}
               </Badge>
             )}
           </PromptInputTools>
           <div className="flex items-center gap-2">
-            <span className="hidden items-center gap-1 text-[11px] text-muted-foreground sm:flex">
-              <Kbd className="h-4 min-w-4 text-[10px]">↵</Kbd> send
-              <Kbd className="ml-1 h-4 min-w-4 text-[10px]">⇧↵</Kbd> newline
+            <span className="hidden items-center gap-1 text-2xs text-muted-foreground sm:flex">
+              <Kbd className="h-4 min-w-4 text-3xs">↵</Kbd> send
+              <Kbd className="ml-1 h-4 min-w-4 text-3xs">⇧↵</Kbd> newline
             </span>
             <PromptInputSubmit
               status={status === "ready" ? undefined : status}
@@ -667,16 +670,16 @@ function Composer() {
           </div>
         </PromptInputFooter>
       </PromptInput>
-      <p className="mt-2 flex items-center gap-1.5 px-1 text-[11px] text-muted-foreground">
+      <p className="mt-2 flex items-center gap-1.5 px-1 text-2xs text-muted-foreground">
         {busy ? (
           <>
             <Spinner className="size-3" /> Generating ·{" "}
-            <Kbd className="h-4 px-1 text-[10px]">Esc</Kbd> to stop
+            <Kbd className="h-4 px-1 text-3xs">Esc</Kbd> to stop
           </>
         ) : messages.length > 0 ? (
           "Actions that need approval are queued, never applied silently."
         ) : (
-          "Scripted demo — responses are deterministic and nothing leaves your browser."
+          "Scripted demo: responses are deterministic and nothing leaves your browser."
         )}
       </p>
     </div>
@@ -684,9 +687,27 @@ function Composer() {
 }
 
 function ChatTab() {
-  const { messages } = useAi()
+  const { messages, status, stop } = useAi()
+  const root = React.useRef<HTMLDivElement>(null)
+  // Escape stops a streaming reply from anywhere inside the chat tab, so the
+  // "Esc to stop" hint holds whether or not the composer has focus.
+  React.useEffect(() => {
+    const el = root.current
+    if (!el || status === "ready") return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault()
+        stop()
+      }
+    }
+    el.addEventListener("keydown", onKey)
+    return () => el.removeEventListener("keydown", onKey)
+  }, [status, stop])
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+    <div
+      ref={root}
+      className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
+    >
       <TemplateMenu />
       <Conversation className="flex-1">
         <ConversationContent className="gap-6 px-4 py-4">
@@ -730,7 +751,7 @@ function AgentsTab() {
             href="/ai"
             className="inline-flex items-center gap-1 underline-offset-4 hover:text-foreground hover:underline"
           >
-            Control center <ChevronRightIcon className="size-3" />
+            Workflow Automations <ChevronRightIcon className="size-3" />
           </Link>
         </div>
         {agents.map((a) => (
@@ -795,12 +816,12 @@ function PanelHeader({ onClose }: { onClose: () => void }) {
           <p className="text-sm leading-none font-semibold">AgentOps Assist</p>
           <Badge
             variant="outline"
-            className="h-4 px-1 text-[9px] font-medium tracking-wider text-muted-foreground uppercase"
+            className="h-4 px-1 text-3xs font-medium tracking-wider text-muted-foreground uppercase"
           >
             Scripted demo
           </Badge>
         </div>
-        <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+        <p className="mt-0.5 truncate text-2xs text-muted-foreground">
           {context.recordNumber ? (
             <>
               Working on{" "}
@@ -826,13 +847,13 @@ function PanelHeader({ onClose }: { onClose: () => void }) {
                 variant="ghost"
                 size="icon-sm"
                 render={<Link href="/ai" />}
-                aria-label="AI Control Center"
+                aria-label="Workflow Automations"
               />
             }
           >
             <SlidersHorizontalIcon />
           </TooltipTrigger>
-          <TooltipContent>AI Control Center</TooltipContent>
+          <TooltipContent>Workflow Automations</TooltipContent>
         </Tooltip>
         <IconButton label="Close" onClick={onClose}>
           <PanelRightCloseIcon className="hidden lg:block" />
@@ -866,9 +887,12 @@ function PanelBody({ onClose }: { onClose: () => void }) {
           <TabsTrigger value="queue" className="flex-none text-xs">
             Queue
             {proposals.length > 0 && (
-              <span className="ml-0.5 rounded-full bg-brand px-1.5 py-0.5 text-[10px] font-semibold text-brand-foreground tabular-nums">
-                {proposals.length}
-              </span>
+              <CountPill
+                count={proposals.length}
+                tone="inverse"
+                label="waiting"
+                className="ml-0.5"
+              />
             )}
           </TabsTrigger>
         </TabsList>

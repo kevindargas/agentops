@@ -7,6 +7,7 @@ import {
   ArrowUpIcon,
   ChevronsUpDownIcon,
   EyeOffIcon,
+  InfoIcon,
   XIcon,
 } from "lucide-react"
 
@@ -17,7 +18,34 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import type { DataTableFeatures } from "./features"
+
+/** Small info glyph with a one-line definition for jargon headers (p95, PSI). */
+function HeaderHint({ hint }: { hint: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-label={hint}
+            className="inline-flex shrink-0 rounded-sm text-muted-foreground/70 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+          />
+        }
+      >
+        <InfoIcon className="size-3" />
+      </TooltipTrigger>
+      <TooltipContent side="top" className="max-w-56 text-left">
+        {hint}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
 
 /**
  * Column header with a sort affordance that only appears on hover (or while
@@ -29,11 +57,14 @@ export function DataTableColumnHeader<TData extends RowData, TValue>({
   title,
   className,
   align,
+  hint,
 }: {
   column: Column<DataTableFeatures, TData, TValue>
   title: string
   className?: string
   align?: "left" | "center" | "right"
+  /** One-line definition shown in a tooltip next to the title. */
+  hint?: string
 }) {
   const resolvedAlign =
     align ??
@@ -50,12 +81,13 @@ export function DataTableColumnHeader<TData extends RowData, TValue>({
     return (
       <div
         className={cn(
-          "flex items-center text-xs font-medium text-muted-foreground",
+          "flex items-center gap-1 text-xs font-medium text-muted-foreground",
           justify,
           className
         )}
       >
         <span className="whitespace-nowrap">{title}</span>
+        {hint && <HeaderHint hint={hint} />}
       </div>
     )
   }
@@ -69,7 +101,8 @@ export function DataTableColumnHeader<TData extends RowData, TValue>({
         : ChevronsUpDownIcon
 
   return (
-    <div className={cn("flex items-center", justify, className)}>
+    <div className={cn("flex items-center gap-1", justify, className)}>
+      {hint && resolvedAlign === "right" && <HeaderHint hint={hint} />}
       <DropdownMenu>
         <DropdownMenuTrigger
           render={
@@ -131,6 +164,7 @@ export function DataTableColumnHeader<TData extends RowData, TValue>({
           )}
         </DropdownMenuContent>
       </DropdownMenu>
+      {hint && resolvedAlign !== "right" && <HeaderHint hint={hint} />}
     </div>
   )
 }

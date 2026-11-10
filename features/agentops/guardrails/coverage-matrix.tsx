@@ -9,7 +9,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { deployedAgents } from "@/lib/data"
+import { deployedAgents } from "@/lib/data/agentops"
 import {
   guardrailAppliesTo,
   guardrailCategories,
@@ -91,6 +91,10 @@ export function CoverageMatrix({
 
       <div className="overflow-x-auto rounded-lg border bg-card">
         <table className="w-full min-w-[44rem] text-sm">
+          <caption className="sr-only">
+            Active guardrail policies per agent and category, with a coverage
+            score
+          </caption>
           <thead className="bg-muted/40 text-xs font-medium text-muted-foreground">
             <tr className="[&>th]:px-3 [&>th]:py-2 [&>th]:text-left [&>th]:font-medium">
               <th className="pl-4">Agent</th>
@@ -120,7 +124,7 @@ export function CoverageMatrix({
                 <td className="px-3 py-2 pl-4">
                   <div className="flex flex-col gap-0.5">
                     <AgentChip agentId={agent.id} />
-                    <span className="pl-[26px] text-[11px] text-muted-foreground">
+                    <span className="pl-[26px] text-2xs text-muted-foreground">
                       {agent.environment} · {agent.team}
                     </span>
                   </div>
@@ -165,9 +169,9 @@ export function CoverageMatrix({
 
       <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
         <Legend className="border-warning/40 bg-warning/15">
-          Gap — no active policy
+          Gap: no active policy
         </Legend>
-        <Legend className="border-border bg-muted/40">1–2 policies</Legend>
+        <Legend className="border-border bg-muted/40">1 to 2 policies</Legend>
         <Legend className="border-success/25 bg-success/10">3+ policies</Legend>
         <span className="ml-auto">
           Counts include only Active policies. Disabled and Draft policies do

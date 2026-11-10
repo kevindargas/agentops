@@ -1,19 +1,20 @@
 "use client"
 
 import * as React from "react"
-import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { cn } from "cn"
 import { BinaryIcon } from "lucide-react"
 
-import { StateBadge, type Tone } from "@/components/shared/status-badge"
+import { Eyebrow } from "@/components/shared/eyebrow"
+import { StateBadge } from "@/components/shared/status-badge"
 import { Badge } from "@/components/ui/badge"
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import type { KbStore } from "@/lib/data/knowledge"
-import { ModelChip, modelDisplayName } from "../shared"
+import type { KbSourceType, KbStore } from "@/lib/data/knowledge"
+import { modelDisplayName } from "@/lib/format"
+import { ModelChip } from "../shared"
 
 /* ------------------------------------------------------------------------ */
 /* URL state                                                                 */
@@ -21,46 +22,11 @@ import { ModelChip, modelDisplayName } from "../shared"
 
 export const KNOWLEDGE_PATH = "/agentops/knowledge"
 
-/**
- * Read/write a single query param on the knowledge page without dropping the
- * others (tab, open sheet). Uses replace so sheets do not pollute history.
- */
-export function useQueryParam(key: string) {
-  const router = useRouter()
-  const pathname = usePathname()
-  const params = useSearchParams()
-  const value = params.get(key)
-  const set = React.useCallback(
-    (next: string | null) => {
-      const sp = new URLSearchParams(params.toString())
-      if (next) sp.set(key, next)
-      else sp.delete(key)
-      router.replace(`${pathname}${sp.size ? `?${sp}` : ""}`, {
-        scroll: false,
-      })
-    },
-    [key, params, pathname, router]
-  )
-  return [value, set] as const
-}
-
 /* ------------------------------------------------------------------------ */
-/* Tones for states that are specific to this module                         */
+/* Badges                                                                    */
 /* ------------------------------------------------------------------------ */
 
-/**
- * States introduced by Knowledge & Memory. Those not yet in the global
- * `stateTone` map get an explicit tone here so badges render correctly until
- * the shared map is extended.
- */
-const localTone: Record<string, Tone> = {
-  Syncing: "progress",
-  Stale: "warning",
-  Error: "danger",
-  Synced: "success",
-  Queued: "muted",
-}
-
+/** Knowledge states resolve through the shared `stateTone`; this only adds the pulse default. */
 export function KbStateBadge({
   state,
   size,
@@ -75,7 +41,6 @@ export function KbStateBadge({
   return (
     <StateBadge
       state={state}
-      tone={localTone[state]}
       size={size}
       pulse={pulse ?? (state === "Syncing" || state === "Running")}
       className={className}
@@ -107,7 +72,7 @@ export function StoreBadge({
     <Badge
       variant="outline"
       className={cn(
-        "h-5 px-1.5 text-[11px] font-medium whitespace-nowrap",
+        "h-5 px-1.5 text-2xs font-medium whitespace-nowrap",
         storeTone[store],
         className
       )}
@@ -115,6 +80,21 @@ export function StoreBadge({
       {store}
     </Badge>
   )
+}
+
+/**
+ * Display names for source types. The data keeps "ITSM Knowledge" as the type
+ * id; the shell calls that module Service Management, so the UI says so.
+ */
+export const sourceTypeLabel: Record<KbSourceType, string> = {
+  Confluence: "Confluence",
+  SharePoint: "SharePoint",
+  GitHub: "GitHub",
+  Zendesk: "Zendesk",
+  Notion: "Notion",
+  S3: "S3",
+  Website: "Website",
+  "ITSM Knowledge": "Service knowledge",
 }
 
 /** Providers with a logo on models.dev; others get a generic vector icon. */
@@ -158,6 +138,7 @@ export function EmbeddingChip({
 /* Layout bits                                                               */
 /* ------------------------------------------------------------------------ */
 
+/** Label/value tile for inside sheets. Use `MetricTile` for big numbers. */
 export function Fact({
   label,
   children,
@@ -169,9 +150,7 @@ export function Fact({
 }) {
   return (
     <div className={cn("rounded-lg border bg-muted/30 px-3 py-2", className)}>
-      <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-        {label}
-      </p>
+      <Eyebrow as="span">{label}</Eyebrow>
       <div className="mt-1 text-sm tabular-nums">{children}</div>
     </div>
   )

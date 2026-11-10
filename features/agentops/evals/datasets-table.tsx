@@ -3,6 +3,7 @@
 import * as React from "react"
 import Link from "next/link"
 import { createColumnHelper } from "@tanstack/react-table"
+import { cn } from "cn"
 import {
   ArrowUpRightIcon,
   DatabaseIcon,
@@ -22,7 +23,15 @@ import {
   type DataTableFeatures,
   type FacetDef,
 } from "@/components/data-table"
+import { CountPill } from "@/components/shared/count-pill"
 import { DetailList } from "@/components/shared/detail-list"
+import { EmptyState } from "@/components/shared/empty-state"
+import { MetricTile } from "@/components/shared/metric-tile"
+import {
+  SheetBody,
+  SheetFooterActions,
+  sheetWidths,
+} from "@/components/shared/sheet-frame"
 import { UserChip } from "@/components/shared/user-chip"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -33,9 +42,12 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
-import { deployedAgents, getDeployedAgent, reviewItems } from "@/lib/data"
 import {
-  evalDatasets as seed,
+  deployedAgents,
+  getDeployedAgent,
+  reviewItems,
+} from "@/lib/data/agentops"
+import {
   evalRuns,
   getEvalCases,
   getEvaluator,
@@ -44,7 +56,9 @@ import {
 } from "@/lib/data/evals"
 import { AgentChip } from "@/features/agentops/shared"
 import { formatNumber } from "@/lib/format"
-import { PassFailBadge, RunStatusBadge } from "./shared"
+import { downloadText } from "../audit/export"
+import { NotInDemoButton, PassFailBadge, RunStatusBadge } from "./shared"
+import { addCasesToDataset, bumpVersion, datasetStore } from "./store"
 
 const col = createColumnHelper<DataTableFeatures, EvalDataset>()
 const sources: DatasetSource[] = [
@@ -83,7 +97,13 @@ const columns = col.columns([
     meta: { width: "w-20", label: "Cases", numeric: true, skeleton: "w-10" },
   }),
   col.accessor("sizeTrend", {
-    header: "Size trend",
+    header: ({ column }) => (
+      <DataTableColumnHeader
+        column={column}
+        title="Size trend"
+        hint="Case count over the last 12 versions. Flat means nobody is adding review corrections."
+      />
+    ),
     cell: ({ getValue }) => (
       <Sparkline
         data={getValue()}
@@ -103,7 +123,7 @@ const columns = col.columns([
           <Badge
             key={s}
             variant="outline"
-            className="h-5 px-1.5 text-[11px] text-muted-foreground"
+            className="h-5 px-1.5 text-2xs text-muted-foreground"
             title={s}
           >
             {sourceShort[s]}
@@ -141,7 +161,7 @@ const columns = col.columns([
             <AgentChip key={id} agentId={id} size="sm" />
           ))}
           {ids.length > 2 && (
-            <span className="text-[11px] text-muted-foreground">
+            <span className="text-2xs text-muted-foreground">
               +{ids.length - 2} more
             </span>
           )}
@@ -160,13 +180,13 @@ const columns = col.columns([
           .map((t) => (
             <code
               key={t}
-              className="rounded-sm bg-muted px-1 py-0.5 font-mono text-[10px]"
+              className="rounded-sm bg-muted px-1 py-0.5 font-mono text-3xs"
             >
               {t}
             </code>
           ))}
         {getValue().length > 4 && (
-          <span className="text-[10px] text-muted-foreground">
+          <span className="text-3xs text-muted-foreground">
             +{getValue().length - 4}
           </span>
         )}
@@ -199,12 +219,13 @@ export function DatasetsTable({
   openId: string | null
   onOpenChange: (id: string | null) => void
 }) {
-  const open = seed.find((d) => d.id === openId) ?? null
+  const datasets = datasetStore.use()
+  const open = datasets.find((d) => d.id === openId) ?? null
   return (
     <>
       <DataTable
         columns={columns}
-        data={seed}
+        data={datasets}
         getRowId={(r) => r.id}
         getSearchText={(r) =>
           `${r.name} ${r.id} ${r.description} ${r.tags.join(" ")} ${r.agentIds.map((a) => getDeployedAgent(a)?.name ?? "").join(" ")}`
@@ -214,15 +235,41 @@ export function DatasetsTable({
         initialSorting={[{ id: "updated", desc: true }]}
         onRowClick={(r) => onOpenChange(r.id)}
         totalLabel="datasets"
+        caption="Golden datasets with case counts, sources, versions and linked agents"
         selectionLabel={(n) => (n === 1 ? "dataset" : "datasets")}
         toolbar={
-          <Button size="sm" onClick={() => toast("New dataset wizard opened")}>
+          <NotInDemoButton reason="Creating a dataset needs the eval service. Grow an existing one from the review queue in its sheet.">
             <DatabaseIcon /> New dataset
-          </Button>
+          </NotInDemoButton>
         }
       />
       <DatasetSheet dataset={open} onClose={() => onOpenChange(null)} />
     </>
+  )
+}
+
+/** JSON Lines export of the sample cases we can materialise for a dataset. */
+function datasetToJsonl(d: EvalDataset) {
+  const run = evalRuns.find(
+    (r) =>
+      r.datasetId === d.id && (r.status === "Passed" || r.status === "Failed")
+  )
+  const cases = run ? getEvalCases(run.id) : []
+  return (
+    cases
+      .map((c) =>
+        JSON.stringify({
+          id: c.id,
+          dataset: d.id,
+          version: d.version,
+          input: c.input,
+          expected: c.expected,
+          tags: c.tags,
+          trace_id: c.traceId ?? null,
+          source_run: run?.id,
+        })
+      )
+      .join("\n") + "\n"
   )
 }
 
@@ -233,6 +280,9 @@ function DatasetSheet({
   dataset: EvalDataset | null
   onClose: () => void
 }) {
+  const [addedFromReview, setAddedFromReview] = React.useState<Set<string>>(
+    () => new Set()
+  )
   const pendingReviews = reviewItems.filter(
     (r) =>
       d?.agentIds.includes(r.agentId) &&
@@ -243,15 +293,46 @@ function DatasetSheet({
     (r) => r.status === "Passed" || r.status === "Failed"
   )
   const samples = sampleRun ? getEvalCases(sampleRun.id).slice(0, 6) : []
+  const alreadyAdded = d ? addedFromReview.has(d.id) : false
+
+  function exportJsonl() {
+    if (!d) return
+    const file = `${d.id}-${d.version}.jsonl`
+    const body = datasetToJsonl(d)
+    downloadText(file, body, "application/jsonl")
+    const n = body.trim() ? body.trim().split("\n").length : 0
+    toast.success("Dataset exported", {
+      description: `${file} · ${n} sampled cases (the full ${formatNumber(d.cases)}-case set lives in the eval service)`,
+    })
+  }
+
+  function addFromReview() {
+    if (!d || pendingReviews === 0 || alreadyAdded) return
+    const next = bumpVersion(d.version)
+    const updated = addCasesToDataset(
+      d.id,
+      pendingReviews,
+      `${pendingReviews} corrected and flagged reviews from the queue`
+    )
+    setAddedFromReview((s) => new Set(s).add(d.id))
+    toast.success(
+      `${pendingReviews} ${pendingReviews === 1 ? "case" : "cases"} added to ${d.name}`,
+      {
+        description: `${updated?.version ?? next} drafted in this session with ${formatNumber(updated?.cases ?? d.cases + pendingReviews)} cases. Resets on reload.`,
+      }
+    )
+  }
 
   return (
     <Sheet open={d !== null} onOpenChange={(o) => !o && onClose()}>
-      <SheetContent className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
+      <SheetContent
+        className={cn(sheetWidths.editor, "flex flex-col gap-0 p-0")}
+      >
         {d && (
           <>
             <SheetHeader className="gap-3 border-b px-6 py-5">
               <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="outline" className="font-mono text-[11px]">
+                <Badge variant="outline" className="font-mono text-2xs">
                   {d.version}
                 </Badge>
                 {d.sources.map((s) => (
@@ -275,22 +356,22 @@ function DatasetSheet({
               </SheetDescription>
             </SheetHeader>
 
-            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+            <SheetBody>
               <div className="flex flex-col gap-6">
                 <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  <Fact label="Cases" value={formatNumber(d.cases)} />
-                  <Fact label="Runs" value={runs.length} />
-                  <Fact
+                  <MetricTile label="Cases" value={formatNumber(d.cases)} />
+                  <MetricTile label="Runs" value={runs.length} />
+                  <MetricTile
                     label="Agents"
                     value={
-                      <span className="flex flex-col gap-0.5">
+                      <span className="flex flex-col gap-0.5 text-sm font-medium">
                         {d.agentIds.map((id) => (
                           <AgentChip key={id} agentId={id} size="sm" />
                         ))}
                       </span>
                     }
                   />
-                  <Fact
+                  <MetricTile
                     label="Growth"
                     value={
                       <Sparkline
@@ -318,7 +399,11 @@ function DatasetSheet({
                   {samples.length ? (
                     <div className="overflow-x-auto rounded-lg border">
                       <table className="w-full min-w-[32rem] text-sm">
-                        <thead className="bg-muted/40 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+                        <caption className="sr-only">
+                          Six sample cases from the latest completed run on this
+                          dataset
+                        </caption>
+                        <thead className="bg-muted/40 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
                           <tr>
                             <th className="px-3 py-2 text-left font-medium">
                               Input
@@ -351,10 +436,13 @@ function DatasetSheet({
                       </table>
                     </div>
                   ) : (
-                    <p className="rounded-lg border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">
-                      No completed run on this dataset yet — start one to see
-                      sample results.
-                    </p>
+                    <EmptyState
+                      size="sm"
+                      bare
+                      icon={<PlayIcon />}
+                      title="No completed run yet"
+                      description="Sample results appear after the first completed run on this dataset."
+                    />
                   )}
                 </section>
 
@@ -407,7 +495,7 @@ function DatasetSheet({
                     {d.tags.map((t) => (
                       <code
                         key={t}
-                        className="rounded-sm bg-muted px-1.5 py-0.5 font-mono text-[11px]"
+                        className="rounded-sm bg-muted px-1.5 py-0.5 font-mono text-2xs"
                       >
                         {t}
                       </code>
@@ -428,7 +516,7 @@ function DatasetSheet({
                         </span>
                         <span className="min-w-0 flex-1">
                           <span className="block leading-snug">{v.note}</span>
-                          <span className="block text-[11px] text-muted-foreground tabular-nums">
+                          <span className="block text-2xs text-muted-foreground tabular-nums">
                             {formatNumber(v.cases)} cases ·{" "}
                             <DateCell value={v.date} mode="absolute" />
                             {i === 0 && " · current"}
@@ -469,52 +557,46 @@ function DatasetSheet({
                   </section>
                 )}
               </div>
-            </div>
+            </SheetBody>
 
-            <div className="flex flex-wrap items-center justify-end gap-2 border-t px-6 py-4">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() =>
-                  toast("Export started", {
-                    description: `${d.name} · ${formatNumber(d.cases)} cases as JSONL`,
-                  })
-                }
-              >
-                <DownloadIcon /> Export JSONL
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={pendingReviews === 0}
-                onClick={() =>
-                  toast.success(
-                    `${pendingReviews} ${pendingReviews === 1 ? "case" : "cases"} staged for ${d.version.replace(/\d+$/, (n) => String(Number(n) + 1))}`,
-                    {
-                      description:
-                        "Corrected and flagged reviews from the queue, pending owner approval",
-                    }
-                  )
-                }
-              >
-                <ListPlusIcon /> Add from review queue
-                {pendingReviews > 0 && (
-                  <span className="ml-1 rounded-full bg-muted px-1.5 text-[10px] tabular-nums">
-                    {pendingReviews}
-                  </span>
-                )}
-              </Button>
-              <Button
-                size="sm"
-                onClick={() =>
-                  toast("Eval run queued", {
-                    description: `${d.name} against ${d.agentIds.map((a) => getDeployedAgent(a)?.name).join(", ")}`,
-                  })
-                }
-              >
-                <PlayIcon /> Run eval
-              </Button>
-            </div>
+            <SheetFooterActions
+              tertiary={
+                <Button variant="ghost" size="sm" onClick={exportJsonl}>
+                  <DownloadIcon /> Export JSONL
+                </Button>
+              }
+              secondary={
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={pendingReviews === 0 || alreadyAdded}
+                  title={
+                    pendingReviews === 0
+                      ? "No corrected or flagged reviews for this dataset's agents"
+                      : alreadyAdded
+                        ? "Already added in this session"
+                        : undefined
+                  }
+                  onClick={addFromReview}
+                >
+                  <ListPlusIcon />{" "}
+                  {alreadyAdded
+                    ? "Added from review queue"
+                    : "Add from review queue"}
+                  {pendingReviews > 0 && !alreadyAdded && (
+                    <CountPill count={pendingReviews} />
+                  )}
+                </Button>
+              }
+              primary={
+                <NotInDemoButton
+                  size="sm"
+                  reason={`Starting a run needs the eval service. This would evaluate ${d.agentIds.map((a) => getDeployedAgent(a)?.name).join(", ")} against ${d.name}.`}
+                >
+                  <PlayIcon /> Run eval
+                </NotInDemoButton>
+              }
+            />
           </>
         )}
       </SheetContent>
@@ -526,21 +608,10 @@ function FieldList({ fields }: { fields: string[] }) {
   return (
     <span className="flex flex-col gap-0.5">
       {fields.map((f) => (
-        <code key={f} className="font-mono text-[11px]">
+        <code key={f} className="font-mono text-2xs">
           {f}
         </code>
       ))}
     </span>
-  )
-}
-
-function Fact({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div className="rounded-lg border bg-muted/30 px-3 py-2">
-      <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-        {label}
-      </p>
-      <div className="mt-1 text-sm font-medium tabular-nums">{value}</div>
-    </div>
   )
 }

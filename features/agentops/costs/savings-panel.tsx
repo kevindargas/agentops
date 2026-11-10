@@ -1,12 +1,12 @@
 "use client"
 
-import * as React from "react"
 import Link from "next/link"
 import { cn } from "cn"
 import {
   ArrowRightIcon,
   CheckIcon,
   DatabaseZapIcon,
+  FlaskConicalIcon,
   LayersIcon,
   LightbulbIcon,
   RouteIcon,
@@ -21,13 +21,11 @@ import { EmptyState } from "@/components/shared/empty-state"
 import { StateBadge } from "@/components/shared/status-badge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import {
-  savingsOpportunities as seed,
-  type SavingsKind,
-  type SavingsOpportunity,
-} from "@/lib/data/costs"
+import { modelRecommendations } from "@/lib/data/agentops"
+import { type SavingsKind, type SavingsOpportunity } from "@/lib/data/costs"
 import { formatCurrency } from "@/lib/format"
 import { AgentChip } from "../shared"
+import { savingsStore } from "./store"
 
 const kindMeta: Record<
   SavingsKind,
@@ -60,8 +58,10 @@ const kindMeta: Record<
   },
 }
 
+const UNDO_MS = 8000
+
 export function SavingsPanel() {
-  const [items, setItems] = React.useState<SavingsOpportunity[]>(seed)
+  const items = savingsStore.use()
   const open = items.filter((s) => s.status === "Open")
   const total = open.reduce((s, o) => s + o.estimatedMonthlySavings, 0)
   const applied = items
@@ -69,7 +69,7 @@ export function SavingsPanel() {
     .reduce((s, o) => s + o.estimatedMonthlySavings, 0)
 
   const set = (id: string, status: SavingsOpportunity["status"]) =>
-    setItems((prev) => prev.map((s) => (s.id === id ? { ...s, status } : s)))
+    savingsStore.patch(id, { status })
 
   return (
     <div className="flex flex-col gap-4">
@@ -113,13 +113,25 @@ export function SavingsPanel() {
               item={s}
               onApply={() => {
                 set(s.id, "Applied")
-                toast.success("Applied", {
-                  description: `${s.title} · saves about ${formatCurrency(s.estimatedMonthlySavings)}/month`,
+                toast.success("Marked as applied", {
+                  description: `${s.title} · about ${formatCurrency(s.estimatedMonthlySavings)}/month leaves the open total. The change itself is made on the linked page.`,
+                  duration: UNDO_MS,
+                  action: {
+                    label: "Undo",
+                    onClick: () => set(s.id, "Open"),
+                  },
                 })
               }}
               onDismiss={() => {
                 set(s.id, "Dismissed")
-                toast("Opportunity dismissed")
+                toast("Opportunity dismissed", {
+                  description: `${s.title} · ${formatCurrency(s.estimatedMonthlySavings)}/month removed from the open total`,
+                  duration: UNDO_MS,
+                  action: {
+                    label: "Undo",
+                    onClick: () => set(s.id, "Open"),
+                  },
+                })
               }}
             />
           ))}
@@ -140,6 +152,9 @@ function SavingsCard({
 }) {
   const meta = kindMeta[s.kind]
   const Icon = meta.icon
+  const recommendation = s.recommendationId
+    ? modelRecommendations.find((r) => r.id === s.recommendationId)
+    : undefined
   return (
     <article
       className={cn(
@@ -157,7 +172,7 @@ function SavingsCard({
           <Icon className="size-4" />
         </span>
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-1.5 text-2xs text-muted-foreground">
             <span className="font-medium tracking-wide uppercase">
               {meta.label}
             </span>
@@ -180,16 +195,34 @@ function SavingsCard({
           variant="outline"
           className="gap-1 border-success/30 text-success-text"
         >
-          Saves ~{formatCurrency(s.estimatedMonthlySavings)}/mo
+          Saves about {formatCurrency(s.estimatedMonthlySavings)}/mo
         </Badge>
-        <div className="ml-auto flex items-center gap-1.5">
-          {s.recommendationId && (
+        <div className="ml-auto flex flex-wrap items-center gap-1.5">
+          {recommendation && (
             <Button
               variant="outline"
               size="sm"
-              render={<Link href="/agentops/recommendations" />}
+              render={
+                <Link
+                  href={`/agentops/recommendations?open=${recommendation.id}`}
+                />
+              }
+              title={recommendation.title}
             >
               <LightbulbIcon /> Recommendation
+            </Button>
+          )}
+          {recommendation?.experimentId && (
+            <Button
+              variant="outline"
+              size="sm"
+              render={
+                <Link
+                  href={`/agentops/experiments?open=${recommendation.experimentId}`}
+                />
+              }
+            >
+              <FlaskConicalIcon /> Experiment
             </Button>
           )}
           {s.status === "Open" && (

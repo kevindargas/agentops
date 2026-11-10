@@ -7,6 +7,7 @@ import type {
 } from "@/lib/readiness/types"
 
 import { createRng, daysAgo, pick, weighted } from "./seed"
+import { getUser } from "./users"
 
 /**
  * Sample assessment for the demo: a supervised support agent heading to
@@ -15,6 +16,15 @@ import { createRng, daysAgo, pick, weighted } from "./seed"
  */
 
 const owners = ["u-001", "u-002", "u-003", "u-004", "u-005", "u-006"]
+
+/** Team-mode respondents, resolved from the users table by id. */
+const respondentIds = ["u-001", "u-002", "u-003"]
+const respondentNames = respondentIds.map((id) => {
+  const u = getUser(id)
+  if (!u) throw new Error(`readiness sample: unknown user ${id}`)
+  return u.name
+})
+const [kevin, amara, diego] = respondentNames
 
 const evidenceFor: Record<string, string> = {
   visibility: "/agentops/traces",
@@ -63,6 +73,30 @@ const pinned: Record<string, ControlStatus> = {
   "GOV-05": "in-place",
   "GOV-07": "none",
   "GOV-08": "in-place",
+  // Wave-2 controls: newer practices, so the sample is deliberately less mature.
+  "VIS-09": "partial",
+  "VIS-10": "in-place",
+  "VIS-12": "planned",
+  "QUA-09": "none",
+  "QUA-10": "planned",
+  "QUA-11": "none",
+  "QUA-13": "in-place",
+  "QUA-14": "in-place",
+  "DRF-09": "in-place",
+  "DRF-10": "in-place",
+  "DRF-12": "none",
+  "SAF-12": "planned",
+  "SAF-13": "partial",
+  "SAF-15": "none",
+  "SAF-16": "in-place",
+  "SAF-19": "planned",
+  "CST-09": "none",
+  "CST-10": "partial",
+  "CST-12": "planned",
+  "GOV-12": "none",
+  "GOV-13": "partial",
+  "GOV-14": "planned",
+  "GOV-15": "partial",
 }
 
 const order: ControlStatus[] = [
@@ -111,7 +145,7 @@ function buildResponses(seed: number, shift: number) {
 
 export const sampleAssessment: Assessment = {
   id: "asm-sample-support",
-  name: "Support Triage Agent — production readiness",
+  name: "Support Triage Agent: production readiness",
   controlSetId: defaultControlSet.id,
   controlSetVersion: defaultControlSet.version,
   profile: {
@@ -130,7 +164,7 @@ export const sampleAssessment: Assessment = {
       ownerId: "u-004",
       tool: "braintrust",
       notes: "Judge agreement measured once at 0.72; recalibration planned.",
-      votes: { Kevin: "planned", Amara: "partial", Diego: "planned" },
+      votes: { [kevin]: "planned", [amara]: "partial", [diego]: "planned" },
     },
     "SAF-05": {
       status: "partial",
@@ -139,10 +173,10 @@ export const sampleAssessment: Assessment = {
       evidence: "/agentops/guardrails?tab=policies",
       notes:
         "Approvals exist for destructive tools; external messaging still auto-sends.",
-      votes: { Kevin: "partial", Amara: "in-place", Diego: "partial" },
+      votes: { [kevin]: "partial", [amara]: "in-place", [diego]: "partial" },
     },
   },
-  respondents: ["Kevin", "Amara", "Diego"],
+  respondents: respondentNames,
   createdAt: daysAgo(62),
   updatedAt: daysAgo(1),
 }

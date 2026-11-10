@@ -1,8 +1,7 @@
 import type { Metadata } from "next"
 
-import { RecordNotFound } from "@/components/record/record-not-found"
 import { ReleaseRecord } from "@/features/agentops/deployments/release-record"
-import { getDeployedAgent } from "@/lib/data"
+import { getDeployedAgent } from "@/lib/data/agentops"
 import { getRelease } from "@/lib/data/deployments"
 
 export async function generateMetadata({
@@ -17,20 +16,16 @@ export async function generateMetadata({
   return { title: `${release.id} · ${agent?.name ?? ""} ${release.version}` }
 }
 
+/**
+ * Seeded releases render from the data module; releases drafted in this
+ * session exist only in the client release store, so the record component
+ * resolves the id itself and shows the not-found state when neither has it.
+ */
 export default async function ReleasePage({
   params,
 }: {
   params: Promise<{ id: string }>
 }) {
   const { id } = await params
-  const release = getRelease(id)
-  if (!release)
-    return (
-      <RecordNotFound
-        number={id}
-        backHref="/agentops/deployments"
-        backLabel="deployments"
-      />
-    )
-  return <ReleaseRecord key={release.id} release={release} />
+  return <ReleaseRecord key={id} id={id} initial={getRelease(id)} />
 }

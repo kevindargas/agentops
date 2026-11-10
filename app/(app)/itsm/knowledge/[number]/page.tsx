@@ -1,25 +1,17 @@
 import type { Metadata } from "next"
 import Link from "next/link"
 import {
-  ArchiveIcon,
-  BellIcon,
   BookOpenIcon,
   CalendarIcon,
   EyeIcon,
-  FlagIcon,
   LinkIcon,
   ListIcon,
-  PencilIcon,
-  PrinterIcon,
-  Share2Icon,
   TagIcon,
-  ThumbsDownIcon,
   ThumbsUpIcon,
   UserIcon,
 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import {
   Progress,
@@ -32,8 +24,13 @@ import { RecordNotFound } from "@/components/record/record-not-found"
 import { RecordSection, SummaryRow } from "@/components/record/record-section"
 import { RelatedRecordCard } from "@/components/record/related-record-card"
 import { DetailList } from "@/components/shared/detail-list"
-import { StateBadge } from "@/components/shared/status-badge"
 import { UserChip } from "@/components/shared/user-chip"
+import {
+  ArticleActions,
+  ArticleStateBadge,
+  ArticleSummary,
+  HelpfulVote,
+} from "@/features/knowledge/article-actions"
 import { getUser, knowledgeArticles } from "@/lib/data"
 import { formatDate, formatNumber, timeAgo } from "@/lib/format"
 
@@ -112,10 +109,10 @@ export default async function ArticlePage({
         title={article.title}
         backHref="/itsm/knowledge"
         backLabel="knowledge"
-        description={article.summary}
+        description={<ArticleSummary article={article} />}
         badges={
           <>
-            <StateBadge state={article.state} />
+            <ArticleStateBadge article={article} />
             <Badge variant="secondary">
               <BookOpenIcon /> {article.knowledgeBase}
             </Badge>
@@ -150,47 +147,7 @@ export default async function ArticlePage({
             </MetaItem>
           </>
         }
-        actions={
-          <>
-            <Button variant="outline">
-              <Share2Icon /> Share
-            </Button>
-            <Button>
-              <PencilIcon /> Edit article
-            </Button>
-          </>
-        }
-        overflow={[
-          {
-            label: "Subscribe to updates",
-            icon: <BellIcon />,
-            message: `Subscribed to ${article.number}`,
-          },
-          {
-            label: "Flag for review",
-            icon: <FlagIcon />,
-            message: "Flagged — the knowledge manager has been notified",
-          },
-          {
-            label: "Print",
-            icon: <PrinterIcon />,
-            message: "Preparing print view…",
-          },
-          {
-            label: "Retire article",
-            icon: <ArchiveIcon />,
-            destructive: true,
-            separatorBefore: true,
-            disabled: article.state === "Retired",
-            confirm: {
-              title: `Retire ${article.number}?`,
-              description:
-                "Retired articles are hidden from search and the Employee Center but remain available to agents.",
-              actionLabel: "Retire article",
-            },
-            message: `${article.number} retired`,
-          },
-        ]}
+        actions={<ArticleActions article={article} />}
       />
 
       <RecordLayout
@@ -281,7 +238,9 @@ export default async function ArticlePage({
                 <div className="flex items-center justify-between text-xs">
                   <span className="font-medium">Helpful rating</span>
                   <span className="text-muted-foreground tabular-nums">
-                    {votes === 0 ? "—" : `${pct}% of ${formatNumber(votes)}`}
+                    {votes === 0
+                      ? "No votes"
+                      : `${pct}% of ${formatNumber(votes)}`}
                   </span>
                 </div>
                 <Progress
@@ -358,8 +317,8 @@ export default async function ArticlePage({
                 <p>
                   It applies to all managed devices in the{" "}
                   <strong>{article.knowledgeBase}</strong> knowledge base scope.
-                  Personal devices enrolled through the Employee Center follow
-                  the same flow, but some screens may differ slightly.
+                  Personal devices enrolled through the self-service portal
+                  follow the same flow, but some screens may differ slightly.
                 </p>
               </section>
 
@@ -370,8 +329,8 @@ export default async function ArticlePage({
                     Make sure you are connected to the corporate network or VPN.
                   </li>
                   <li>
-                    Have your <code>multi-factor</code> device to hand — you
-                    will be asked to approve a push notification.
+                    Have your <code>multi-factor</code> device to hand; you will
+                    be asked to approve a push notification.
                   </li>
                   <li>
                     Close any open sessions of the affected application so
@@ -400,7 +359,7 @@ export default async function ArticlePage({
                   </li>
                 </ol>
                 <div className="rounded-lg border border-info/30 bg-info/5 px-4 py-3 text-sm leading-6">
-                  <strong className="text-info">Tip.</strong> If the
+                  <strong className="text-info-text">Tip.</strong> If the
                   configuration screen is greyed out, your device policy has not
                   yet refreshed. Lock and unlock your device, wait two minutes,
                   and try again.
@@ -412,7 +371,7 @@ export default async function ArticlePage({
                 <p>
                   Confirm the change took effect by repeating the action that
                   originally failed. If the issue persists, collect the exact
-                  error message and the time it occurred — both speed up triage
+                  error message and the time it occurred; both speed up triage
                   considerably.
                 </p>
               </section>
@@ -421,7 +380,7 @@ export default async function ArticlePage({
                 <H2 id="still-need-help">Still need help?</H2>
                 <p>
                   If these steps do not resolve the issue, raise an incident
-                  through the Employee Center and reference{" "}
+                  through the self-service portal and reference{" "}
                   <code>{article.number}</code>. The Service Desk will see the
                   steps you have already tried.
                 </p>
@@ -437,25 +396,7 @@ export default async function ArticlePage({
         <Card>
           <CardContent className="flex flex-col items-center gap-3 py-4 text-center">
             <p className="text-sm font-medium">Was this article helpful?</p>
-            <div className="flex gap-2">
-              <Button variant="outline">
-                <ThumbsUpIcon /> Yes{" "}
-                <span className="text-muted-foreground tabular-nums">
-                  ({formatNumber(article.helpful)})
-                </span>
-              </Button>
-              <Button variant="outline">
-                <ThumbsDownIcon /> No{" "}
-                <span className="text-muted-foreground tabular-nums">
-                  ({formatNumber(article.notHelpful)})
-                </span>
-              </Button>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {votes === 0
-                ? "Be the first to rate this article."
-                : `${pct}% of ${formatNumber(votes)} readers found this helpful.`}
-            </p>
+            <HelpfulVote article={article} />
             <Link
               href="/itsm/knowledge"
               className="text-xs text-muted-foreground underline-offset-4 hover:underline"

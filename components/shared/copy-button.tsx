@@ -37,7 +37,7 @@ export function CopyButton({
       window.clearTimeout(timer.current)
       timer.current = window.setTimeout(() => setCopied(false), 1400)
     } catch {
-      /* clipboard unavailable (insecure context) — fail silently */
+      /* clipboard unavailable (insecure context): fail silently */
     }
   }
 

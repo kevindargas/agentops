@@ -2,10 +2,14 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
 import { createColumnHelper } from "@tanstack/react-table"
-import { ClipboardCheckIcon, ShieldCheckIcon, XCircleIcon } from "lucide-react"
-import { toast } from "sonner"
+import {
+  CheckCircle2Icon,
+  ChevronDownIcon,
+  ClipboardCheckIcon,
+  ShieldCheckIcon,
+  XCircleIcon,
+} from "lucide-react"
 
 import {
   DataTable,
@@ -19,7 +23,16 @@ import {
 import { StateBadge } from "@/components/shared/status-badge"
 import { UserChip } from "@/components/shared/user-chip"
 import { Button } from "@/components/ui/button"
-import { deployedAgents } from "@/lib/data"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { deployedAgents } from "@/lib/data/agentops"
 import {
   guardrailCategories,
   type Guardrail,
@@ -41,7 +54,7 @@ const actions: ViolationAction[] = [
   "Approval requested",
 ]
 const severities: ViolationSeverity[] = ["Critical", "Warning", "Info"]
-const verdicts: { value: ViolationVerdict; label: string }[] = [
+export const verdictOptions: { value: ViolationVerdict; label: string }[] = [
   { value: "Verified", label: "True positive" },
   { value: "Dismissed", label: "False positive" },
   { value: "Pending", label: "Pending" },
@@ -52,7 +65,50 @@ const severityRank: Record<ViolationSeverity, number> = {
   Info: 2,
 }
 
-function buildColumns(onOpenPolicy: (id: string) => void) {
+function VerdictMenu({
+  row,
+  onVerdict,
+}: {
+  row: Row
+  onVerdict: (ids: string[], verdict: ViolationVerdict) => void
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <button
+            type="button"
+            aria-label={`Change verdict for ${row.id}`}
+            className="inline-flex items-center gap-1 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+          />
+        }
+      >
+        <StateBadge state={row.verdict} size="sm" />
+        <ChevronDownIcon className="size-3 text-muted-foreground" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start">
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>Reviewer verdict</DropdownMenuLabel>
+          <DropdownMenuRadioGroup
+            value={row.verdict}
+            onValueChange={(v) => onVerdict([row.id], v as ViolationVerdict)}
+          >
+            {verdictOptions.map((o) => (
+              <DropdownMenuRadioItem key={o.value} value={o.value}>
+                {o.label}
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        </DropdownMenuGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+function buildColumns(
+  onOpenPolicy: (id: string) => void,
+  onVerdict: (ids: string[], verdict: ViolationVerdict) => void
+) {
   return col.columns([
     selectColumn<Row>(),
     col.accessor("time", {
@@ -94,7 +150,11 @@ function buildColumns(onOpenPolicy: (id: string) => void) {
     }),
     col.accessor("action", {
       header: ({ column }) => (
-        <DataTableColumnHeader column={column} title="Action" />
+        <DataTableColumnHeader
+          column={column}
+          title="Action"
+          hint="What the policy did to the turn when it matched."
+        />
       ),
       cell: ({ getValue }) => <ActionBadge action={getValue()} />,
       meta: {
@@ -137,20 +197,21 @@ function buildColumns(onOpenPolicy: (id: string) => void) {
     }),
     col.accessor("verdict", {
       header: ({ column }) => (
-        <DataTableColumnHeader column={column} title="Verdict" />
+        <DataTableColumnHeader
+          column={column}
+          title="Verdict"
+          hint="Reviewer decision: Verified is a true positive, Dismissed a false positive. Dismissed verdicts drive the false-positive rate."
+        />
       ),
-      cell: ({ row }) => {
-        const v = row.original.verdict
-        return (
-          <span className="flex items-center gap-2">
-            <StateBadge state={v} size="sm" />
-            {row.original.reviewerId && (
-              <UserChip userId={row.original.reviewerId} size="xs" hideName />
-            )}
-          </span>
-        )
-      },
-      meta: { width: "w-32", label: "Reviewer verdict", skeleton: "w-16" },
+      cell: ({ row }) => (
+        <span className="flex items-center gap-2">
+          <VerdictMenu row={row.original} onVerdict={onVerdict} />
+          {row.original.reviewerId && (
+            <UserChip userId={row.original.reviewerId} size="xs" hideName />
+          )}
+        </span>
+      ),
+      meta: { width: "w-40", label: "Reviewer verdict", skeleton: "w-16" },
     }),
   ])
 }
@@ -160,16 +221,17 @@ export function ViolationsTable({
   policies,
   onOpenPolicy,
   onVerdict,
+  initialFacets,
 }: {
   violations: GuardrailViolation[]
   policies: Guardrail[]
   onOpenPolicy: (id: string) => void
   onVerdict: (ids: string[], verdict: ViolationVerdict) => void
+  initialFacets?: Record<string, string[]>
 }) {
-  const router = useRouter()
   const columns = React.useMemo(
-    () => buildColumns(onOpenPolicy),
-    [onOpenPolicy]
+    () => buildColumns(onOpenPolicy, onVerdict),
+    [onOpenPolicy, onVerdict]
   )
   const names = new Map(policies.map((p) => [p.id, p.name]))
   const rows: Row[] = violations.map((v) => ({
@@ -177,6 +239,12 @@ export function ViolationsTable({
     policyName: names.get(v.policyId) ?? v.policyId,
   }))
   const facets: FacetDef<Row>[] = [
+    {
+      id: "policy",
+      title: "Policy",
+      options: policies.map((p) => ({ value: p.id, label: p.name })),
+      getValue: (r) => r.policyId,
+    },
     {
       id: "action",
       title: "Action",
@@ -192,7 +260,7 @@ export function ViolationsTable({
     {
       id: "verdict",
       title: "Verdict",
-      options: verdicts,
+      options: verdictOptions,
       getValue: (r) => r.verdict,
     },
     {
@@ -219,9 +287,11 @@ export function ViolationsTable({
       }
       searchPlaceholder="Search violations…"
       facets={facets}
+      initialFacets={initialFacets}
       initialSorting={[{ id: "time", desc: true }]}
       initialColumnVisibility={{ category: false }}
       totalLabel="violations"
+      caption="Guardrail violations with the policy, action, severity, trace and reviewer verdict"
       selectionLabel={(n) => (n === 1 ? "violation" : "violations")}
       emptyIcon={<ShieldCheckIcon />}
       emptyTitle="No violations"
@@ -234,14 +304,20 @@ export function ViolationsTable({
             onClick={() => {
               onVerdict(
                 selected.map((r) => r.original.id),
-                "Dismissed"
+                "Verified"
               )
-              toast.success(
-                `${selected.length} violation${selected.length === 1 ? "" : "s"} marked false positive`,
-                {
-                  description:
-                    "Feedback is attached to the policy and lowers its precision score.",
-                }
+              clear()
+            }}
+          >
+            <CheckCircle2Icon /> Mark true positive
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              onVerdict(
+                selected.map((r) => r.original.id),
+                "Dismissed"
               )
               clear()
             }}
@@ -251,15 +327,9 @@ export function ViolationsTable({
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => {
-              toast("Opening review queue", {
-                description: `${selected.length} trace${selected.length === 1 ? "" : "s"} added for human review.`,
-              })
-              clear()
-              router.push("/agentops/reviews")
-            }}
+            render={<Link href="/agentops/reviews" />}
           >
-            <ClipboardCheckIcon /> Open review
+            <ClipboardCheckIcon /> Open review queue
           </Button>
         </>
       )}

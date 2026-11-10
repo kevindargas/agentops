@@ -1,5 +1,3 @@
-"use client"
-
 import { cn } from "cn"
 import { ArrowRightIcon, CornerDownLeftIcon } from "lucide-react"
 
@@ -64,7 +62,7 @@ export function AgentGraph({
               <TooltipContent side="bottom" className="max-w-56">
                 <p className="font-medium">{meta.label} node</p>
                 {n.next.length > 0 ? (
-                  <p className="mt-0.5 text-[11px] opacity-80">
+                  <p className="mt-0.5 text-2xs opacity-80">
                     →{" "}
                     {n.next
                       .map((t) => nodes.find((x) => x.id === t)?.label ?? t)
@@ -73,7 +71,7 @@ export function AgentGraph({
                     {branches.length > 0 && " (branch)"}
                   </p>
                 ) : (
-                  <p className="mt-0.5 text-[11px] opacity-80">Terminal node</p>
+                  <p className="mt-0.5 text-2xs opacity-80">Terminal node</p>
                 )}
               </TooltipContent>
             </Tooltip>

@@ -1,0 +1,397 @@
+import type { ControlDef, FailureMode } from "./types"
+
+/**
+ * Wave-2 controls (visibility-quality). Composed into `defaultControlSet` by
+ * `controls.ts`; failure modes are merged by `library.ts`. Keep ids stable.
+ */
+
+export const controls: ControlDef[] = [
+  // ---- Visibility ----------------------------------------------------------
+  {
+    id: "VIS-09",
+    domain: "visibility",
+    title: "Error and completion semantics",
+    what: "Every run ends in one typed outcome from a shared taxonomy (completed, partial, refused, invalid_output, tool_error, timeout, rate_limited, abandoned) recorded on the trace separately from transport status.",
+    why: "HTTP 200 can carry a refusal, a truncated answer, a tool failure or JSON that does not parse. If success means 'the request returned', a 30% refusal rate is invisible on every dashboard.",
+    how: [
+      "Define the outcome enum once (shared package or schema) and return it in a typed result envelope from the orchestrator; map provider finish reasons, guardrail decisions and schema-validation results onto it.",
+      "Set the outcome plus gen_ai.response.finish_reasons on the root span; record provider/network errors, timeouts and rate limits as distinct values rather than a generic 'error'.",
+      "Mark partial results (some tool calls failed, answer truncated by max_tokens) and user-abandoned streams explicitly instead of counting them as completed.",
+      "Build the error-rate and refusal-rate dashboards from the outcome field, not from HTTP status, and alert on each category separately.",
+    ],
+    done: "A dashboard breaks down the last 7 days of runs by outcome category; picking any refused or partial run shows the same category on its trace, and the HTTP-200 count exceeds the completed count.",
+    risk: 4,
+    effort: "medium",
+    requiredAt: "pilot",
+    frameworks: {
+      nist: ["MEASURE 2.4", "MANAGE 4.1"],
+      euAiAct: ["Art. 12"],
+      otel: ["gen_ai.response.finish_reasons"],
+    },
+    tools: ["langfuse", "phoenix", "openlit", "datadog", "grafana"],
+    metrics: ["task-outcome-rate", "refusal-rate", "error-rate"],
+    snippets: ["otel-span-python"],
+    learnMore: [
+      {
+        label: "OTel GenAI span attributes (finish reasons)",
+        href: "https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/",
+      },
+    ],
+  },
+  {
+    id: "VIS-10",
+    domain: "visibility",
+    title: "Streaming experience telemetry",
+    what: "Streamed responses are measured from first useful token to completion or cancellation: TTFT, inter-token gaps, tokens per second, total duration, client disconnects, cancellation propagation and truncated streams.",
+    why: "A fast first token can hide a stream that stalls, is cut off by max_tokens, or keeps burning tokens after the user has closed the tab. Request-level latency averages see none of this.",
+    how: [
+      "Record gen_ai.server.time_to_first_token and output tokens per second on the model span; log the longest inter-token gap as an attribute so stalls are searchable.",
+      "Emit a client-side event on disconnect or cancel with the trace id, and verify the cancellation reaches the provider call so generation actually stops.",
+      "Tag streams that end by max_tokens or a provider error as truncated (feeds the partial outcome in VIS-09) and track the truncated share per agent.",
+      "Run a streaming load test (k6 or similar) before each release and compare TTFT and throughput percentiles to the previous baseline.",
+    ],
+    done: "For any agent, a dashboard shows p50/p95 TTFT, tokens per second, disconnect rate and truncated share for the last 24h; cancelling a stream in staging ends the provider call within 2s on the trace.",
+    risk: 3,
+    effort: "medium",
+    requiredAt: "pilot",
+    applicability: { exposure: ["external"], otherwise: "reduced" },
+    frameworks: {
+      nist: ["MEASURE 2.4"],
+      otel: [
+        "gen_ai.server.time_to_first_token",
+        "gen_ai.client.operation.duration",
+      ],
+    },
+    tools: ["openlit", "langfuse", "datadog", "grafana", "k6", "helicone"],
+    metrics: ["ttft", "tokens-per-second", "stream-disconnect-rate"],
+    learnMore: [
+      {
+        label: "OTel GenAI metrics (time to first token)",
+        href: "https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/",
+      },
+    ],
+  },
+  {
+    id: "VIS-11",
+    domain: "visibility",
+    title: "Safe structured logs and content-capture policy",
+    what: "Logs are structured JSON with a schema version, the shared error taxonomy and trace correlation; a per-agent policy decides whether prompts and completions are captured in full, redacted or as metadata only, and redaction is enforced at the collector.",
+    why: "Debugging needs the content, compliance needs it gone. Without an explicit capture policy, observability quietly becomes the largest store of customer data in the company, and a crafted prompt can inject fake log lines into it.",
+    how: [
+      "Define a log schema (schema_version, trace_id, span_id, agent id, outcome category, error code) and reject or quarantine events that do not validate.",
+      "Record the content-capture mode per agent (full, redacted or metadata-only) in the agent's configuration and tag every span and log with the mode in force.",
+      "Run PII redaction (Presidio or equivalent) in the OTel Collector processor chain so unredacted content never reaches the backend; use field allowlists rather than denylists.",
+      "Escape or encode model and user text before it lands in log fields, and never interpolate it into log message templates, so newlines and fake timestamps cannot forge entries.",
+      "Restrict read access to full-content logs to a named group and audit it; sample a slice of stored logs weekly for redaction misses.",
+    ],
+    done: "Each agent has a documented capture mode; a seeded prompt containing a fake e-mail address, a credit-card number and a newline-injected log line appears in the backend redacted, in one field and under the current schema version.",
+    risk: 4,
+    effort: "medium",
+    requiredAt: "pilot",
+    applicability: { minSensitivity: "internal", otherwise: "reduced" },
+    frameworks: {
+      owasp: ["LLM02"],
+      nist: ["MAP 3.4", "MEASURE 2.10"],
+      euAiAct: ["Art. 12"],
+      iso42001: ["A.7"],
+    },
+    tools: ["otel-collector", "presidio", "langfuse", "datadog", "grafana"],
+    metrics: ["log-redaction-coverage", "pii-leak-rate"],
+    cadence: {
+      every: "monthly",
+      label: "Sample stored logs for redaction misses and schema drift",
+    },
+    learnMore: [
+      {
+        label: "OWASP LLM02: Sensitive Information Disclosure",
+        href: "https://genai.owasp.org/llmrisk/llm022025-sensitive-information-disclosure/",
+      },
+    ],
+  },
+  {
+    id: "VIS-12",
+    domain: "visibility",
+    title: "Observability pipeline health",
+    what: "The instrumentation itself is monitored: dropped spans, export failures, metric cardinality, ingestion lag and SDK overhead are tracked, and sampling is outcome-aware so every failed, refused or flagged run is kept.",
+    why: "Missing traces look like healthy traffic. A collector that silently drops 20% of spans under load, or head sampling that throws away the failures, produces dashboards that are confidently wrong.",
+    how: [
+      "Scrape the OTel Collector's own metrics (refused/dropped spans, exporter failures, queue size) and alert when drops exceed 0.5% or the export queue backs up.",
+      "Use tail-based sampling that keeps 100% of runs with a non-completed outcome, guardrail flag or negative feedback, and a fixed random share of the rest; record the sampling decision on the trace.",
+      "Send a synthetic request through each agent every few minutes and alert if its trace does not arrive with all required fields within the ingestion SLO.",
+      "Bound attribute cardinality (no raw user ids or free text as metric labels) and measure instrumentation overhead in the load test so tracing never adds more than a few percent to latency.",
+    ],
+    done: "A pipeline dashboard shows dropped-span rate, exporter error rate, ingestion lag and sampling share by outcome for the last 7 days; the synthetic-trace alert has fired at least once in a drill and was acknowledged.",
+    risk: 4,
+    effort: "medium",
+    requiredAt: "pilot",
+    frameworks: {
+      nist: ["MEASURE 2.5", "MANAGE 4.1"],
+      euAiAct: ["Art. 12"],
+    },
+    tools: ["otel-collector", "grafana", "datadog", "langfuse", "phoenix"],
+    metrics: ["dropped-span-rate", "ingestion-lag", "trace-coverage"],
+    snippets: ["alert-rules"],
+    cadence: {
+      every: "quarterly",
+      label: "Drill the synthetic-trace and dropped-span alerts",
+    },
+    learnMore: [
+      {
+        label: "OTel Collector: internal telemetry",
+        href: "https://opentelemetry.io/docs/collector/internal-telemetry/",
+      },
+    ],
+  },
+
+  // ---- Quality -------------------------------------------------------------
+  {
+    id: "QUA-09",
+    domain: "quality",
+    title: "Repeated runs and statistical rigor",
+    what: "Evals run each case several times (seeds or samples), report confidence intervals, compare candidates pairwise on the same cases, enforce minimum sample sizes per slice and correct for multiple comparisons.",
+    why: "Model outputs are stochastic. A single run that scores 2 points higher is noise more often than progress, and a release criterion built on point estimates will ship regressions and block real improvements in equal measure.",
+    how: [
+      "Run every eval case 3 to 5 times (or with distinct seeds where the provider supports them) and score the distribution, not the first answer.",
+      "Report a bootstrap 95% confidence interval next to every aggregate score and keep the interval width as a tracked metric.",
+      "Compare candidate against baseline with a paired test on identical cases; declare a difference only when the interval excludes zero.",
+      "Set a minimum number of cases per slice before a slice score may be shown, and apply a multiple-comparison correction when many slices or metrics are gated at once.",
+      "Write the release criteria (metric, direction, interval, minimum n) into the eval config before the run so they cannot be tuned after seeing the numbers.",
+    ],
+    done: "The latest eval report shows each headline score with a confidence interval and sample size; the promotion decision cites the paired comparison, and a re-run of the same candidate lands inside the reported interval.",
+    risk: 4,
+    effort: "medium",
+    requiredAt: "pilot",
+    frameworks: {
+      nist: ["MEASURE 2.5", "MEASURE 4.2", "MAP 2.3"],
+      iso42001: ["A.6"],
+    },
+    tools: ["inspect", "promptfoo", "braintrust", "deepeval", "langsmith"],
+    metrics: ["eval-ci-width", "eval-pass-rate"],
+    snippets: ["promptfoo-ci"],
+    learnMore: [
+      {
+        label: "Inspect: evaluation framework (UK AISI)",
+        href: "https://inspect.aisi.org.uk/",
+      },
+    ],
+  },
+  {
+    id: "QUA-10",
+    domain: "quality",
+    title: "Outcome labels joined to runs",
+    what: "Downstream outcomes (ticket reopened, escalation, SLA met, order corrected, user edit) are joined back to the trace that produced the answer, with label delay, coverage, revisions and adjudication tracked so quality is judged on what actually happened.",
+    why: "Thumbs-up and judge scores are proxies. Without real outcomes you cannot tell whether the agent closed the ticket or merely sounded like it did, and judging a cohort before its labels have matured flatters every release.",
+    how: [
+      "Carry the trace id (or a stable run id) into every downstream system the answer touches (ticketing, CRM, order management) so outcomes can be joined without fuzzy matching.",
+      "Land outcome events in a warehouse table keyed by run id with the label timestamp; compute label delay, coverage and the share of runs with no label yet (censored).",
+      "Define the outcome window per use case (e.g. reopened within 7 days) and report quality only for cohorts older than the window; show immature cohorts greyed out.",
+      "Track label revisions and, where labels are human-assigned, double-label a sample and report adjudication agreement.",
+      "Feed joined outcomes back into the eval set as ground truth and into the judge calibration set.",
+    ],
+    done: "For a run picked from last month, the trace shows its downstream outcome and when it arrived; a dashboard reports label coverage, median label delay and outcome-based quality by cohort, excluding cohorts younger than the outcome window.",
+    risk: 4,
+    effort: "high",
+    requiredAt: "production",
+    frameworks: {
+      nist: ["MEASURE 2.3", "MEASURE 3.3", "MANAGE 2.2"],
+      euAiAct: ["Art. 72"],
+      iso42001: ["A.6"],
+    },
+    tools: ["langfuse", "dbt", "braintrust", "evidently", "arize", "grafana"],
+    metrics: ["label-delay", "label-coverage", "task-completion-rate"],
+    cadence: {
+      every: "monthly",
+      label: "Review label coverage and outcome-based quality by cohort",
+    },
+  },
+  {
+    id: "QUA-11",
+    domain: "quality",
+    title: "Slice-level quality and fairness",
+    what: "Quality and safety metrics are disaggregated by language, channel, region, tenant, intent and relevant user group, with sample-size floors, disparity alerts and refusal correctness checked per group rather than in aggregate.",
+    why: "An aggregate improvement can hide a severe regression for the 8% of users who write in Portuguese or arrive through the voice channel. Disparate refusals and harmful outputs are a legal exposure as well as a quality one.",
+    how: [
+      "Tag every trace with the slicing attributes (language, channel, region, tenant, intent class, and legally appropriate user groups) and make them first-class filters in the eval and monitoring tools.",
+      "Ensure the golden dataset contains at least a minimum number of cases per slice; show slice scores only above that floor and flag thin slices for collection.",
+      "Compute the gap between the best and worst slice for each headline metric and alert when it widens beyond a set threshold or a slice falls below its own baseline.",
+      "Grade refusals per group: over-refusal on benign requests and under-refusal on harmful ones, both broken down by the same slices.",
+      "Have domain reviewers inspect the worst slice each quarter and turn findings into dataset cases.",
+    ],
+    done: "The eval report and the production dashboard both show every headline metric per slice with n, the largest gap is below the documented threshold, and the last disparity alert has a linked review.",
+    risk: 4,
+    effort: "medium",
+    requiredAt: "production",
+    applicability: { exposure: ["external"], otherwise: "reduced" },
+    frameworks: {
+      nist: ["MEASURE 2.3", "MAP 5.1"],
+      euAiAct: ["Art. 10", "Art. 27"],
+      iso42001: ["A.5"],
+    },
+    tools: ["fairlearn", "evidently", "phoenix", "braintrust", "langfuse"],
+    metrics: ["slice-quality-gap", "refusal-rate"],
+    cadence: {
+      every: "quarterly",
+      label: "Domain review of the worst-performing slice",
+    },
+    learnMore: [
+      {
+        label: "Fairlearn: assessing fairness across groups",
+        href: "https://fairlearn.org/",
+      },
+    ],
+  },
+  {
+    id: "QUA-12",
+    domain: "quality",
+    title: "Confidence calibration and decision thresholds",
+    what: "Confidence signals from the agent, judge and guardrails are compared to observed correctness (reliability curve, expected calibration error), and the thresholds that route to a human, abstain or refer out are tuned on coverage versus risk with explicit recalibration triggers.",
+    why: "A model that says 'I'm confident' when it is wrong 40% of the time is worse than one that says nothing. Routing thresholds set once by intuition silently decay as the model, prompt or traffic changes.",
+    how: [
+      "Capture a confidence signal per run (self-reported score, judge probability, guardrail score or logprob-derived) and join it to the outcome label from QUA-10 or a human review.",
+      "Plot the reliability curve and compute expected calibration error per agent and per judge; recalibrate (temperature or isotonic) when ECE exceeds the threshold.",
+      "Set the human-handoff and abstention thresholds from a coverage-versus-risk curve, documenting the accepted error rate at the chosen automation share.",
+      "Measure the out-of-scope policy: abstain and referral rates, false rejects of in-scope requests and missed out-of-scope requests that were answered anyway.",
+      "Define recalibration triggers (model or prompt change, ECE breach, abstention rate shift) and re-run calibration automatically when one fires.",
+    ],
+    done: "Each agent has a reliability curve and ECE from the last quarter, the handoff threshold is documented with its coverage and error rate, and the last model change has a recalibration record.",
+    risk: 4,
+    effort: "medium",
+    requiredAt: "production",
+    applicability: { minAutonomy: "supervised", otherwise: "reduced" },
+    frameworks: {
+      nist: ["MEASURE 2.5", "MEASURE 2.9", "GOVERN 3.2"],
+      euAiAct: ["Art. 14"],
+    },
+    tools: ["evidently", "phoenix", "braintrust", "langfuse", "inspect"],
+    metrics: ["calibration-error", "abstention-rate"],
+    cadence: {
+      every: "quarterly",
+      label: "Recompute reliability curves and review handoff thresholds",
+    },
+  },
+  {
+    id: "QUA-13",
+    domain: "quality",
+    title: "Eval and production configuration parity",
+    what: "CI evals run against the exact production configuration (prompt version, ModelParams, retrieval settings, tool schemas and guardrail set) and a parity diff between the evaluated and deployed configuration gates the release.",
+    why: "This is the LLM analogue of training/serving skew. An eval that passed on last week's prompt, a different temperature or a tool list missing one function says nothing about what is about to ship.",
+    how: [
+      "Resolve the full configuration (prompt id and version, model id, ModelParams, retrieval top-k and index version, tool schema hashes, guardrail policy ids) into one manifest with a content hash at deploy time.",
+      "Have the eval runner load the same manifest rather than its own defaults, and stamp the manifest hash on every eval run and on every production trace.",
+      "Diff the eval manifest against the candidate deployment in CI; any field difference fails the promotion step with the diff attached.",
+      "Alert in production when a trace's manifest hash is not one that has a passing eval run.",
+    ],
+    done: "The release pipeline shows a green parity check with both manifest hashes; changing the temperature in production config without re-running evals turns the check red and blocks the promotion.",
+    risk: 5,
+    effort: "medium",
+    requiredAt: "pilot",
+    gate: true,
+    frameworks: {
+      nist: ["MEASURE 2.3", "MANAGE 2.2"],
+      euAiAct: ["Art. 15", "Art. 17"],
+      iso42001: ["A.6"],
+    },
+    tools: ["promptfoo", "braintrust", "langfuse", "langsmith", "mlflow"],
+    metrics: ["config-parity-rate", "model-mismatch-rate"],
+    snippets: ["promptfoo-ci"],
+    learnMore: [
+      {
+        label: "Promptfoo: CI/CD integration",
+        href: "https://www.promptfoo.dev/docs/integrations/ci-cd/",
+      },
+    ],
+  },
+  {
+    id: "QUA-14",
+    domain: "quality",
+    title: "Input and output data contracts",
+    what: "System inputs and final answers (not only tool arguments) have typed, versioned schemas with compatibility rules and semantic constraints (ranges, units, enumerations, required citations, language), and the violation rate is monitored in production.",
+    why: "Useful prose can still be unusable to the software that consumes it. Most production failures are a field that is missing, the wrong unit or a citation that does not exist, none of which an HTTP 200 or a fluency score will catch.",
+    how: [
+      "Write JSON Schema or Pydantic models for every request payload and every structured answer; version them and run compatibility checks in CI so a consumer never receives a shape it has not seen.",
+      "Validate outputs after generation (constrained decoding alone is not enough): types, ranges, units, enumerations, that every cited source id exists in the retrieved context and that the response language matches the request.",
+      "Record each validation failure as an invalid_output outcome (VIS-09) with the failing rule, and alert on the contract-violation rate per agent and per schema version.",
+      "Run data-quality expectations on inputs (nullability, categories, timestamp sanity) and reject or quarantine malformed requests before they reach the model.",
+      "Where answers are not text (speech, images, generated files) add modality-specific checks (transcript error rate, image grounding, file opens) to the same contract.",
+    ],
+    done: "Every production answer schema has a version and a compatibility test; the contract-violation dashboard shows the rate per agent for the last 7 days, and sending a response with a non-existent citation id in staging is rejected and traced as invalid_output.",
+    risk: 4,
+    effort: "medium",
+    requiredAt: "pilot",
+    frameworks: {
+      owasp: ["LLM05"],
+      nist: ["MEASURE 2.5", "MEASURE 2.9"],
+      iso42001: ["A.7"],
+    },
+    tools: [
+      "guardrails-ai",
+      "great-expectations",
+      "langfuse",
+      "promptfoo",
+      "deepeval",
+    ],
+    metrics: ["contract-violation-rate", "error-rate"],
+    learnMore: [
+      {
+        label: "OWASP LLM05: Improper Output Handling",
+        href: "https://genai.owasp.org/llmrisk/llm052025-improper-output-handling/",
+      },
+    ],
+  },
+  {
+    id: "QUA-15",
+    domain: "quality",
+    title: "Human effort and automation quality",
+    what: "The human work the system transfers or hides (reviewer minutes per item, edit and override rates, rework, escalations and review backlog) is measured next to its automation rate, so 'automated' claims are net of the effort they create.",
+    why: "An agent that drafts 100% of replies but needs every one rewritten has automated nothing; it has moved the work to reviewers and added a queue. Without effort metrics the business case and the quality signal are both fiction.",
+    how: [
+      "Instrument the review and approval UI to record per item: time open, whether the output was accepted as-is, edited (and the diff size) or overridden, and whether it was escalated.",
+      "Compute override rate, edit rate and reviewer minutes per item by agent and intent, and compare them to the pre-automation baseline from a time study.",
+      "Treat the review backlog as a cost: report queue age and the share of items that aged past their SLA, and alert when the backlog grows faster than it drains.",
+      "Report time saved net of review and rework next to task-completion and outcome quality in the monthly review; feed heavily edited items back into the eval set.",
+    ],
+    done: "A monthly report shows, per agent, acceptance-as-is rate, override rate, median reviewer minutes per item and backlog age against the baseline; at least one agent's automation share has been revised down because of the numbers.",
+    risk: 3,
+    effort: "medium",
+    requiredAt: "production",
+    applicability: { minAutonomy: "supervised", otherwise: "reduced" },
+    frameworks: {
+      nist: ["MEASURE 3.3", "MANAGE 2.2", "GOVERN 3.2"],
+      euAiAct: ["Art. 14"],
+      iso42001: ["A.9"],
+    },
+    tools: ["langfuse", "opik", "braintrust", "langsmith", "grafana"],
+    metrics: ["override-rate", "review-minutes-per-item", "review-coverage"],
+    cadence: {
+      every: "monthly",
+      label: "Review human effort and net time saved per agent",
+    },
+  },
+]
+
+export const failureModes: FailureMode[] = [
+  {
+    id: "fm-http-200-refusals",
+    title: "HTTP 200 hides a 30% refusal rate",
+    summary:
+      "A guardrail update makes the assistant decline anything that mentions a competitor. Every response returns 200 with a polite refusal; the error-rate dashboard stays green for three weeks until a sales lead complains.",
+    domain: "visibility",
+    controls: ["VIS-09", "VIS-07", "QUA-11", "DRF-02"],
+  },
+  {
+    id: "fm-stale-eval-config",
+    title: "Eval ran against last week's prompt",
+    summary:
+      "The CI eval suite loads its own prompt file and default temperature. Production was switched to a new prompt version and a higher temperature in the console. The release passes with a perfect score and ships a regression the suite never saw.",
+    domain: "quality",
+    controls: ["QUA-13", "QUA-02", "DRF-04", "GOV-05"],
+  },
+  {
+    id: "fm-minority-language-confidence",
+    title: "Confident wrong answers to minority-language users",
+    summary:
+      "Aggregate accuracy is 91%. For the 6% of users writing in Dutch it is 62%, and the agent reports high confidence on exactly those answers, so none are routed to a human. The gap surfaces only when a regulator asks for disaggregated figures.",
+    domain: "quality",
+    controls: ["QUA-11", "QUA-12", "QUA-09", "QUA-04"],
+  },
+]

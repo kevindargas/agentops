@@ -19,10 +19,15 @@ import { RecordLink } from "@/components/shared/record-link"
 import { StateBadge } from "@/components/shared/status-badge"
 import { UserChip } from "@/components/shared/user-chip"
 import { requestStates } from "@/lib/constants"
-import { getCatalogItem, requests } from "@/lib/data"
+import { catalogItems, getCatalogItem } from "@/lib/data/catalog"
 import { NOW } from "@/lib/data/seed"
 import { formatCurrency } from "@/lib/format"
 import type { Request } from "@/lib/types"
+import { requestsStore } from "./requests-store"
+
+const catalogCategories = Array.from(
+  new Set(catalogItems.map((c) => c.category))
+).sort()
 
 const col = createColumnHelper<DataTableFeatures, Request>()
 
@@ -69,7 +74,13 @@ const columns = col.columns([
     meta: { width: "w-36", label: "State", skeleton: "w-20 rounded-full" },
   }),
   col.accessor("stage", {
-    header: "Stage",
+    header: ({ column }) => (
+      <DataTableColumnHeader
+        column={column}
+        title="Stage"
+        hint="Fulfillment step derived from the request state"
+      />
+    ),
     cell: ({ getValue }) => <TruncatedText muted>{getValue()}</TruncatedText>,
     enableSorting: false,
     meta: { width: "w-40", skeleton: "w-24" },
@@ -134,21 +145,15 @@ const facets: FacetDef<Request>[] = [
   {
     id: "category",
     title: "Category",
-    options: [
-      "Hardware",
-      "Software",
-      "Access & Accounts",
-      "Cloud & Infrastructure",
-      "Collaboration",
-      "HR Services",
-      "Facilities",
-    ].map((c) => ({ label: c, value: c })),
+    options: catalogCategories.map((c) => ({ label: c, value: c })),
     getValue: (r) =>
       getCatalogItem(r.items[0].catalogItemId)?.category ?? "Other",
   },
 ]
 
+/** Request list. Reads `requestsStore` so an order placed in the catalog appears. */
 export function RequestsTable() {
+  const requests = requestsStore.use()
   return (
     <DataTable
       columns={columns}
@@ -163,6 +168,7 @@ export function RequestsTable() {
       initialColumnVisibility={{ approval: false }}
       rowHref={(r) => `/itsm/requests/${r.number}`}
       totalLabel="requests"
+      caption="Requests"
       emptyAction={
         <Button
           size="sm"

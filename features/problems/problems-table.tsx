@@ -1,10 +1,8 @@
 "use client"
 
 import { createColumnHelper } from "@tanstack/react-table"
-import { BookMarkedIcon, PlusIcon } from "lucide-react"
-import { toast } from "sonner"
+import { BookMarkedIcon } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
 import {
   DataTable,
   DataTableColumnHeader,
@@ -19,8 +17,10 @@ import { RecordLink } from "@/components/shared/record-link"
 import { PriorityBadge, StateBadge } from "@/components/shared/status-badge"
 import { GroupChip, UserChip } from "@/components/shared/user-chip"
 import { priorityLabels, problemStates } from "@/lib/constants"
-import { getCi, groups, problems } from "@/lib/data"
+import { getCi } from "@/lib/data/cmdb"
+import { groups } from "@/lib/data/users"
 import type { Priority, Problem } from "@/lib/types"
+import { problemsStore } from "./problems-store"
 
 const col = createColumnHelper<DataTableFeatures, Problem>()
 
@@ -67,14 +67,18 @@ const columns = col.columns([
   }),
   col.accessor("relatedIncidents", {
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Incidents" />
+      <DataTableColumnHeader
+        column={column}
+        title="Incidents"
+        hint="Incidents that carry this problem as their cause"
+      />
     ),
     cell: ({ getValue }) => <NumericCell value={getValue()} />,
     meta: { width: "w-24", numeric: true, label: "Incidents", skeleton: "w-8" },
   }),
   col.accessor("ciId", {
     id: "ci",
-    header: "Configuration item",
+    header: "Affected service",
     cell: ({ getValue }) => {
       const ci = getCi(getValue())
       return ci ? (
@@ -86,7 +90,7 @@ const columns = col.columns([
       )
     },
     enableSorting: false,
-    meta: { label: "Configuration item", skeleton: "w-28" },
+    meta: { label: "Affected service", skeleton: "w-28" },
   }),
   col.accessor("assignmentGroupId", {
     id: "group",
@@ -146,7 +150,9 @@ const facets: FacetDef<Problem>[] = [
   },
 ]
 
+/** Problem list. Reads `problemsStore` so a problem created from the sheet appears. */
 export function ProblemsTable() {
+  const problems = problemsStore.use()
   return (
     <DataTable
       columns={columns}
@@ -158,14 +164,7 @@ export function ProblemsTable() {
       initialSorting={[{ id: "relatedIncidents", desc: true }]}
       rowHref={(r) => `/itsm/problems/${r.number}`}
       totalLabel="problems"
-      toolbar={
-        <Button
-          size="sm"
-          onClick={() => toast.success("Problem PRB0040013 created")}
-        >
-          <PlusIcon /> New problem
-        </Button>
-      }
+      caption="Problems"
     />
   )
 }

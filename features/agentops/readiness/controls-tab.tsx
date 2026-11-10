@@ -282,7 +282,9 @@ function DomainGroupHeader({
     <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-1">
       <DomainChip domain={domain} className="text-sm" />
       <span className="text-xs font-normal text-muted-foreground tabular-nums">
-        {score ? `${score.inPlace} of ${score.applicable} in place` : "—"}
+        {score
+          ? `${score.inPlace} of ${score.applicable} in place`
+          : "no applicable controls"}
         {score && shown !== score.applicable && (
           <span className="text-muted-foreground/70"> · {shown} shown</span>
         )}
@@ -335,7 +337,7 @@ function ControlRow({
     >
       <div className="flex min-w-0 flex-col gap-1">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <span className="font-mono text-[11px] font-semibold text-muted-foreground">
+          <span className="font-mono text-2xs font-semibold text-muted-foreground">
             {c.id}
           </span>
           <button
@@ -368,7 +370,7 @@ function ControlRow({
           {votes > 0 && (
             <span
               className={cn(
-                "inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-[11px]",
+                "inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-2xs",
                 spread >= 2 && "border-warning/40 text-warning-text"
               )}
               title={
