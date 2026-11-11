@@ -15,28 +15,26 @@ import { datasetStore, gateStore } from "./store"
 import type { EvalsTab } from "./format"
 
 /**
- * Tab shell for /agentops/evals. The server page reads `?tab=`, `?dataset=`
- * and `?run=` once; from then on state is local and mirrored back into the
- * URL with `setQueryParams` (no navigation) so links stay shareable.
+ * Tab shell for /agentops/evals. The URL is the source of truth: `EvalsRoute`
+ * reads `?tab=`, `?dataset=`, `?run=` and `?agent=` and passes them in, and
+ * every tab change or sheet open is written back with `setQueryParams` (no
+ * navigation) so links stay shareable and the page updates in place.
  */
 export function EvalsTabs({
-  initialTab = "runs",
-  initialDatasetId = null,
-  initialRunId = null,
-  initialAgentId = null,
+  tab = "runs",
+  datasetId = null,
+  runId = null,
+  agentId = null,
 }: {
-  initialTab?: EvalsTab
-  initialDatasetId?: string | null
+  /** `?tab=`, already validated with `isEvalsTab`. */
+  tab?: EvalsTab
+  /** `?dataset=<id>`: the dataset whose sheet is open. */
+  datasetId?: string | null
   /** `?run=<ev-id>`: highlight and scroll to one run (releases link here). */
-  initialRunId?: string | null
+  runId?: string | null
   /** `?agent=<agt-id>`: pre-select the Agent facet on the Runs tab. */
-  initialAgentId?: string | null
+  agentId?: string | null
 }) {
-  const [tab, setTab] = React.useState<EvalsTab>(initialTab)
-  const [datasetId, setDatasetId] = React.useState<string | null>(
-    initialDatasetId
-  )
-  const [runId, setRunId] = React.useState<string | null>(initialRunId)
   const datasets = datasetStore.use()
   const gates = gateStore.use()
 
@@ -49,7 +47,7 @@ export function EvalsTabs({
       tab: nextTab === "runs" ? null : nextTab,
       dataset: nextDataset,
       run: nextRun,
-      agent: nextTab === "runs" ? initialAgentId : null,
+      agent: nextTab === "runs" ? agentId : null,
     })
   }
 
@@ -60,7 +58,6 @@ export function EvalsTabs({
       value={tab}
       onValueChange={(v) => {
         const next = v as EvalsTab
-        setTab(next)
         sync(
           next,
           next === "datasets" ? datasetId : null,
@@ -93,23 +90,18 @@ export function EvalsTabs({
       </TabsList>
       <TabsContent value="runs">
         <EvalRunsTable
-          initialFacets={
-            initialAgentId ? { agent: [initialAgentId] } : undefined
-          }
+          // The facet is seeded once per `?agent=`; the table never writes
+          // that param itself, so the key only changes on navigation.
+          key={agentId ?? ""}
+          initialFacets={agentId ? { agent: [agentId] } : undefined}
           linkedRunId={runId}
-          onClearLinked={() => {
-            setRunId(null)
-            sync("runs", null, null)
-          }}
+          onClearLinked={() => sync("runs", null, null)}
         />
       </TabsContent>
       <TabsContent value="datasets">
         <DatasetsTable
           openId={datasetId}
-          onOpenChange={(id) => {
-            setDatasetId(id)
-            sync("datasets", id, null)
-          }}
+          onOpenChange={(id) => sync("datasets", id, null)}
         />
       </TabsContent>
       <TabsContent value="evaluators">

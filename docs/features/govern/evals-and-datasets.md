@@ -12,7 +12,7 @@ The page is for whoever owns agent quality: platform engineers who maintain the 
   - `/agentops/evals/<ev-id>`, the run record (ids look like `ev-2145`).
 - Query parameters on the list page:
   - `?tab=runs|datasets|evaluators|gates`. Default `runs`.
-  - `?dataset=<dataset-id>` opens the dataset sheet. If `tab` is missing it forces the Datasets tab. Tab and dataset changes are mirrored back into the URL with `router.replace`.
+  - `?dataset=<dataset-id>` opens the dataset sheet. If `tab` is missing it forces the Datasets tab. Tab and dataset changes are mirrored back into the URL with `setQueryParams` (`history.replaceState`, no navigation).
   - `?run=<ev-id>` (Runs tab) shows a "linked run" banner above the table with the run's agent, prompt version, status and composite plus an `Open run` button, highlights the run id in the grid and scrolls it into view. Release gate chips and the release record link here. The banner's clear button drops the parameter.
   - `?agent=<agt-id>` (Runs tab) pre-selects the Agent facet. The release record links here when a Draft has no gate.
 - Files: routes `app/(app)/agentops/evals/page.tsx` and `app/(app)/agentops/evals/[id]/page.tsx` (each with a `loading.tsx`: `TableSkeleton` for the list, `RecordSkeleton` for the record), UI `features/agentops/evals/*`, data `lib/data/evals.ts`.
@@ -23,13 +23,13 @@ The page is for whoever owns agent quality: platform engineers who maintain the 
 
 A `StatGrid` of five cards rendered by the client `EvalsStats`. Run figures are static sample data; Datasets and the gates-failing figure read the client stores (`datasetStore`, `gateStore` in `features/agentops/evals/store.ts`), so adding cases or toggling a gate moves them.
 
-| Card | Value | Hint |
-| --- | --- | --- |
-| Eval runs, 7d | Runs started in the last 7 days | How many are Running or Queued |
-| Pass rate, 7d | Passed divided by (Passed + Failed) among those runs | "N of M completed runs passed" |
+| Card               | Value                                                  | Hint                                                                              |
+| ------------------ | ------------------------------------------------------ | --------------------------------------------------------------------------------- |
+| Eval runs, 7d      | Runs started in the last 7 days                        | How many are Running or Queued                                                    |
+| Pass rate, 7d      | Passed divided by (Passed + Failed) among those runs   | "N of M completed runs passed"                                                    |
 | Regressions caught | Sum of `regressions` over completed runs in the window | How many runs were blocked and how many gates are failing; links to the Gates tab |
-| Datasets | Number of datasets | Total golden cases; links to the Datasets tab |
-| Judge cost, 7d | Sum of run cost in the window | Cost per run |
+| Datasets           | Number of datasets                                     | Total golden cases; links to the Datasets tab                                     |
+| Judge cost, 7d     | Sum of run cost in the window                          | Cost per run                                                                      |
 
 ### Tabs
 
@@ -39,21 +39,21 @@ The tab strip shows a `CountPill` on Runs, Datasets and Evaluators, and the numb
 
 A `DataTable` of `EvalRun`, newest first. Rows link to the run record.
 
-| Column | What it shows |
-| --- | --- |
-| Run | `ev-…` id |
-| Target | Agent chip, prompt version chip (`p-N`), model chip |
-| Dataset | Dataset name |
-| Trigger | `Manual`, `CI`, `Scheduled`, `Pre-deploy` |
-| Scores | Composite score bar (0 to 100) plus up to four per-evaluator score cells; `+N` for the rest. Blank for in-flight runs. Header tooltip explains the composite |
-| Pass rate | Share of cases that passed every evaluator. Green at 90%+, red below 80%. Header tooltip |
-| Δ baseline | Composite delta in points against the baseline run, coloured by direction. Header tooltip explains the baseline |
-| Cases | passed / failed with a two-colour bar, or "N queued" |
-| Duration | Hidden by default |
-| Cost | Judge plus model cost for the run |
-| Status | `Passed`, `Failed`, `Running` (pulsing), `Queued`, `Cancelled` |
-| Started | Relative date |
-| By | Hidden by default |
+| Column     | What it shows                                                                                                                                                |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Run        | `ev-…` id                                                                                                                                                    |
+| Target     | Agent chip, prompt version chip (`p-N`), model chip                                                                                                          |
+| Dataset    | Dataset name                                                                                                                                                 |
+| Trigger    | `Manual`, `CI`, `Scheduled`, `Pre-deploy`                                                                                                                    |
+| Scores     | Composite score bar (0 to 100) plus up to four per-evaluator score cells; `+N` for the rest. Blank for in-flight runs. Header tooltip explains the composite |
+| Pass rate  | Share of cases that passed every evaluator. Green at 90%+, red below 80%. Header tooltip                                                                     |
+| Δ baseline | Composite delta in points against the baseline run, coloured by direction. Header tooltip explains the baseline                                              |
+| Cases      | passed / failed with a two-colour bar, or "N queued"                                                                                                         |
+| Duration   | Hidden by default                                                                                                                                            |
+| Cost       | Judge plus model cost for the run                                                                                                                            |
+| Status     | `Passed`, `Failed`, `Running` (pulsing), `Queued`, `Cancelled`                                                                                               |
+| Started    | Relative date                                                                                                                                                |
+| By         | Hidden by default                                                                                                                                            |
 
 Facets: Agent, Dataset, Trigger, Status. Search covers id, agent, dataset, prompt version, model, trigger and status. Toolbar: `New run`, disabled with a tooltip explaining there is no eval service to call.
 
@@ -61,16 +61,16 @@ Facets: Agent, Dataset, Trigger, Status. Search covers id, agent, dataset, promp
 
 A `DataTable` of `EvalDataset`, most recently updated first. Rows open the dataset sheet.
 
-| Column | What it shows |
-| --- | --- |
-| Dataset | Name (mono) and description |
-| Cases | Case count |
+| Column     | What it shows                                     |
+| ---------- | ------------------------------------------------- |
+| Dataset    | Name (mono) and description                       |
+| Cases      | Case count                                        |
 | Size trend | Sparkline of case count over the last 12 versions |
-| Sources | `Prod`, `Human`, `Synthetic`, `Corrections` chips |
-| Version | e.g. `v12` |
-| Updated | Relative date |
-| Agents | First two linked agents, `+N more` |
-| Coverage | First four tags (intents, risks, languages), `+N` |
+| Sources    | `Prod`, `Human`, `Synthetic`, `Corrections` chips |
+| Version    | e.g. `v12`                                        |
+| Updated    | Relative date                                     |
+| Agents     | First two linked agents, `+N more`                |
+| Coverage   | First four tags (intents, risks, languages), `+N` |
 
 Facets: Source, Agent. Toolbar: `New dataset` (disabled with a tooltip; grow a dataset from its sheet instead).
 
@@ -80,16 +80,16 @@ The dataset sheet (shared sheet frame, editor width) shows: version, source and 
 
 A `DataTable` of `Evaluator`, sorted by how many datasets use them. Rows open the evaluator sheet.
 
-| Column | What it shows |
-| --- | --- |
-| Evaluator | Name and description |
-| Type | `LLM-as-judge`, `Rubric`, `Exact match`, `JSON schema`, `Embedding similarity`, `Regex`, `Custom code`, `Human`; judge model chip when applicable |
-| Measures | Faithfulness, Answer relevance, Tool-call accuracy, SQL validity, Policy compliance, Tone, Latency budget, Cost budget, Output format, Semantic match, PII leak, Overall quality |
-| Scoring | Scale: `0-1`, `1-5` or `pass/fail` |
-| Cost / case | USD, or `free` |
-| Human agreement | Percent agreement with human labels. Green at 90+, amber below 80. "reference" for the Human evaluator |
-| Datasets | How many datasets use it |
-| Updated | Relative date |
+| Column          | What it shows                                                                                                                                                                    |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Evaluator       | Name and description                                                                                                                                                             |
+| Type            | `LLM-as-judge`, `Rubric`, `Exact match`, `JSON schema`, `Embedding similarity`, `Regex`, `Custom code`, `Human`; judge model chip when applicable                                |
+| Measures        | Faithfulness, Answer relevance, Tool-call accuracy, SQL validity, Policy compliance, Tone, Latency budget, Cost budget, Output format, Semantic match, PII leak, Overall quality |
+| Scoring         | Scale: `0-1`, `1-5` or `pass/fail`                                                                                                                                               |
+| Cost / case     | USD, or `free`                                                                                                                                                                   |
+| Human agreement | Percent agreement with human labels. Green at 90+, amber below 80. "reference" for the Human evaluator                                                                           |
+| Datasets        | How many datasets use it                                                                                                                                                         |
+| Updated         | Relative date                                                                                                                                                                    |
 
 Facets: Type, Scoring. Headers for Scoring, Cost / case and Human agreement carry tooltips. Toolbar: `New evaluator` (disabled with a tooltip).
 
@@ -99,13 +99,13 @@ The evaluator sheet shows four metric tiles (Human agreement, Cost / case, Datas
 
 One card per deployed agent (`ReleaseGate`). Header: agent chip, `Passed` / `Failed` badge, the agent's current prompt version, model and environment. Body: five rules, each with a pass/fail icon, the requirement and the current value:
 
-| Rule | Requirement | Current value comes from |
-| --- | --- | --- |
-| Composite score | 85 or above | Latest completed run on the agent's golden dataset |
-| No regressions on golden set | 0 | Same run |
-| PII-leak probes | 100% pass | Latest completed run on `pii-leak-probes-v1` for the agent, else the PII evaluator score on the golden run |
-| p95 latency | Per-agent budget (2.5 s to 25 s) | The agent's live p95 |
-| Cost per case | Per-agent budget ($0.02 to $0.40) | Run cost divided by cases |
+| Rule                         | Requirement                       | Current value comes from                                                                                   |
+| ---------------------------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Composite score              | 85 or above                       | Latest completed run on the agent's golden dataset                                                         |
+| No regressions on golden set | 0                                 | Same run                                                                                                   |
+| PII-leak probes              | 100% pass                         | Latest completed run on `pii-leak-probes-v1` for the agent, else the PII evaluator score on the golden run |
+| p95 latency                  | Per-agent budget (2.5 s to 25 s)  | The agent's live p95                                                                                       |
+| Cost per case                | Per-agent budget ($0.02 to $0.40) | Run cost divided by cases                                                                                  |
 
 Footer: when it was evaluated, a link to the run, "Ready to promote" or "N rules failing, promotion blocked / advisory", and an `Enforce` switch. Above the grid: how many gates pass and how many are enforced. The empty state (only when filtered to an agent without a gate) links to the runs tab.
 
@@ -158,23 +158,23 @@ Queued and Running runs show an empty state ("Waiting for a worker" / "Run in pr
 
 ## Actions
 
-| Action | Where | What it does in this template |
-| --- | --- | --- |
-| New run | Runs toolbar | Disabled; tooltip says there is no eval service in the template |
-| Open run | Runs row, dataset sheet recent runs, gate card link, guardrail sheet, linked-run banner | Navigates to `/agentops/evals/<id>` |
-| Compare to… | Run record | Toast titled `<run> vs <other>` with composite, regression and pass-rate differences and an `Open <other>` action. No comparison view exists |
-| Export CSV | Run record (completed runs) | Real download of `<run>-cases.csv`: one row per case with input, expected, actual, result, baseline, change, latency, cost, trace id and every evaluator score |
-| Re-run | Run record | Disabled; tooltip names what would be queued |
-| Promote to production | Run record | Confirmation dialog, then drafts a real release in the shared release store (`draftReleaseFromRun` in `features/agentops/deployments/store.ts`): next `rel-` id, Canary 5% then 25% then 100%, stage `Pending approval`, eval gate = this run with threshold 85 (`GATE_THRESHOLD`), appends `release.created` to the audit log. The toast names the release and offers `Open release`; the button then turns into `Open rel-N`. Disabled with a tooltip when the run is in flight, Failed, below the threshold, the enforced gate is failing, the target already matches production, or a release already tracks it |
-| Flag case | Case sheet | Marks the case in this session (flag icon in the grid, `Flagged` badge in the sheet). Nothing is sent anywhere and the toast says so |
-| Add to golden set | Case sheet | Adds one case to the run's dataset in `datasetStore`: a session draft version is created (or grown), case count, version and size trend update on the Datasets tab and stat card |
-| Open in playground | Case sheet | Links to `/agentops/playground?agent=<id>&pv=<p-N>` (the playground reads `pv`) |
-| New dataset | Datasets toolbar | Disabled; tooltip points at the sheet |
-| Export JSONL | Dataset sheet | Real download of `<dataset>-<version>.jsonl` with the cases the template can materialise (the sampled cases of the latest completed run); the toast says the full set lives in the eval service |
-| Add from review queue | Dataset sheet | Adds the Corrected and Flagged review count to the dataset as a session draft version (once per session per dataset); disabled when there is nothing to add |
-| Run eval | Dataset sheet | Disabled; tooltip names what would run |
-| New evaluator, Edit, Recalibrate | Evaluators tab and sheet | Disabled with tooltips |
-| Enforce switch | Gate card | Flips `enforced` in `gateStore`, appends `release.gate.enforced` or `release.gate.advisory` to the audit log, toasts with the event id. Resets on reload |
+| Action                           | Where                                                                                   | What it does in this template                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| -------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| New run                          | Runs toolbar                                                                            | Disabled; tooltip says there is no eval service in the template                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Open run                         | Runs row, dataset sheet recent runs, gate card link, guardrail sheet, linked-run banner | Navigates to `/agentops/evals/<id>`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Compare to…                      | Run record                                                                              | Toast titled `<run> vs <other>` with composite, regression and pass-rate differences and an `Open <other>` action. No comparison view exists                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Export CSV                       | Run record (completed runs)                                                             | Real download of `<run>-cases.csv`: one row per case with input, expected, actual, result, baseline, change, latency, cost, trace id and every evaluator score                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| Re-run                           | Run record                                                                              | Disabled; tooltip names what would be queued                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Promote to production            | Run record                                                                              | Confirmation dialog, then drafts a real release in the shared release store (`draftReleaseFromRun` in `features/agentops/deployments/store.ts`): next `rel-` id, Canary 5% then 25% then 100%, stage `Pending approval`, eval gate = this run with threshold 85 (`GATE_THRESHOLD`), appends `release.created` to the audit log. The toast names the release and offers `Open release`; the button then turns into `Open rel-N`. Disabled with a tooltip when the run is in flight, Failed, below the threshold, the enforced gate is failing, the target already matches production, or a release already tracks it |
+| Flag case                        | Case sheet                                                                              | Marks the case in this session (flag icon in the grid, `Flagged` badge in the sheet). Nothing is sent anywhere and the toast says so                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Add to golden set                | Case sheet                                                                              | Adds one case to the run's dataset in `datasetStore`: a session draft version is created (or grown), case count, version and size trend update on the Datasets tab and stat card                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Open in playground               | Case sheet                                                                              | Links to `/agentops/playground?agent=<id>&pv=<p-N>` (the playground reads `pv`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| New dataset                      | Datasets toolbar                                                                        | Disabled; tooltip points at the sheet                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Export JSONL                     | Dataset sheet                                                                           | Real download of `<dataset>-<version>.jsonl` with the cases the template can materialise (the sampled cases of the latest completed run); the toast says the full set lives in the eval service                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Add from review queue            | Dataset sheet                                                                           | Adds the Corrected and Flagged review count to the dataset as a session draft version (once per session per dataset); disabled when there is nothing to add                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Run eval                         | Dataset sheet                                                                           | Disabled; tooltip names what would run                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| New evaluator, Edit, Recalibrate | Evaluators tab and sheet                                                                | Disabled with tooltips                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Enforce switch                   | Gate card                                                                               | Flips `enforced` in `gateStore`, appends `release.gate.enforced` or `release.gate.advisory` to the audit log, toasts with the event id. Resets on reload                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 
 Runs and evaluators are never mutated. Dataset growth, gate toggles and drafted releases live in client stores until reload; gate toggles and promotions append to the client audit log.
 
@@ -182,13 +182,13 @@ Runs and evaluators are never mutated. Dataset growth, gate toggles and drafted 
 
 ### Run status
 
-| Status | Meaning |
-| --- | --- |
-| Passed | Completed, 0 regressions and pass rate at or above 80% |
-| Failed | Completed with at least one regression, or pass rate below 80% |
-| Running | Scoring in progress; pulsing badge; no results yet |
-| Queued | Waiting for a worker |
-| Cancelled | Stopped before completion; never becomes a baseline |
+| Status    | Meaning                                                        |
+| --------- | -------------------------------------------------------------- |
+| Passed    | Completed, 0 regressions and pass rate at or above 80%         |
+| Failed    | Completed with at least one regression, or pass rate below 80% |
+| Running   | Scoring in progress; pulsing badge; no results yet             |
+| Queued    | Waiting for a worker                                           |
+| Cancelled | Stopped before completion; never becomes a baseline            |
 
 ### Baseline and deltas
 
@@ -204,12 +204,12 @@ Green at 90% and above, plain between 80 and 89, red below 80.
 
 ### Trigger
 
-| Trigger | Hint shown in the run record |
-| --- | --- |
-| Manual | Started by a person from the console |
-| CI | Triggered by a pull request on the agent repo |
-| Scheduled | Nightly regression run |
-| Pre-deploy | Required check before promoting a candidate |
+| Trigger    | Hint shown in the run record                  |
+| ---------- | --------------------------------------------- |
+| Manual     | Started by a person from the console          |
+| CI         | Triggered by a pull request on the agent repo |
+| Scheduled  | Nightly regression run                        |
+| Pre-deploy | Required check before promoting a candidate   |
 
 ### Human agreement
 
@@ -237,7 +237,7 @@ All of it is in `lib/data/evals.ts`, seeded with `createRng(7701)` (evaluators),
 - Client stores in `features/agentops/evals/store.ts`: `datasetStore`, `gateStore`, `addCasesToDataset()`, `bumpVersion()`.
 - Tests: `features/agentops/evals/evals.test.ts` pins 30 to 50 runs with resolvable references, lazy case counts matching the run, no cases for in-flight runs, and one five-rule gate per agent.
 
-To wire a backend: return the same shapes from your eval service. The list page and the run record are server components that read the module directly; `EvalsStats`, `EvalsTabs`, `ReleaseGates` and the tables are client components; dataset and gate edits go through `datasetStore` and `gateStore`. Replace the store mutations in `gates.tsx`, `datasets-table.tsx` and `cases-grid.tsx`, the release drafting in `run-actions.tsx`, and the disabled `NotInDemoButton`s with real calls. `getEvalCases` should become a paginated fetch.
+To wire a backend: return the same shapes from your eval service. The run record is a server component that reads the module directly; the list page is a static shell whose `EvalsRoute` (`features/agentops/evals/evals-route.tsx`) reads `?tab=`, `?dataset=`, `?run=` and `?agent=` on the client inside `<Suspense fallback={<TableSkeleton />}>` and drives `EvalsTabs` with them; `EvalsStats`, `EvalsTabs`, `ReleaseGates` and the tables are client components; dataset and gate edits go through `datasetStore` and `gateStore`. Replace the store mutations in `gates.tsx`, `datasets-table.tsx` and `cases-grid.tsx`, the release drafting in `run-actions.tsx`, and the disabled `NotInDemoButton`s with real calls. `getEvalCases` should become a paginated fetch.
 
 ## Related pages
 

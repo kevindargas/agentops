@@ -45,6 +45,16 @@ import {
 } from "@/features/incidents/incident-related-actions"
 import { RecordAiInsights } from "@/components/ai/record-ai-insights"
 
+/**
+ * Every sample record is prerendered at build time so the static export has a
+ * page per number; anything else is a 404. The server build gets the same list.
+ */
+export const dynamicParams = false
+
+export function generateStaticParams() {
+  return incidents.map((incident) => ({ number: incident.number }))
+}
+
 export async function generateMetadata({
   params,
 }: {

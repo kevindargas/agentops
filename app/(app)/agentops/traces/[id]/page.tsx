@@ -30,7 +30,12 @@ import {
 } from "@/features/agentops/shared"
 import { TraceActions } from "@/features/agentops/trace-actions"
 import { TraceWaterfall } from "@/features/agentops/trace-waterfall"
-import { getDeployedAgent, getExperiment, getTrace } from "@/lib/data/agentops"
+import {
+  agentTraces,
+  getDeployedAgent,
+  getExperiment,
+  getTrace,
+} from "@/lib/data/agentops"
 import { getGuardrail, guardrailViolations } from "@/lib/data/guardrails"
 import { getPromptForAgent } from "@/lib/data/prompts"
 import {
@@ -40,6 +45,16 @@ import {
   formatTokens,
   timeAgo,
 } from "@/lib/format"
+
+/**
+ * Every sample record is prerendered at build time so the static export has a
+ * page per id; anything else is a 404. The server build gets the same list.
+ */
+export const dynamicParams = false
+
+export function generateStaticParams() {
+  return agentTraces.map((trace) => ({ id: trace.id }))
+}
 
 export async function generateMetadata({
   params,

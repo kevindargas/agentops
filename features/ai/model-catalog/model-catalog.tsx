@@ -214,7 +214,7 @@ export function ModelCatalog({ models, fetchedAt, error }: ModelCatalogProps) {
         title="The catalog could not be loaded"
         description={
           error
-            ? `OpenRouter did not return a model list: ${error}. The page refreshes automatically; try again in a moment.`
+            ? `OpenRouter did not return a model list: ${error}. Reload the page to try again; on a static deployment the list is a build-time snapshot and refreshes with the next deploy.`
             : "OpenRouter returned an empty model list."
         }
         action={

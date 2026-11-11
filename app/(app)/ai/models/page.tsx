@@ -11,6 +11,12 @@ import { fetchCatalog } from "@/lib/ai/openrouter.server"
 
 export const metadata: Metadata = { title: "Model Catalog" }
 
+/**
+ * In a static export (GitHub Pages) the OpenRouter fetch runs once during the
+ * build, so the page shows a snapshot rather than live data.
+ */
+const isSnapshot = process.env.STATIC_EXPORT === "1"
+
 export default async function ModelCatalogPage() {
   const { models, fetchedAt, error } = await fetchCatalog()
   return (
@@ -21,12 +27,13 @@ export default async function ModelCatalogPage() {
           <Badge variant="outline" className="gap-1.5 text-muted-foreground">
             <StatusDot
               tone={error ? "warning" : "success"}
-              label={error ? "Fetch failed" : "Live"}
+              label={error ? "Fetch failed" : isSnapshot ? "Snapshot" : "Live"}
             />
-            {error ? "Unavailable" : "Live"} · OpenRouter
+            {error ? "Unavailable" : isSnapshot ? "Build snapshot" : "Live"} ·
+            OpenRouter
           </Badge>
         }
-        description="Every model reachable through OpenRouter, with context windows, pricing per million tokens and capability flags. Pick one here to use it in AgentOps Assist, or compare it against the curated defaults."
+        description={`Every model reachable through OpenRouter, with context windows, pricing per million tokens and capability flags. Pick one here to use it in AgentOps Assist, or compare it against the curated defaults.${isSnapshot ? " This deployment is a static export, so the list is a snapshot taken when the site was last built." : ""}`}
         actions={<ModelCatalogActions />}
       />
       <ModelCatalog models={models} fetchedAt={fetchedAt} error={error} />

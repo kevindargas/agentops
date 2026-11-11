@@ -34,6 +34,16 @@ import {
 import { getUser, knowledgeArticles } from "@/lib/data"
 import { formatDate, formatNumber, timeAgo } from "@/lib/format"
 
+/**
+ * Every sample record is prerendered at build time so the static export has a
+ * page per number; anything else is a 404. The server build gets the same list.
+ */
+export const dynamicParams = false
+
+export function generateStaticParams() {
+  return knowledgeArticles.map((article) => ({ number: article.number }))
+}
+
 export async function generateMetadata({
   params,
 }: {

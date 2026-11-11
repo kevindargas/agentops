@@ -3,7 +3,17 @@ import { Suspense } from "react"
 
 import { RecordSkeleton } from "@/components/shared/skeletons"
 import { PromptRecord } from "@/features/agentops/prompts/prompt-record"
-import { getPrompt } from "@/lib/data/prompts"
+import { getPrompt, prompts } from "@/lib/data/prompts"
+
+/**
+ * Every sample record is prerendered at build time so the static export has a
+ * page per id; anything else is a 404. The server build gets the same list.
+ */
+export const dynamicParams = false
+
+export function generateStaticParams() {
+  return prompts.map((prompt) => ({ id: prompt.id }))
+}
 
 export async function generateMetadata({
   params,

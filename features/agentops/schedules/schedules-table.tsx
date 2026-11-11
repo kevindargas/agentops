@@ -17,7 +17,6 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
-import { setQueryParam } from "@/hooks/use-query-param"
 import { Sparkline } from "@/components/charts/sparkline"
 import {
   DataTable,
@@ -342,29 +341,22 @@ const facets: FacetDef<Schedule>[] = [
 export function SchedulesTable({
   agentId,
   initialAgentId,
-  initialOpenId,
+  openId,
+  onOpenChange: setOpenId,
 }: {
   /** Hard filter: hides the agent facet (agent record pages). */
   agentId?: string
   /** Preselects the agent facet (`?agent=` on the list page). */
   initialAgentId?: string
-  /** Opens this schedule's sheet on load (`?schedule=`). */
-  initialOpenId?: string
+  /** The schedule whose sheet is open (`?schedule=`); unknown ids are ignored. */
+  openId: string | null
+  /** Called with the row id to open, `null` to close; the owner writes the URL. */
+  onOpenChange: (id: string | null) => void
 }) {
   const items = scheduleStore.use()
-  const [openId, setOpenIdState] = React.useState<string | null>(() =>
-    initialOpenId && scheduleStore.get().some((s) => s.id === initialOpenId)
-      ? initialOpenId
-      : null
-  )
   const [editId, setEditId] = React.useState<string | null>(null)
   const [createOpen, setCreateOpen] = React.useState(false)
   const [deleteId, setDeleteId] = React.useState<string | null>(null)
-
-  const setOpenId = React.useCallback((id: string | null) => {
-    setOpenIdState(id)
-    setQueryParam("schedule", id)
-  }, [])
 
   const columns = React.useMemo(() => buildColumns(toggleSchedule), [])
 

@@ -1,0 +1,58 @@
+# Builds the static export and publishes it to GitHub Pages at
+# https://kevindargas.github.io/agentops. Repository settings must have
+# Pages > Source set to "GitHub Actions" for the deploy job to succeed.
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm typecheck && pnpm lint && pnpm test
+
+      - run: pnpm build:static
+        env:
+          NEXT_PUBLIC_BASE_PATH: /agentops
+          NEXT_PUBLIC_SITE_URL: https://kevindargas.github.io/agentops
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

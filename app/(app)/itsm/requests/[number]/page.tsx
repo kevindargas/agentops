@@ -29,7 +29,7 @@ import {
   RequestBadges,
 } from "@/features/requests/request-approval-actions"
 import { approvalReminderHours } from "@/lib/constants"
-import { buildActivity, getCatalogItem, getRequest } from "@/lib/data"
+import { buildActivity, getCatalogItem, getRequest, requests } from "@/lib/data"
 import { NOW, hoursFromNow } from "@/lib/data/seed"
 import { currentUser } from "@/lib/data/users"
 import {
@@ -38,6 +38,16 @@ import {
   formatDateTime,
   timeAgo,
 } from "@/lib/format"
+
+/**
+ * Every sample record is prerendered at build time so the static export has a
+ * page per number; anything else is a 404. The server build gets the same list.
+ */
+export const dynamicParams = false
+
+export function generateStaticParams() {
+  return requests.map((request) => ({ number: request.number }))
+}
 
 export async function generateMetadata({
   params,

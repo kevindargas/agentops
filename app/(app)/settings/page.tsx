@@ -1,35 +1,16 @@
+import { Suspense } from "react"
 import type { Metadata } from "next"
 import Link from "next/link"
 import { UsersIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { PageHeader } from "@/components/shared/page-header"
-import {
-  SettingsForm,
-  type SettingsSection,
-} from "@/features/admin/settings-form"
+import { TableSkeleton } from "@/components/shared/skeletons"
+import { SettingsView } from "@/features/admin/settings-view"
 
 export const metadata: Metadata = { title: "Settings" }
 
-const validSections = new Set<string>([
-  "profile",
-  "appearance",
-  "notifications",
-  "security",
-  "platform",
-  "danger",
-])
-
-export default async function SettingsPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ tab?: string; section?: string }>
-}) {
-  const { tab, section } = await searchParams
-  const requested = section ?? tab
-  const initialSection = (
-    requested && validSections.has(requested) ? requested : "profile"
-  ) as SettingsSection
+export default function SettingsPage() {
   return (
     <>
       <PageHeader
@@ -41,7 +22,9 @@ export default async function SettingsPage({
           </Button>
         }
       />
-      <SettingsForm initialSection={initialSection} />
+      <Suspense fallback={<TableSkeleton toolbar={false} />}>
+        <SettingsView />
+      </Suspense>
     </>
   )
 }

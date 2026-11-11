@@ -7,7 +7,7 @@ Agent owners and the platform team review them weekly; nothing is applied automa
 ## Where to find it
 
 - Nav group: Agent Operations, "Recommendations". The sidebar badge is the live count of `New` items (`getNavCounts().recommendations`). No keyboard chord.
-- Route: `/agentops/recommendations`. The page title matches the nav entry, "Recommendations". `?open=<rec-id>` scrolls to and outlines one card (switching the filter to `all` if the card is not open); `?agent=<agt-id>` scopes the list and the title to one agent. Code: `app/(app)/agentops/recommendations/page.tsx`, list in `features/agentops/recommendations-list.tsx`, state in `features/agentops/stores.ts` (`recommendationStore`).
+- Route: `/agentops/recommendations`. The page title matches the nav entry, "Recommendations". `?open=<rec-id>` scrolls to and outlines one card (switching the filter to `all` if the card is not open); `?agent=<agt-id>` scopes the list and the title to one agent. Code: `app/(app)/agentops/recommendations/page.tsx` (static header), URL reader in `features/agentops/recommendations-view.tsx` (client, inside `Suspense`; also accepts the older `?rec=`), scoped title in `features/agentops/agent-scoped-title.tsx`, list in `features/agentops/recommendations-list.tsx`, state in `features/agentops/stores.ts` (`recommendationStore`).
 - The same list is embedded, scoped to one agent, in the Recommendations tab of an agent record, and open recommendations are listed in the record's aside.
 - Entry points: "Needs a decision" on the fleet overview and recommendation titles on an agent record (both carry `?open=`); the "Tests recommendation" chip in an experiment sheet.
 

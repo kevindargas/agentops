@@ -11,12 +11,21 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import { siteConfig } from "@/config/site"
 import { themeInitScript } from "@/lib/theme-presets"
 
+/**
+ * Static assets under `public/` are not prefixed by Next when the app is
+ * served from a sub-path (GitHub Pages), so the metadata icons carry the base
+ * path themselves. Empty in server mode and locally.
+ */
+const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? ""
+
 const fontSans = Geist({ subsets: ["latin"], variable: "--font-sans" })
 const fontMono = Geist_Mono({ subsets: ["latin"], variable: "--font-mono" })
 
 /**
  * Brand swap points: `siteConfig` (name, description, url), `public/favicon.svg`
  * and `app/favicon.ico`. Add `app/opengraph-image.tsx` for a generated card.
+ * `metadataBase` comes from `siteConfig.url`, which reads
+ * `NEXT_PUBLIC_SITE_URL` (set to the Pages URL in the deploy workflow).
  */
 export const metadata: Metadata = {
   metadataBase: new URL(siteConfig.url),
@@ -28,10 +37,10 @@ export const metadata: Metadata = {
   applicationName: siteConfig.name,
   icons: {
     icon: [
-      { url: "/favicon.svg", type: "image/svg+xml" },
-      { url: "/favicon.ico", sizes: "any" },
+      { url: `${basePath}/favicon.svg`, type: "image/svg+xml" },
+      { url: `${basePath}/favicon.ico`, sizes: "any" },
     ],
-    apple: "/favicon.svg",
+    apple: `${basePath}/favicon.svg`,
   },
   openGraph: {
     type: "website",

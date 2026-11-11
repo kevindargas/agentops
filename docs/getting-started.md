@@ -30,7 +30,9 @@ Every script in `package.json` and what it does:
 | `pnpm dev` | `next dev` | Starts the Turbopack dev server on port 3000. Routes compile on first visit. |
 | `pnpm dev:warm` | `next dev & node scripts/warm.mjs; wait` | Starts the dev server and, in the same terminal, pre-compiles every route so the first click on each page is fast. |
 | `pnpm warm` | `node scripts/warm.mjs` | Pre-compiles routes against an already running dev server. The route list is derived from `app/(app)/**/page.tsx` by `scripts/warm-routes.mjs`; dynamic segments get one real record id from `SAMPLE_IDS`. Honours `WARM_BASE` (default `http://localhost:3000`) and `WARM_CONCURRENCY` (default 2). Waits up to 120 s for the server to answer. |
-| `pnpm build` | `next build` | Production build into `.next/`. |
+| `pnpm build` | `next build` | Production build into `.next/` (server mode, for Vercel, `next start` or a container). |
+| `pnpm build:static` | `STATIC_EXPORT=1 next build` | Static export into `out/` for GitHub Pages or any file host. Set `NEXT_PUBLIC_BASE_PATH=/agentops` to build for a sub-path. See [development/deployment.md](development/deployment.md). |
+| `pnpm preview:static` | `node scripts/serve-static.mjs` | Serves `out/` on http://localhost:4173 under `NEXT_PUBLIC_BASE_PATH`, with the same directory index, trailing slash and `404.html` behaviour as GitHub Pages. Run `pnpm build:static` first. |
 | `pnpm start` | `next start` | Serves the production build. Run `pnpm build` first. |
 | `pnpm lint` | `eslint` | ESLint 9 flat config: Next core-web-vitals and TypeScript rules plus the full `jsx-a11y` recommended set. `components/ai-elements/**` has relaxed rules because it is vendored. |
 | `pnpm test` | `vitest run` | Runs the unit test suite once in jsdom (27 files, 246 tests). |
@@ -57,7 +59,7 @@ Edits you make in the UI (approving a review, acknowledging a drift signal, paus
 
 ## Environment variables
 
-There are none. `next.config.ts` is empty and no code reads `process.env` except the warm script's `WARM_BASE` and `WARM_CONCURRENCY`.
+None are required. Three build-time variables exist for the static export: `STATIC_EXPORT=1` switches `next build` to a static site in `out/`, `NEXT_PUBLIC_BASE_PATH` sets the sub-path it is served from (`/agentops` for the GitHub Pages demo) and `NEXT_PUBLIC_SITE_URL` sets the public origin for metadata. Without them `next.config.ts` only disables generated agent-rules files. The warm script reads `WARM_BASE` and `WARM_CONCURRENCY`, the static preview server `PORT` and `STATIC_DIR`.
 
 The Model Catalog (`/ai/models`) is the only page with live data. It fetches `https://openrouter.ai/api/v1/models` server-side without a key and caches the response for one hour through `next.revalidate`. If the fetch fails (offline, blocked egress, provider outage) the page renders an empty state with the error message; nothing else in the app depends on it.
 
@@ -97,7 +99,8 @@ Inside the Review Queue: A approve, F flag, C correct, S skip, 1 to 5 fills the 
 ## Deployment notes
 
 - **Vercel or Netlify**: deploy the repository as a standard Next.js app. No environment variables are needed. The OpenRouter fetch runs in a server function and benefits from the one-hour revalidation.
-- **Static export**: set `output: "export"` in `next.config.ts` to produce a static site (GitHub Pages and similar). The readiness assessment is fully client-rendered and works unchanged. The Model Catalog loses its server runtime; with a static export the catalog fetch runs at build time and the result is frozen into the page.
+- **GitHub Pages**: the live demo at https://kevindargas.github.io/agentops is built by `.github/workflows/pages.yml` with `pnpm build:static` and `NEXT_PUBLIC_BASE_PATH=/agentops`. Every sample record gets its own page; records created during a session have none. The Model Catalog is a snapshot taken at build time.
+- **Other static hosts**: `pnpm build:static` (optionally with `NEXT_PUBLIC_BASE_PATH`) and upload `out/`. The readiness assessment and all client stores work unchanged.
 - **Self-hosted**: `pnpm build && pnpm start` behind any reverse proxy.
 - The app has no authentication layer. Treat it as an internal tool or add your own middleware before exposing it.
 

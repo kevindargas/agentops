@@ -1,19 +1,14 @@
+import { Suspense } from "react"
 import type { Metadata } from "next"
 
 import { PageHeader } from "@/components/shared/page-header"
-import {
-  ExperimentStats,
-  ExperimentsTable,
-} from "@/features/agentops/experiments"
+import { TableSkeleton } from "@/components/shared/skeletons"
+import { ExperimentStats } from "@/features/agentops/experiments"
+import { ExperimentsView } from "@/features/agentops/experiments-view"
 
 export const metadata: Metadata = { title: "Experiments" }
 
-export default async function ExperimentsPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ open?: string; agent?: string }>
-}) {
-  const { open, agent } = await searchParams
+export default function ExperimentsPage() {
   return (
     <>
       <PageHeader
@@ -21,12 +16,9 @@ export default async function ExperimentsPage({
         description="A/B tests on models, prompts, retrieval and tooling. Traffic is split per session, the primary metric is tracked daily, and a variant can be promoted once it clears 95% confidence."
       />
       <ExperimentStats />
-      <ExperimentsTable
-        key={`${open ?? ""}:${agent ?? ""}`}
-        initialOpenId={open}
-        initialAgentFacet={agent}
-        syncUrl
-      />
+      <Suspense fallback={<TableSkeleton />}>
+        <ExperimentsView />
+      </Suspense>
     </>
   )
 }

@@ -3,22 +3,16 @@ import type { Metadata } from "next"
 
 import { PageHeader } from "@/components/shared/page-header"
 import { TableSkeleton } from "@/components/shared/skeletons"
-import { AuditView } from "@/features/agentops/audit/audit-view"
-import { auditSources, type AuditSource } from "@/lib/data/audit"
+import { AuditRoute } from "@/features/agentops/audit/audit-route"
 
 export const metadata: Metadata = { title: "Audit Log" }
 
-export default async function AuditPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ source?: string; q?: string }>
-}) {
-  const { source, q } = await searchParams
-  const initialSource = auditSources.includes(source as AuditSource)
-    ? source
-    : undefined
-  const initialQuery = q?.trim() ? q.trim().slice(0, 80) : undefined
-
+/**
+ * Static shell. `?source=`, `?q=`, `?event=` and `?range=` are read on the
+ * client inside the Suspense boundary, so this page never touches
+ * `searchParams` and can be exported statically.
+ */
+export default function AuditPage() {
   return (
     <>
       <PageHeader
@@ -26,11 +20,7 @@ export default async function AuditPage({
         description="Append-only record of who changed what, when and under which approval: prompt promotions, guardrail edits, releases and rollbacks, review verdicts, tool permissions, budgets, memory deletions and key rotations. Every record is hash-chained to the one before it, so evidence cannot be edited or quietly dropped."
       />
       <Suspense fallback={<TableSkeleton columns={6} />}>
-        <AuditView
-          key={`${initialSource ?? ""}:${initialQuery ?? ""}`}
-          initialSource={initialSource}
-          initialQuery={initialQuery}
-        />
+        <AuditRoute />
       </Suspense>
     </>
   )

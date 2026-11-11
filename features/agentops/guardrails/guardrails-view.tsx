@@ -45,45 +45,37 @@ const verdictLabel: Record<ViolationVerdict, string> = {
   Pending: "pending",
 }
 
+/**
+ * Page body for /agentops/guardrails. The URL is the single source of truth:
+ * `GuardrailsRoute` reads `?tab=`, `?policy=` and `?byPolicy=` and passes
+ * them in, and every tab change or sheet open writes them back with
+ * `setQueryParams` (no navigation), so links into this route update the
+ * page in place and the back button is untouched.
+ */
 export function GuardrailsView({
-  initialPolicyId,
-  initialTab,
-  initialViolationPolicyId,
+  policyId,
+  tab = "policies",
+  violationPolicyId,
 }: {
-  initialPolicyId?: string
-  initialTab?: string
+  /** `?policy=`: the policy whose sheet is open. Unknown ids are ignored. */
+  policyId?: string
+  /** `?tab=`, already validated with `isGuardrailsTab`. */
+  tab?: GuardrailsTab
   /** `?byPolicy=` pre-filters the Violations tab to one policy. */
-  initialViolationPolicyId?: string
+  violationPolicyId?: string
 }) {
   const policies = policyStore.use()
   const violations = violationStore.use()
-  const [openId, setOpenId] = React.useState<string | null>(
-    initialPolicyId && policyStore.get().some((g) => g.id === initialPolicyId)
-      ? initialPolicyId
-      : null
-  )
-  const [tab, setTab] = React.useState<GuardrailsTab>(
-    isGuardrailsTab(initialTab) ? initialTab : "policies"
-  )
 
-  const open = policies.find((g) => g.id === openId) ?? null
+  const open = policies.find((g) => g.id === policyId) ?? null
 
-  const openPolicy = (id: string) => {
-    setOpenId(id)
-    setQueryParams({ policy: id })
-  }
-  const closePolicy = () => {
-    setOpenId(null)
-    setQueryParams({ policy: null })
-  }
-  const changeTab = (next: GuardrailsTab) => {
-    setTab(next)
+  const openPolicy = (id: string) => setQueryParams({ policy: id })
+  const closePolicy = () => setQueryParams({ policy: null })
+  const changeTab = (next: GuardrailsTab) =>
     setQueryParams({
       tab: next === "policies" ? null : next,
-      byPolicy:
-        next === "violations" ? (initialViolationPolicyId ?? null) : null,
+      byPolicy: next === "violations" ? (violationPolicyId ?? null) : null,
     })
-  }
 
   const duplicate = (id: string) => {
     const src = policyStore.get().find((g) => g.id === id)
@@ -258,14 +250,15 @@ export function GuardrailsView({
         </TabsContent>
         <TabsContent value="violations">
           <ViolationsTable
+            // The facet is seeded once per `?byPolicy=` value; the table never
+            // writes that param itself, so the key only changes on navigation.
+            key={violationPolicyId ?? ""}
             violations={violations}
             policies={policies}
             onOpenPolicy={openPolicy}
             onVerdict={setVerdict}
             initialFacets={
-              initialViolationPolicyId
-                ? { policy: [initialViolationPolicyId] }
-                : undefined
+              violationPolicyId ? { policy: [violationPolicyId] } : undefined
             }
           />
         </TabsContent>

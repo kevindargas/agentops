@@ -15,7 +15,6 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
-import { setQueryParam } from "@/hooks/use-query-param"
 import { CHART_HEIGHT } from "@/components/charts/chart-primitives"
 import { IncidentTrendChart } from "@/components/charts/incident-trend-chart"
 import {
@@ -332,27 +331,34 @@ export function ExperimentsTable({
   agentId,
   initialOpenId,
   initialAgentFacet,
-  syncUrl = false,
+  openId: controlledOpenId,
+  onOpenChange,
 }: {
   /** Embed scoped to one agent (agent record tab). */
   agentId?: string
-  /** `?open=<exp-id>` */
+  /** Sheet open on mount when the open id is not controlled. */
   initialOpenId?: string
   /** `?agent=<agt-id>` preselects the Agent facet on the list page. */
   initialAgentFacet?: string
-  /** Mirror the open sheet into `?open=` (list page only). */
-  syncUrl?: boolean
+  /**
+   * Controlled open sheet (the list page passes `?open=` through
+   * `useQueryParam` so the URL stays shareable). Pass both or neither.
+   */
+  openId?: string | null
+  onOpenChange?: (id: string | null) => void
 }) {
   const items = experimentStore.use()
-  const [openId, setOpenId] = React.useState<string | null>(
+  const [localOpenId, setLocalOpenId] = React.useState<string | null>(
     initialOpenId ?? null
   )
+  const controlled = onOpenChange !== undefined
+  const openId = controlled ? (controlledOpenId ?? null) : localOpenId
   const data = agentId ? items.filter((e) => e.agentId === agentId) : items
   const open = items.find((e) => e.id === openId) ?? null
 
   const setOpen = (id: string | null) => {
-    setOpenId(id)
-    if (syncUrl) setQueryParam("open", id)
+    if (onOpenChange) onOpenChange(id)
+    else setLocalOpenId(id)
   }
 
   return (

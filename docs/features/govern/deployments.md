@@ -11,7 +11,7 @@ The page is for agent owners who ship changes, the platform lead and AI governan
   - `/agentops/deployments`, the list page with three tabs.
   - `/agentops/deployments/<rel-id>`, the release record (ids look like `rel-1021`). Releases drafted in the current session (`rel-1038` upward) resolve through the client release store; unknown ids show the not-found state.
 - Query parameters on the list page:
-  - `?tab=releases|environments|approvals`. Default `releases`. Switching tabs writes the parameter back with `router.replace`, so it round-trips like the other Govern pages.
+  - `?tab=releases|environments|approvals`. Default `releases`. Switching tabs writes the parameter back with `setQueryParams` (`history.replaceState`), so it round-trips like the other Govern pages; the page itself is static and `DeploymentsRoute` reads the URL on the client inside `Suspense`.
   - `?agent=agt-<id>` pre-selects the Agent facet on the Releases tab and tints the agent's row on the Environments tab. The release record's "Rollback target" links here with `tab=environments`.
 - Files: routes `app/(app)/agentops/deployments/page.tsx` and `app/(app)/agentops/deployments/[id]/page.tsx` (each with a `loading.tsx`: `TableSkeleton` and `RecordSkeleton`), UI `features/agentops/deployments/*`, data `lib/data/deployments.ts`, client stores `features/agentops/deployments/store.ts`.
 
@@ -21,14 +21,14 @@ The page is for agent owners who ship changes, the platform lead and AI governan
 
 A `StatGrid` of six cards rendered by the client `DeploymentsView` from the release store, so approving, rolling back or drafting a release moves them.
 
-| Card | Value | Hint |
-| --- | --- | --- |
-| Deploys, 7d | Releases with `deployedAt` in the last 7 days | Releases created in the window |
-| Success rate, 30d | Promoted divided by (Promoted + Rolled back + Failed) completed in the last 30 days | "N promoted of M" |
-| Active canaries | Releases in `Canary` or `Progressing` | Their traffic percentages |
-| Rollbacks, 30d | Rolled back in the last 30 days | How many of the finished releases failed health checks |
-| Awaiting approval | Pending approvals without a decision this session | How many are High risk; links to the Approvals tab |
-| Mean time to promote | Average hours from `createdAt` to `completedAt` over promoted releases | "Draft to 100% traffic" |
+| Card                 | Value                                                                               | Hint                                                   |
+| -------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| Deploys, 7d          | Releases with `deployedAt` in the last 7 days                                       | Releases created in the window                         |
+| Success rate, 30d    | Promoted divided by (Promoted + Rolled back + Failed) completed in the last 30 days | "N promoted of M"                                      |
+| Active canaries      | Releases in `Canary` or `Progressing`                                               | Their traffic percentages                              |
+| Rollbacks, 30d       | Rolled back in the last 30 days                                                     | How many of the finished releases failed health checks |
+| Awaiting approval    | Pending approvals without a decision this session                                   | How many are High risk; links to the Approvals tab     |
+| Mean time to promote | Average hours from `createdAt` to `completedAt` over promoted releases              | "Draft to 100% traffic"                                |
 
 The tab strip shows a `CountPill` with the release count and, when anything is pending, an amber pill on Approvals.
 
@@ -36,19 +36,19 @@ The tab strip shows a `CountPill` with the release count and, when anything is p
 
 A `DataTable` of `Release`, newest first by deployed date (or created date when not deployed). Rows link to the record.
 
-| Column | What it shows |
-| --- | --- |
-| Release | `rel-…` id |
-| Agent | Agent chip |
-| Version | Semver chip (`v2.4.1`) and environment badge |
-| What changed | Up to two change chips (prompt `p-7 → p-8`, model before → after, `+tool` / `−tool`, `temperature 0.3 → 0.2`, `top_k 8 → 12`); `+N more` with a tooltip |
-| Strategy | `Canary 5% → 25% → 100%`, `Blue-green`, `Shadow (mirrored traffic)`, `Direct` |
-| Stage | `Draft`, `Pending approval`, `Canary`, `Progressing`, `Promoted`, `Rolled back`, `Failed` |
-| Eval gate | `Passed` / `Failed` with `score / threshold`, or `Pending`; failed gates show the reason underneath (for example "1 regression on kb-draft-v4"); Draft releases without a run read "No gate". Links to `/agentops/evals?run=<id>`, which highlights the run. Header tooltip |
-| Traffic | Bar with the step markers and the current share. Shows an empty placeholder for Draft, Pending approval and Failed |
-| Health vs baseline | Error-rate delta in points and quality delta; either turns red past tolerance |
-| Deployed by | Hidden by default |
-| When | Deployed date, or created date |
+| Column             | What it shows                                                                                                                                                                                                                                                               |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Release            | `rel-…` id                                                                                                                                                                                                                                                                  |
+| Agent              | Agent chip                                                                                                                                                                                                                                                                  |
+| Version            | Semver chip (`v2.4.1`) and environment badge                                                                                                                                                                                                                                |
+| What changed       | Up to two change chips (prompt `p-7 → p-8`, model before → after, `+tool` / `−tool`, `temperature 0.3 → 0.2`, `top_k 8 → 12`); `+N more` with a tooltip                                                                                                                     |
+| Strategy           | `Canary 5% → 25% → 100%`, `Blue-green`, `Shadow (mirrored traffic)`, `Direct`                                                                                                                                                                                               |
+| Stage              | `Draft`, `Pending approval`, `Canary`, `Progressing`, `Promoted`, `Rolled back`, `Failed`                                                                                                                                                                                   |
+| Eval gate          | `Passed` / `Failed` with `score / threshold`, or `Pending`; failed gates show the reason underneath (for example "1 regression on kb-draft-v4"); Draft releases without a run read "No gate". Links to `/agentops/evals?run=<id>`, which highlights the run. Header tooltip |
+| Traffic            | Bar with the step markers and the current share. Shows an empty placeholder for Draft, Pending approval and Failed                                                                                                                                                          |
+| Health vs baseline | Error-rate delta in points and quality delta; either turns red past tolerance                                                                                                                                                                                               |
+| Deployed by        | Hidden by default                                                                                                                                                                                                                                                           |
+| When               | Deployed date, or created date                                                                                                                                                                                                                                              |
 
 Facets: Agent, Stage, Strategy, Environment. Search covers id, version, summary, stage, strategy and agent name. Strategy and Health headers carry tooltips. Toolbar: `New release`, disabled with a tooltip: releases are drafted from a passed eval run or from the Environments tab.
 
@@ -82,13 +82,13 @@ Header: `<agent> <version>`, the summary, stage and environment badges, `previou
 
 Header actions depend on stage:
 
-| Stage | Buttons |
-| --- | --- |
-| Pending approval, not yet fully approved | `Approve` (disabled until the eval gate has passed; tooltip gives the reason) |
-| Draft or Pending approval, approved and gate passed | `Start rollout` |
-| Canary or Progressing | `Promote` (disabled while paused), `Pause` / `Resume`, `Roll back` |
-| Promoted | `Roll back` |
-| Draft without a gate | none; the Guardrails & gates list links to the agent's eval runs |
+| Stage                                               | Buttons                                                                       |
+| --------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Pending approval, not yet fully approved            | `Approve` (disabled until the eval gate has passed; tooltip gives the reason) |
+| Draft or Pending approval, approved and gate passed | `Start rollout`                                                               |
+| Canary or Progressing                               | `Promote` (disabled while paused), `Pause` / `Resume`, `Roll back`            |
+| Promoted                                            | `Roll back`                                                                   |
+| Draft without a gate                                | none; the Guardrails & gates list links to the agent's eval runs              |
 
 Left column:
 
@@ -137,19 +137,19 @@ Every destructive or exposure-widening action (advance, pause, promote, roll bac
 
 ## Actions
 
-| Action | Where | What it does in this template |
-| --- | --- | --- |
-| New release | Releases toolbar | Disabled with a tooltip. Releases are drafted from a passed eval run (`Promote to production` on the run record) or from the Environments tab |
-| Approve | Record header; approval card | Marks every approver `approved` in the release store, appends an approval event to Activity, appends `release.approved` to the audit log, toasts (the record header toast carries an `Open audit log` action; the card toast is description only). The card moves to "Decided this session" |
-| Request changes / Reject | Approval card | Dialog requiring a reason of 10+ characters. Reject returns the release to `Draft`; Request changes marks the signed-in approver. The reason is posted to Activity and stored as the audit `context.reason` on `release.rejected` / `release.changes_requested` |
-| Start rollout | Record header | Sets stage to `Canary` (canary strategy) or `Progressing`, traffic to the first step, `deployedAt` to now, appends a deploy event and `release.deployed` |
-| Advance to N% | Rollout section while live | Dialog restating the deltas, then moves traffic to the next step and appends `release.canary.advanced`; reaching 100% sets `Promoted`, `completedAt` and appends `release.promoted` |
-| Pause / Resume | Record header and rollout section while live | Dialog, then toggles a local paused flag; disables Advance and Promote; appends a note event and `release.paused` / `release.resumed` |
-| Promote | Record header while live | Dialog with an optional note, then traffic 100%, stage `Promoted`, `completedAt` now, `release.promoted` |
-| Roll back | Record header and rollout section | Dialog that restates the deltas and requires a reason, then traffic 0, stage `Rolled back`, `completedAt` now, a rollback activity event carrying the reason, and `release.rolled_back` with `context.reason` |
-| Export release notes | Record overflow | Downloads `<rel-id>-release-notes.md` (summary, gate, coverage, cost, changes table, activity). Real file download |
-| Promote → prod / Draft canary | Environments tab | Dialog, then drafts a real release in the release store (`draftReleaseFromStaging`): next `rel-` id, Canary 5% then 25% then 100%, `Pending approval` when a gate run exists, otherwise `Draft` without a gate; appends `release.created`. The toast offers `Open release` and the row links to it from then on |
-| Enforce (eval gate) | Lives on the Evals page, not here | |
+| Action                        | Where                                        | What it does in this template                                                                                                                                                                                                                                                                                   |
+| ----------------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| New release                   | Releases toolbar                             | Disabled with a tooltip. Releases are drafted from a passed eval run (`Promote to production` on the run record) or from the Environments tab                                                                                                                                                                   |
+| Approve                       | Record header; approval card                 | Marks every approver `approved` in the release store, appends an approval event to Activity, appends `release.approved` to the audit log, toasts (the record header toast carries an `Open audit log` action; the card toast is description only). The card moves to "Decided this session"                     |
+| Request changes / Reject      | Approval card                                | Dialog requiring a reason of 10+ characters. Reject returns the release to `Draft`; Request changes marks the signed-in approver. The reason is posted to Activity and stored as the audit `context.reason` on `release.rejected` / `release.changes_requested`                                                 |
+| Start rollout                 | Record header                                | Sets stage to `Canary` (canary strategy) or `Progressing`, traffic to the first step, `deployedAt` to now, appends a deploy event and `release.deployed`                                                                                                                                                        |
+| Advance to N%                 | Rollout section while live                   | Dialog restating the deltas, then moves traffic to the next step and appends `release.canary.advanced`; reaching 100% sets `Promoted`, `completedAt` and appends `release.promoted`                                                                                                                             |
+| Pause / Resume                | Record header and rollout section while live | Dialog, then toggles a local paused flag; disables Advance and Promote; appends a note event and `release.paused` / `release.resumed`                                                                                                                                                                           |
+| Promote                       | Record header while live                     | Dialog with an optional note, then traffic 100%, stage `Promoted`, `completedAt` now, `release.promoted`                                                                                                                                                                                                        |
+| Roll back                     | Record header and rollout section            | Dialog that restates the deltas and requires a reason, then traffic 0, stage `Rolled back`, `completedAt` now, a rollback activity event carrying the reason, and `release.rolled_back` with `context.reason`                                                                                                   |
+| Export release notes          | Record overflow                              | Downloads `<rel-id>-release-notes.md` (summary, gate, coverage, cost, changes table, activity). Real file download                                                                                                                                                                                              |
+| Promote → prod / Draft canary | Environments tab                             | Dialog, then drafts a real release in the release store (`draftReleaseFromStaging`): next `rel-` id, Canary 5% then 25% then 100%, `Pending approval` when a gate run exists, otherwise `Draft` without a gate; appends `release.created`. The toast offers `Open release` and the row links to it from then on |
+| Enforce (eval gate)           | Lives on the Evals page, not here            |                                                                                                                                                                                                                                                                                                                 |
 
 Activity events you create are stamped with the signed-in sample user (`currentUser`, Kevin Dargas) and the fixed clock. Releases live in the module-scoped `releaseStore`, decisions in `decisionStore`; both reset on reload. Every transition above appends a `release.*` event to the client audit log, so the Audit Log page and the `Open audit log` toast action show them in the same session.
 
@@ -157,24 +157,24 @@ Activity events you create are stamped with the signed-in sample user (`currentU
 
 ### Stage
 
-| Stage | Meaning | Traffic shown |
-| --- | --- | --- |
-| Draft | Created, eval gate pending, no approvals | not shown |
-| Pending approval | Gate run, waiting for sign-offs | not shown |
-| Canary | Serving the first canary step | current % (pulsing badge) |
-| Progressing | Past the first step, or a blue-green cut-over in progress | current % (pulsing badge) |
-| Promoted | 100% on the new version | 100% (green bar) |
-| Rolled back | Traffic returned to `rollbackTarget` | 0% (amber bar) |
-| Failed | Health check failed before promotion | not shown |
+| Stage            | Meaning                                                   | Traffic shown             |
+| ---------------- | --------------------------------------------------------- | ------------------------- |
+| Draft            | Created, eval gate pending, no approvals                  | not shown                 |
+| Pending approval | Gate run, waiting for sign-offs                           | not shown                 |
+| Canary           | Serving the first canary step                             | current % (pulsing badge) |
+| Progressing      | Past the first step, or a blue-green cut-over in progress | current % (pulsing badge) |
+| Promoted         | 100% on the new version                                   | 100% (green bar)          |
+| Rolled back      | Traffic returned to `rollbackTarget`                      | 0% (amber bar)            |
+| Failed           | Health check failed before promotion                      | not shown                 |
 
 ### Strategy and steps
 
-| Strategy | Steps | Notes |
-| --- | --- | --- |
-| Canary | 5, 25, 100 | Default for production in the sample |
-| Blue-green | 0, 100 | Full cut-over after warm-up |
-| Shadow | 0 | Mirrored traffic, never served |
-| Direct | 100 | Immediate; used for staging |
+| Strategy   | Steps      | Notes                                |
+| ---------- | ---------- | ------------------------------------ |
+| Canary     | 5, 25, 100 | Default for production in the sample |
+| Blue-green | 0, 100     | Full cut-over after warm-up          |
+| Shadow     | 0          | Mirrored traffic, never served       |
+| Direct     | 100        | Immediate; used for staging          |
 
 ### Environment badges
 
@@ -198,12 +198,12 @@ Derived from the change kinds by `riskFor()`: any `model` change is `High`; any 
 
 ### Other thresholds
 
-| Check | Pass condition | Where |
-| --- | --- | --- |
-| Guardrail coverage | 80% and above | approval cards, record gates list |
-| Cost delta | +10% per day and below | approval cards, record gates list |
-| Experiment significance | 0.95 and above | approval cards |
-| Approval due | amber under 12 hours | approval cards |
+| Check                   | Pass condition         | Where                             |
+| ----------------------- | ---------------------- | --------------------------------- |
+| Guardrail coverage      | 80% and above          | approval cards, record gates list |
+| Cost delta              | +10% per day and below | approval cards, record gates list |
+| Experiment significance | 0.95 and above         | approval cards                    |
+| Approval due            | amber under 12 hours   | approval cards                    |
 
 ### Change chips
 

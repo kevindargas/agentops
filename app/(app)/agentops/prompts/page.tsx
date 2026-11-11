@@ -4,19 +4,12 @@ import { Suspense } from "react"
 import { TableSkeleton } from "@/components/shared/skeletons"
 import { PageHeader } from "@/components/shared/page-header"
 import { NewPromptButton } from "@/features/agentops/prompts/new-prompt-sheet"
-import {
-  PromptsStats,
-  PromptsTable,
-} from "@/features/agentops/prompts/prompts-table"
+import { PromptsStats } from "@/features/agentops/prompts/prompts-table"
+import { PromptsView } from "@/features/agentops/prompts/prompts-view"
 
 export const metadata: Metadata = { title: "Prompts" }
 
-export default async function PromptsPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ agent?: string }>
-}) {
-  const { agent } = await searchParams
+export default function PromptsPage() {
   return (
     <>
       <PageHeader
@@ -26,7 +19,7 @@ export default async function PromptsPage({
       />
       <PromptsStats />
       <Suspense fallback={<TableSkeleton columns={7} />}>
-        <PromptsTable agentId={agent} />
+        <PromptsView />
       </Suspense>
     </>
   )

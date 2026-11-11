@@ -16,7 +16,6 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
-import { setQueryParam } from "@/hooks/use-query-param"
 import { AvailabilityBar } from "@/components/charts/availability-bar"
 import { StackedBarChart } from "@/components/charts/stacked-bar-chart"
 import {
@@ -373,24 +372,19 @@ function describeChanges(prev: Budget, next: Budget, note: string) {
 
 export function BudgetsTable({
   initialAgentId,
-  initialBudgetId,
+  openId,
+  onOpenChange: openBudget,
 }: {
+  /** Preselects the agent facet (`?agent=`). */
   initialAgentId?: string
-  initialBudgetId?: string
+  /** The budget whose sheet is open (`?budget=`); unknown ids are ignored. */
+  openId: string | null
+  /** Called with the row id to open, `null` to close; the owner writes the URL. */
+  onOpenChange: (id: string | null) => void
 }) {
   const items = budgetStore.use()
-  const [openId, setOpenId] = React.useState<string | null>(
-    initialBudgetId && budgetStore.get().some((b) => b.id === initialBudgetId)
-      ? initialBudgetId
-      : null
-  )
   const [creating, setCreating] = React.useState(false)
   const open = items.find((b) => b.id === openId) ?? null
-
-  const openBudget = (id: string | null) => {
-    setOpenId(id)
-    setQueryParam("budget", id)
-  }
 
   return (
     <>

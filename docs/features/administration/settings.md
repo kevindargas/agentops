@@ -6,7 +6,7 @@ Settings holds personal preferences (profile, appearance, notifications, securit
 
 - Route: `/settings`. Sidebar: Administration, Settings. Chord `G` then `S`.
 - Deep links: `?section=<id>` or `?tab=<id>` scroll to a card, where id is one of `profile`, `appearance`, `notifications`, `security`, `platform`, `danger`. The user menu and the notifications popover use `/settings?tab=notifications`.
-- Code: `app/(app)/settings/page.tsx`, `features/admin/settings-form.tsx`. Theme mode uses `next-themes` through `components/theme-provider.tsx`. Platform defaults come from `cabSchedule`, `incidentAutoCloseDays` and `onHoldAutoResolveDays` in `lib/constants.ts` and `siteConfig.workspace` in `config/site.ts`.
+- Code: `app/(app)/settings/page.tsx` (static), `features/admin/settings-view.tsx` (reads `?section=` / `?tab=` on the client inside `Suspense`), `features/admin/settings-form.tsx`. Theme mode uses `next-themes` through `components/theme-provider.tsx`. Platform defaults come from `cabSchedule`, `incidentAutoCloseDays` and `onHoldAutoResolveDays` in `lib/constants.ts` and `siteConfig.workspace` in `config/site.ts`.
 
 ## What is on the page
 

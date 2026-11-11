@@ -1,6 +1,5 @@
 "use client"
 
-import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { CalendarIcon } from "lucide-react"
 
 import {
@@ -10,35 +9,32 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { useQueryParam } from "@/hooks/use-query-param"
 
-import { periodOptions, type PeriodValue } from "./period"
+import { periodOptions, resolvePeriod, type PeriodValue } from "./period"
 
 /**
- * Date-range preset selector that writes `?period=` to the URL so the server
- * page re-renders every chart against the same slice. Must be rendered inside
- * a <Suspense> boundary (it reads useSearchParams).
+ * Date-range preset selector bound to `?period=` through `useQueryParam`, so
+ * every chart reading the same param re-renders without a navigation. Must be
+ * rendered inside a <Suspense> boundary (it reads useSearchParams).
  */
 export function PeriodSelect({
   param = "period",
-  value,
+  fallback = "90d",
 }: {
   param?: string
-  value: PeriodValue
+  /** Period used when the param is missing or not one of the presets. */
+  fallback?: PeriodValue
 }) {
-  const router = useRouter()
-  const pathname = usePathname()
-  const searchParams = useSearchParams()
+  const [raw, setPeriod] = useQueryParam(param)
+  const value = resolvePeriod(raw ?? undefined, fallback).value
   const items = periodOptions.map((p) => ({ value: p.value, label: p.label }))
 
   return (
     <Select
       items={items}
       value={value}
-      onValueChange={(next) => {
-        const params = new URLSearchParams(searchParams.toString())
-        params.set(param, String(next))
-        router.replace(`${pathname}?${params.toString()}`, { scroll: false })
-      }}
+      onValueChange={(next) => setPeriod(String(next))}
     >
       <SelectTrigger aria-label="Reporting period" className="min-w-40">
         <CalendarIcon className="text-muted-foreground" />

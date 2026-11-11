@@ -7,7 +7,7 @@ Reviewers (service-desk leads, domain experts, the agent owner) work through it;
 ## Where to find it
 
 - Nav group: Agent Operations, "Review Queue". The sidebar badge is the live pending count (`getNavCounts().reviews`, 36 in the seed).
-- Route: `/agentops/reviews`. `?item=<rev-id>` opens that item first (the "In review queue" button on a trace uses it); `?agent=<agt-id>` scopes the queue and the title to one agent ("Pending reviews" on an agent record uses it). Code: `app/(app)/agentops/reviews/page.tsx`, stats and workspace in `features/agentops/review-queue.tsx`, state in `features/agentops/stores.ts` (`reviewStore`).
+- Route: `/agentops/reviews`. `?item=<rev-id>` opens that item first (the "In review queue" button on a trace uses it); `?agent=<agt-id>` scopes the queue and the title to one agent ("Pending reviews" on an agent record uses it). Code: `app/(app)/agentops/reviews/page.tsx` (static header), URL reader in `features/agentops/review-queue-view.tsx` (client, inside `Suspense`), scoped title in `features/agentops/agent-scoped-title.tsx`, stats and workspace in `features/agentops/review-queue.tsx`, state in `features/agentops/stores.ts` (`reviewStore`).
 - Keyboard chord: `G` then `R` opens this page (Requests uses `G Q`).
 - Entry points: the "Awaiting review" card on the fleet overview, "In review queue" on a trace, "Pending reviews" on an agent record.
 

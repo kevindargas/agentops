@@ -38,6 +38,7 @@ import { FrameworkBadge, ModelChip, ScoreBar } from "@/features/agentops/shared"
 import { TracesTable } from "@/features/agentops/traces-table"
 import {
   agentTraces,
+  deployedAgents,
   driftSignals,
   experiments,
   getDeployedAgent,
@@ -55,6 +56,16 @@ import {
   formatTokens,
   timeAgo,
 } from "@/lib/format"
+
+/**
+ * Every sample record is prerendered at build time so the static export has a
+ * page per id; anything else is a 404. The server build gets the same list.
+ */
+export const dynamicParams = false
+
+export function generateStaticParams() {
+  return deployedAgents.map((agent) => ({ id: agent.id }))
+}
 
 export async function generateMetadata({
   params,

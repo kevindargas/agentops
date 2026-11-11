@@ -1,7 +1,5 @@
 "use client"
 
-import * as React from "react"
-
 import { setQueryParam } from "@/hooks/use-query-param"
 import { CountPill } from "@/components/shared/count-pill"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -11,23 +9,28 @@ import { CostAllocationTable } from "./cost-allocation-table"
 import { CostsOverview } from "./costs-overview"
 import { SavingsPanel } from "./savings-panel"
 import { budgetStore, savingsStore } from "./store"
+import { isCostsTab, type CostsTabValue } from "./tabs"
 
-export type CostsTabValue = "budgets" | "allocation" | "savings"
+export { isCostsTab, type CostsTabValue }
 
-const tabValues: CostsTabValue[] = ["budgets", "allocation", "savings"]
-
+/**
+ * Overview and tab shell for /agentops/costs. The URL is the source of truth:
+ * `CostsRoute` reads `?tab=`, `?agent=` and `?budget=` and passes them in;
+ * tab changes and sheet opens are written back with `setQueryParam` (no
+ * navigation).
+ */
 export function CostsView({
-  initialTab = "budgets",
-  initialAgentId,
-  initialBudgetId,
+  tab = "budgets",
+  agentId,
+  budgetId,
 }: {
-  initialTab?: CostsTabValue
+  /** `?tab=`, already validated with `isCostsTab`. */
+  tab?: CostsTabValue
   /** From `?agent=`: preselects the agent facet on Budgets and Allocation. */
-  initialAgentId?: string
-  /** From `?budget=`: opens that budget's sheet on load. */
-  initialBudgetId?: string
+  agentId?: string
+  /** From `?budget=`: the budget whose sheet is open. */
+  budgetId?: string
 }) {
-  const [tab, setTab] = React.useState<CostsTabValue>(initialTab)
   const budgets = budgetStore.use()
   const savings = savingsStore.use()
   const counts: Record<CostsTabValue, number> = {
@@ -51,10 +54,7 @@ export function CostsView({
       <Tabs
         value={tab}
         onValueChange={(v) => {
-          const next = tabValues.includes(v as CostsTabValue)
-            ? (v as CostsTabValue)
-            : "budgets"
-          setTab(next)
+          const next = isCostsTab(String(v)) ? (v as CostsTabValue) : "budgets"
           setQueryParam("tab", next === "budgets" ? null : next)
         }}
         className="gap-4"
@@ -64,14 +64,18 @@ export function CostsView({
           {trigger("allocation", "Allocation")}
           {trigger("savings", "Savings")}
         </TabsList>
+        {/* The agent facet is seeded once per `?agent=`; neither table writes
+            that param, so the keys only change on navigation. */}
         <TabsContent value="budgets">
           <BudgetsTable
-            initialAgentId={initialAgentId}
-            initialBudgetId={initialBudgetId}
+            key={agentId ?? ""}
+            initialAgentId={agentId}
+            openId={budgetId ?? null}
+            onOpenChange={(id) => setQueryParam("budget", id)}
           />
         </TabsContent>
         <TabsContent value="allocation">
-          <CostAllocationTable initialAgentId={initialAgentId} />
+          <CostAllocationTable key={agentId ?? ""} initialAgentId={agentId} />
         </TabsContent>
         <TabsContent value="savings">
           <SavingsPanel />

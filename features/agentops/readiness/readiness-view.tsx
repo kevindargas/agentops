@@ -79,26 +79,51 @@ function stripShareHash() {
   window.history.replaceState(null, "", url)
 }
 
+function tabFromParam(v: string | undefined): ReadinessTab {
+  return readinessTabs.includes(v as ReadinessTab)
+    ? (v as ReadinessTab)
+    : "results"
+}
+
+/**
+ * Page body for /agentops/readiness. `ReadinessRoute` passes the current
+ * `?tab=` and `?control=`; the view keeps them in local state (it also moves
+ * tabs on its own when an assessment appears) and adopts a new URL value
+ * during render, so a link into this route updates the page in place while
+ * the view's own `setQueryParam` writes round-trip without a remount.
+ */
 export function ReadinessView({
   initialTab,
   initialControlId,
 }: {
+  /** `?tab=`; anything unknown falls back to `results`. */
   initialTab?: string
+  /** `?control=`; unknown ids are ignored. */
   initialControlId?: string
 }) {
   const hydrated = useReadinessHydrated()
   const { assessment, controlSet, result, showNotApplicable } = useReadiness()
-  const [tab, setTab] = React.useState<ReadinessTab>(
-    readinessTabs.includes(initialTab as ReadinessTab)
-      ? (initialTab as ReadinessTab)
-      : "results"
+  const resolveControl = (id: string | undefined) =>
+    id && controlSet.controls.some((c) => c.id === id) ? id : null
+
+  const [tab, setTab] = React.useState<ReadinessTab>(() =>
+    tabFromParam(initialTab)
   )
-  const [openId, setOpenId] = React.useState<string | null>(
-    initialControlId &&
-      controlSet.controls.some((c) => c.id === initialControlId)
-      ? initialControlId
-      : null
+  const [openId, setOpenId] = React.useState<string | null>(() =>
+    resolveControl(initialControlId)
   )
+  // Adopt URL changes made outside this view (links into the route, the
+  // sidebar). Own writes arrive here with the value already in state.
+  const [seenTab, setSeenTab] = React.useState(initialTab)
+  if (initialTab !== seenTab) {
+    setSeenTab(initialTab)
+    setTab(tabFromParam(initialTab))
+  }
+  const [seenControlId, setSeenControlId] = React.useState(initialControlId)
+  if (initialControlId !== seenControlId) {
+    setSeenControlId(initialControlId)
+    setOpenId(resolveControl(initialControlId))
+  }
 
   // When an assessment appears (created, loaded or imported) while the user
   // sits on Setup, move them to the controls list. Derived during render so

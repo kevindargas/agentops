@@ -2,7 +2,17 @@ import type { Metadata } from "next"
 
 import { ReleaseRecord } from "@/features/agentops/deployments/release-record"
 import { getDeployedAgent } from "@/lib/data/agentops"
-import { getRelease } from "@/lib/data/deployments"
+import { getRelease, releases } from "@/lib/data/deployments"
+
+/**
+ * Every sample record is prerendered at build time so the static export has a
+ * page per id; anything else is a 404. The server build gets the same list.
+ */
+export const dynamicParams = false
+
+export function generateStaticParams() {
+  return releases.map((release) => ({ id: release.id }))
+}
 
 export async function generateMetadata({
   params,

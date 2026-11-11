@@ -8,6 +8,8 @@
     "dev:warm": "next dev & node scripts/warm.mjs; wait",
     "warm": "node scripts/warm.mjs",
     "build": "next build",
+    "build:static": "STATIC_EXPORT=1 next build",
+    "preview:static": "node scripts/serve-static.mjs",
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",

@@ -7,7 +7,7 @@ The list page is where you go when a metric moved and you need examples. The det
 ## Where to find it
 
 - Nav group: Agent Operations, "Traces". No keyboard chord.
-- List route: `/agentops/traces`; add `?agent=<agt-id>` to scope the page to one agent (the title becomes "Traces · <agent name>" and the Agent facet is removed). `?status=`, `?outcome=` and `?flag=` preselect the matching facet, so `/agentops/traces?status=Failed` lands on failed runs. Code: `app/(app)/agentops/traces/page.tsx`, table in `features/agentops/traces-table.tsx`.
+- List route: `/agentops/traces`; add `?agent=<agt-id>` to scope the page to one agent (the title becomes "Traces · <agent name>" and the Agent facet is removed). `?status=`, `?outcome=` and `?flag=` preselect the matching facet, so `/agentops/traces?status=Failed` lands on failed runs. Code: `app/(app)/agentops/traces/page.tsx` (static header), URL reader, title and stat row in `features/agentops/traces-view.tsx` (client, inside `Suspense` with `TableSkeleton`), table in `features/agentops/traces-table.tsx`.
 - Detail route: `/agentops/traces/[id]` where ids look like `tr_3f0000` (`loading.tsx` renders `RecordSkeleton`). Code: `app/(app)/agentops/traces/[id]/page.tsx`, header actions in `features/agentops/trace-actions.tsx`, waterfall in `features/agentops/trace-waterfall.tsx`, badges in `features/agentops/shared.tsx`.
 - The command menu (`Cmd/Ctrl K`) searches traces once you type a query and opens the detail page.
 - Entry points elsewhere: "Traces" on an agent record, "Traces" per agent on the drift board, "Open trace" in the review queue, "Explore traces" and the outcome card on the fleet overview.
@@ -165,7 +165,7 @@ Header actions:
 - Outcome and bound labels, the `OutcomeBadge`, `BoundHitFlag` and `finishReasonLabel` live in `features/agentops/shared.tsx`; the badge colours are entries in `stateTone` in `components/shared/status-badge.tsx`.
 - Types: `AgentTrace`, `TraceSpan`, `TraceStatus`, `TraceOutcome`, `BoundHit`, `TraceLineage`, `TraceStreaming`, `TraceChannel`, `FinishReason`, `SpanStatus` in `lib/types.ts`.
 
-To wire a backend: replace `agentTraces` and `getTrace` with a client over your trace store (the shape is close to an OpenTelemetry or LangSmith export: spans with type, timing, tokens, cost, inputs, outputs and attributes). The list page is a server component and can `await` the query, passing `data` into `TracesTable`. Replace `queueTraceForReview` with the mutation that creates a review item; "Copy trace JSON" already uses the clipboard and the overflow links need no backend.
+To wire a backend: replace `agentTraces` and `getTrace` with a client over your trace store (the shape is close to an OpenTelemetry or LangSmith export: spans with type, timing, tokens, cost, inputs, outputs and attributes). The list page is static; `TracesView` in `features/agentops/traces-view.tsx` reads the URL scope on the client and passes `data` into `TracesTable`, so fetch there (or in the page, passing the result down as a prop). Replace `queueTraceForReview` with the mutation that creates a review item; "Copy trace JSON" already uses the clipboard and the overflow links need no backend.
 
 ## Related pages
 

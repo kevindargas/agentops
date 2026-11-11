@@ -24,7 +24,6 @@ import {
   type DataTableFeatures,
   type FacetDef,
 } from "@/components/data-table"
-import { setQueryParam } from "@/hooks/use-query-param"
 import { DetailList } from "@/components/shared/detail-list"
 import { EmptyState } from "@/components/shared/empty-state"
 import { MetricTile } from "@/components/shared/metric-tile"
@@ -389,21 +388,19 @@ function sendTestDelivery(t: Trigger) {
 export function TriggersTable({
   agentId,
   initialAgentId,
-  initialOpenId,
+  openId,
+  onOpenChange: setOpenId,
 }: {
   /** Hard filter: hides the agent facet (agent record pages). */
   agentId?: string
   /** Preselects the agent facet (`?agent=` on the list page). */
   initialAgentId?: string
-  /** Opens this trigger's sheet on load (`?trigger=`). */
-  initialOpenId?: string
+  /** The trigger whose sheet is open (`?trigger=`); unknown ids are ignored. */
+  openId: string | null
+  /** Called with the row id to open, `null` to close; the owner writes the URL. */
+  onOpenChange: (id: string | null) => void
 }) {
   const items = triggerStore.use()
-  const [openId, setOpenIdState] = React.useState<string | null>(() =>
-    initialOpenId && triggerStore.get().some((t) => t.id === initialOpenId)
-      ? initialOpenId
-      : null
-  )
   const [testId, setTestId] = React.useState<string | null>(null)
   const [deleteId, setDeleteId] = React.useState<string | null>(null)
   const [createOpen, setCreateOpen] = React.useState(false)
@@ -411,11 +408,6 @@ export function TriggersTable({
     () => buildColumns((t) => setTestId(t.id)),
     [setTestId]
   )
-
-  const setOpenId = React.useCallback((id: string | null) => {
-    setOpenIdState(id)
-    setQueryParam("trigger", id)
-  }, [])
 
   const data = agentId ? items.filter((t) => t.agentId === agentId) : items
   const open = items.find((t) => t.id === openId) ?? null

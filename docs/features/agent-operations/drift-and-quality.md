@@ -7,7 +7,7 @@ It is the page to open when the fleet overview shows an agent as `Drifting`, whe
 ## Where to find it
 
 - Nav group: Agent Operations, "Drift & Quality". No keyboard chord.
-- Route: `/agentops/drift`. `?agent=<agt-id>` scopes the board and the title to one agent; `?state=Open|Acknowledged|Resolved|active|all` preselects the filter. Code: `app/(app)/agentops/drift/page.tsx`, board in `features/agentops/drift-board.tsx`, state in `features/agentops/stores.ts` (`driftStore`).
+- Route: `/agentops/drift`. `?agent=<agt-id>` scopes the board and the title to one agent; `?state=Open|Acknowledged|Resolved|active|all` preselects the filter. Code: `app/(app)/agentops/drift/page.tsx` (static header), URL reader in `features/agentops/drift-view.tsx` (client, inside `Suspense`), scoped title in `features/agentops/agent-scoped-title.tsx`, board in `features/agentops/drift-board.tsx`, state in `features/agentops/stores.ts` (`driftStore`).
 - Entry points: "Open drift board" in the fleet overview attention banner, "Board" and the Drift meta chip on an agent record (both carry `?agent=`).
 
 ## What is on the page

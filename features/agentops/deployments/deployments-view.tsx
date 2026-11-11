@@ -1,7 +1,5 @@
 "use client"
 
-import * as React from "react"
-
 import { setQueryParams } from "@/hooks/use-query-param"
 import { CountPill } from "@/components/shared/count-pill"
 import { StatCard } from "@/components/shared/stat-card"
@@ -25,27 +23,27 @@ export { isDeploymentsTab, type DeploymentsTab }
 /**
  * Stat row and tab shell for /agentops/deployments. Everything reads the
  * release store, so approving, rolling back or drafting a release updates the
- * cards and the tab counts in place. `?tab=` and `?agent=` are read once by
- * the server page and mirrored back with `setQueryParams` (no navigation).
+ * cards and the tab counts in place. `?tab=` and `?agent=` are read by
+ * `DeploymentsRoute` and passed in; tab changes are written back with
+ * `setQueryParams` (no navigation), so the URL stays the source of truth.
  */
 export function DeploymentsView({
-  initialTab = "releases",
+  tab = "releases",
   agentId,
 }: {
-  initialTab?: DeploymentsTab
+  /** `?tab=`, already validated with `isDeploymentsTab`. */
+  tab?: DeploymentsTab
+  /** `?agent=`: preselects the Agent facet and tints the environments row. */
   agentId?: string
 }) {
-  const [tab, setTab] = React.useState<DeploymentsTab>(initialTab)
   const releases = releaseStore.use()
   const { decisions } = decisionStore.use()
   const approvals = approvalsFrom(releases)
   const open = approvals.filter((a) => !decisions[a.id])
   const stats = deploymentStats(releases)
 
-  const changeTab = (next: DeploymentsTab) => {
-    setTab(next)
+  const changeTab = (next: DeploymentsTab) =>
     setQueryParams({ tab: next === "releases" ? null : next, agent: agentId })
-  }
 
   return (
     <>
@@ -113,6 +111,8 @@ export function DeploymentsView({
         </TabsList>
         <TabsContent value="releases">
           <ReleasesTable
+            // Seeded once per `?agent=`; the table never writes that param.
+            key={agentId ?? ""}
             initialFacets={agentId ? { agent: [agentId] } : undefined}
           />
         </TabsContent>

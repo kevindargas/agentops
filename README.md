@@ -2,6 +2,8 @@
 
 A UI template for operating an agentic AI ecosystem. Deployed agents are treated like production services, with traces, human review, drift and quality monitoring, experiments, prompts, tools, guardrails, evals, releases, budgets and a readiness assessment, next to the incident, change and service-health workflows those agents plug into. Built in the shadcn/ui style: every component lives in your codebase, is themed through CSS variables and can be edited freely. All data is deterministic sample data, so the app runs with no backend and no keys.
 
+Live demo: https://kevindargas.github.io/agentops (static export, rebuilt on every push to `main`).
+
 ## Stack
 
 | Layer     | Choice                                                                                     |
@@ -25,8 +27,10 @@ pnpm install
 pnpm dev        # http://localhost:3000 (redirects to /dashboard)
 pnpm dev:warm   # dev server plus background pre-compilation of every route
 pnpm warm       # pre-compile routes against an already running dev server
-pnpm build      # production build
+pnpm build      # production build (server mode)
 pnpm start      # serve the production build
+pnpm build:static   # static export into out/ (STATIC_EXPORT=1)
+pnpm preview:static # serve out/ locally under NEXT_PUBLIC_BASE_PATH
 pnpm typecheck  # tsc --noEmit
 pnpm lint       # eslint (Next rules plus jsx-a11y recommended)
 pnpm test       # vitest run (jsdom)
@@ -35,6 +39,10 @@ pnpm format     # prettier --write
 ```
 
 No environment variables are required. The Model Catalog fetches the public OpenRouter model list server-side and degrades to an empty state offline. Full details in [docs/getting-started.md](docs/getting-started.md).
+
+## Deployment
+
+`pnpm build && pnpm start` runs the app as a Node server, which is what Vercel, Netlify and containers use. `pnpm build:static` produces a static site in `out/` instead; `.github/workflows/pages.yml` builds it with `NEXT_PUBLIC_BASE_PATH=/agentops` and publishes it to GitHub Pages at https://kevindargas.github.io/agentops on every push to `main`. In the static build every sample record has its own page, the root redirects to the dashboard on the client, and the Model Catalog shows the OpenRouter list as of the build. Details, including what is not available without a server, are in [docs/development/deployment.md](docs/development/deployment.md).
 
 ## Keyboard shortcuts
 

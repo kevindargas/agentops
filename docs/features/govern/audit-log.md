@@ -15,7 +15,7 @@ The page is for auditors, security and compliance reviewers, and the platform te
   - `?q=<text>` pre-filters the table by a search term (id, action, summary, actor, target, agent, trace, release, approval or hash). Release toasts and the release record's "Audit history" link use `?source=release&q=<rel-id>`. A banner above the table shows the term with a `Clear` button.
 - Files: route `app/(app)/agentops/audit/page.tsx` (with a `loading.tsx` rendering `TableSkeleton`), UI `features/agentops/audit/*`, data `lib/data/audit.ts`, client store `features/agentops/audit/audit-store.ts`.
 
-The client view reads the URL with `useSearchParams` inside a `Suspense` boundary (fallback `TableSkeleton`) and writes it back with `router.replace`, so every state of the page is a shareable link.
+The page is a static shell. `AuditRoute` (`features/agentops/audit/audit-route.tsx`) reads `?source=` and `?q=` with `useSearchParams` inside a `Suspense` boundary (fallback `TableSkeleton`) and remounts `AuditView` when a link changes them; `AuditView` reads `?event=` and `?range=` itself and writes them back with `setQueryParams` (`history.replaceState`), so every state of the page is a shareable link and the route exports statically.
 
 ## What is on the page
 
@@ -23,26 +23,26 @@ The client view reads the URL with `useSearchParams` inside a `Suspense` boundar
 
 A `StatGrid` of four cards, computed from the client audit store (seed plus anything appended this session).
 
-| Card | Value | Hint |
-| --- | --- | --- |
-| Events, 30d | Events in the trailing 30 days | Total events in the retention window, and how many were appended this session |
-| Actors, 30d | Distinct actor ids in the window | "N people · M agents and system" |
-| Chain integrity | `Verified` (green) or `Broken` (red), from `verifyAuditChain()` run on load | When the last scheduled integrity check ran |
-| Retention | Retention period in days | Storage class and number of records on legal hold |
+| Card            | Value                                                                       | Hint                                                                          |
+| --------------- | --------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Events, 30d     | Events in the trailing 30 days                                              | Total events in the retention window, and how many were appended this session |
+| Actors, 30d     | Distinct actor ids in the window                                            | "N people · M agents and system"                                              |
+| Chain integrity | `Verified` (green) or `Broken` (red), from `verifyAuditChain()` run on load | When the last scheduled integrity check ran                                   |
+| Retention       | Retention period in days                                                    | Storage class and number of records on legal hold                             |
 
 ### Event table
 
 A compact `DataTable` of `AuditEvent`, newest first. Clicking a row opens the event sheet.
 
-| Column | What it shows |
-| --- | --- |
-| When | Relative date |
-| Action | The dotted verb (`release.rolled_back`, `prompt.version.promoted`) as a monospace badge, coloured by its last segment. Header tooltip |
+| Column  | What it shows                                                                                                                                                                    |
+| ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| When    | Relative date                                                                                                                                                                    |
+| Action  | The dotted verb (`release.rolled_back`, `prompt.version.promoted`) as a monospace badge, coloured by its last segment. Header tooltip                                            |
 | Summary | One-line description, with a readable target kind ("Prompt version", "MCP server", "Release gate") and id underneath; records appended this session carry a "This session" badge |
-| Actor | User chip, agent chip, or a "Control plane" system chip |
-| Source | Which subsystem produced the event, with icon |
-| Event | The `aud-` id |
-| Hash | Short form of the record hash (`a1b2c3…9f0e`). Hidden by default. Header tooltip explains the digest |
+| Actor   | User chip, agent chip, or a "Control plane" system chip                                                                                                                          |
+| Source  | Which subsystem produced the event, with icon                                                                                                                                    |
+| Event   | The `aud-` id                                                                                                                                                                    |
+| Hash    | Short form of the record hash (`a1b2c3…9f0e`). Hidden by default. Header tooltip explains the digest                                                                             |
 
 Facets: Source (eleven values), Actor (Person, Agent, System), Action family (the first segment of the verb: prompt, guardrail, release, review, tool, mcp_server, budget, memory, api_key, agent, readiness, audit). Search covers id, action, summary, actor name, target id and label, agent id, trace id, release id, approval id and the full hash, so pasting a hash from an export finds the record.
 
@@ -101,16 +101,16 @@ Opens via `?event=` in the shared sheet frame (detail width, `Close` footer). Se
 
 ## Actions
 
-| Action | Where | What it does in this template |
-| --- | --- | --- |
-| Open event | Table row, legal hold ids, genesis link, previous-record button, toast "Open" | Sets `?event=` and opens the sheet |
-| Range select | Toolbar | Sets or clears `?range=` and refilters the table. Exports use the same range and the `?q=` term |
-| Clear search term | Banner above the table | Drops `?q=` |
-| JSON export | Toolbar | Downloads `agentops-audit-<30d|7d|1d|all>[-<q>].json`, pretty-printed, every field including `hash` and `prevHash`. Real file download |
-| CSV export | Toolbar | Downloads `agentops-audit-<range>[-<q>].csv`, RFC 4180, 24 fixed columns (`id, at, actor_kind, actor_id, actor_name, action, source, target_kind, target_id, target_label, target_href, summary, before, after, agent_id, trace_id, prompt_version, model_id, policy_version, approval_id, release_id, reason, hash, prev_hash`). Real file download |
-| Verify chain | Retention card | Re-runs `verifyAuditChain()` over all events, including those appended this session, and toasts the result. On failure the toast offers to open the broken record |
-| Copy id / hash / prevHash / action | Event sheet | Clipboard |
-| Target link, context chips | Event sheet | Navigate to the record page or sheet (`/agentops/prompts/<id>`, `/agentops/guardrails?policy=`, `/agentops/deployments/<id>`, `/agentops/agents/<id>`, `/agentops/traces/<id>`, `/agentops/tools?tab=permissions`, and so on) |
+| Action                             | Where                                                                         | What it does in this template                                                                                                                                                                                                                                                                                                                        |
+| ---------------------------------- | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Open event                         | Table row, legal hold ids, genesis link, previous-record button, toast "Open" | Sets `?event=` and opens the sheet                                                                                                                                                                                                                                                                                                                   |
+| Range select                       | Toolbar                                                                       | Sets or clears `?range=` and refilters the table. Exports use the same range and the `?q=` term                                                                                                                                                                                                                                                      |
+| Clear search term                  | Banner above the table                                                        | Drops `?q=`                                                                                                                                                                                                                                                                                                                                          |
+| JSON export                        | Toolbar                                                                       | Downloads `agentops-audit-<30d                                                                                                                                                                                                                                                                                                                       | 7d  | 1d  | all>[-<q>].json`, pretty-printed, every field including `hash`and`prevHash`. Real file download |
+| CSV export                         | Toolbar                                                                       | Downloads `agentops-audit-<range>[-<q>].csv`, RFC 4180, 24 fixed columns (`id, at, actor_kind, actor_id, actor_name, action, source, target_kind, target_id, target_label, target_href, summary, before, after, agent_id, trace_id, prompt_version, model_id, policy_version, approval_id, release_id, reason, hash, prev_hash`). Real file download |
+| Verify chain                       | Retention card                                                                | Re-runs `verifyAuditChain()` over all events, including those appended this session, and toasts the result. On failure the toast offers to open the broken record                                                                                                                                                                                    |
+| Copy id / hash / prevHash / action | Event sheet                                                                   | Clipboard                                                                                                                                                                                                                                                                                                                                            |
+| Target link, context chips         | Event sheet                                                                   | Navigate to the record page or sheet (`/agentops/prompts/<id>`, `/agentops/guardrails?policy=`, `/agentops/deployments/<id>`, `/agentops/agents/<id>`, `/agentops/traces/<id>`, `/agentops/tools?tab=permissions`, and so on)                                                                                                                        |
 
 The page itself has no write actions; the log is append-only by design. Other Govern pages append to it through `recordAudit()` in `features/agentops/audit/audit-store.ts`: enabling, disabling, rescoping, retuning, duplicating or rolling back a guardrail policy; deciding a violation verdict (and undoing it); toggling a release gate; drafting, approving, rejecting, requesting changes on, starting, advancing, pausing, resuming, promoting or rolling back a release. Each appended record gets the next `aud-` id, `prevHash` equal to the current last hash and a `hash` from the same `auditDigest`, so `verifyAuditChain` stays green over the whole list. Appended records are marked "This session" and are lost on reload. A backend must persist them.
 
@@ -118,19 +118,19 @@ The page itself has no write actions; the log is append-only by design. Other Go
 
 ### Sources
 
-| Source value | Label | Fed by |
-| --- | --- | --- |
-| `prompt` | Prompts | Prompt versions: created, promoted to production, rejected in review |
-| `guardrail` | Guardrails | Policy versions: created, updated, threshold changed; disabled; escalated violations |
-| `release` | Releases | Every release activity event, plus rejections and change requests by approvers |
-| `review` | Reviews | Human review verdicts from the review queue |
+| Source value      | Label            | Fed by                                                                                                        |
+| ----------------- | ---------------- | ------------------------------------------------------------------------------------------------------------- |
+| `prompt`          | Prompts          | Prompt versions: created, promoted to production, rejected in review                                          |
+| `guardrail`       | Guardrails       | Policy versions: created, updated, threshold changed; disabled; escalated violations                          |
+| `release`         | Releases         | Every release activity event, plus rejections and change requests by approvers                                |
+| `review`          | Reviews          | Human review verdicts from the review queue                                                                   |
 | `tool-permission` | Tool permissions | Permission granted or revoked per agent and tool; tools deprecated or disabled; permission requests by agents |
-| `mcp-server` | MCP servers | Server registered or disconnected |
-| `budget` | Budgets | Limit changed, budget breached, breach action triggered |
-| `memory` | Memory | Store compacted, TTL changed, user memory deleted |
-| `api-key` | API keys | Created, rotated, revoked, expiry warning |
-| `agent-config` | Agent config | Model and parameter changes shipped by releases, playground applies, pause and resume, owner changes |
-| `readiness` | Readiness | Assessment created, control status changed, snapshot taken, nightly audit integrity check |
+| `mcp-server`      | MCP servers      | Server registered or disconnected                                                                             |
+| `budget`          | Budgets          | Limit changed, budget breached, breach action triggered                                                       |
+| `memory`          | Memory           | Store compacted, TTL changed, user memory deleted                                                             |
+| `api-key`         | API keys         | Created, rotated, revoked, expiry warning                                                                     |
+| `agent-config`    | Agent config     | Model and parameter changes shipped by releases, playground applies, pause and resume, owner changes          |
+| `readiness`       | Readiness        | Assessment created, control status changed, snapshot taken, nightly audit integrity check                     |
 
 The README lists eight of these (prompts, guardrails, releases, reviews, tools, budgets, memory, keys); the code also has `mcp-server`, `agent-config` and `readiness`.
 
@@ -138,13 +138,13 @@ The README lists eight of these (prompts, guardrails, releases, reviews, tools, 
 
 Actions are dotted paths, `<family>.<object>.<verb>` or `<family>.<verb>`. The badge colour is decided by the last segment:
 
-| Tone | Verb endings |
-| --- | --- |
-| Red (danger) | `rolled_back`, `failed`, `rejected`, `revoked`, `breached`, `disconnected`, `escalated`, `user_deleted` |
-| Green (success) | `promoted`, `approved`, `granted`, `passed`, `verified`, `resumed`, `registered` |
-| Amber (warning) | `disabled`, `deprecated`, `paused`, `degraded`, `expiry_warning`, `changes_requested`, `requested` |
-| Blue (info) | `changed`, `updated`, `rotated`, `compacted`, `advanced`, `annotated`, `triggered`, `taken` |
-| Neutral | everything else (`created`) |
+| Tone            | Verb endings                                                                                            |
+| --------------- | ------------------------------------------------------------------------------------------------------- |
+| Red (danger)    | `rolled_back`, `failed`, `rejected`, `revoked`, `breached`, `disconnected`, `escalated`, `user_deleted` |
+| Green (success) | `promoted`, `approved`, `granted`, `passed`, `verified`, `resumed`, `registered`                        |
+| Amber (warning) | `disabled`, `deprecated`, `paused`, `degraded`, `expiry_warning`, `changes_requested`, `requested`      |
+| Blue (info)     | `changed`, `updated`, `rotated`, `compacted`, `advanced`, `annotated`, `triggered`, `taken`             |
+| Neutral         | everything else (`created`)                                                                             |
 
 Verbs present in the sample: `prompt.version.{created,promoted,rejected}`, `guardrail.policy.{created,updated,disabled}`, `guardrail.threshold.changed`, `guardrail.violation.escalated`, `release.{created,approved,deployed,promoted,rolled_back,failed,annotated,rejected,changes_requested}`, `release.eval_gate.passed`, `release.canary.advanced`, `review.*`, `tool.permission.{granted,revoked,requested}`, `tool.{deprecated,disabled}`, `mcp_server.{registered,disconnected}`, `budget.limit.changed`, `budget.breached`, `budget.action.triggered`, `memory.{compacted,user_deleted}`, `memory.ttl.changed`, `api_key.{created,rotated,revoked,expiry_warning}`, `agent.{paused,resumed}`, `agent.owner.changed`, `agent.config.params_changed`, `readiness.assessment.created`, `readiness.control.changed`, `readiness.snapshot.taken`, `audit.integrity.verified`.
 

@@ -6,7 +6,7 @@ The Service Catalog is the storefront: hardware, software, access, cloud resourc
 
 - Route: `/itsm/catalog`. Sidebar: Service Management, Service Catalog (no chord). Quick create "Service request" and the command menu "New service request" also land here.
 - Deep links: `?q=<text>` pre-fills the search, `?category=<name>` pre-selects a category (ignored if the name is not one of the seven categories).
-- Code: `app/(app)/itsm/catalog/page.tsx`, `features/catalog/catalog-browser.tsx` (browser, item card and request sheet). Submitted requests go into `features/requests/requests-store.ts`. Data in `lib/data/catalog.ts` (`catalogItems`, `getCatalogItem`).
+- Code: `app/(app)/itsm/catalog/page.tsx` (static), `features/catalog/catalog-view.tsx` (reads `?q=` and `?category=` on the client inside `Suspense`), `features/catalog/catalog-browser.tsx` (browser, item card and request sheet). Submitted requests go into `features/requests/requests-store.ts`. Data in `lib/data/catalog.ts` (`catalogItems`, `getCatalogItem`).
 
 ## What is on the page
 

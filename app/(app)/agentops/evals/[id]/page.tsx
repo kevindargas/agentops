@@ -37,6 +37,7 @@ import {
 import { AgentChip, ModelChip, ScoreBar } from "@/features/agentops/shared"
 import { getDeployedAgent } from "@/lib/data/agentops"
 import {
+  evalRuns,
   getDataset,
   getEvalCases,
   getEvalRun,
@@ -50,6 +51,16 @@ import {
   formatMs,
   timeAgo,
 } from "@/lib/format"
+
+/**
+ * Every sample record is prerendered at build time so the static export has a
+ * page per id; anything else is a 404. The server build gets the same list.
+ */
+export const dynamicParams = false
+
+export function generateStaticParams() {
+  return evalRuns.map((run) => ({ id: run.id }))
+}
 
 export async function generateMetadata({
   params,

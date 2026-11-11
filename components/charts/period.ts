@@ -1,4 +1,4 @@
-/** Date-range presets shared by the server page (resolving ?period=) and the client selector. */
+/** Date-range presets shared by the analytics view (resolving ?period=) and the client selector. */
 export const periodOptions = [
   { value: "7d", label: "Last 7 days", days: 7 },
   { value: "30d", label: "Last 30 days", days: 30 },

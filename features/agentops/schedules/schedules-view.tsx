@@ -1,7 +1,5 @@
 "use client"
 
-import * as React from "react"
-
 import { setQueryParam } from "@/hooks/use-query-param"
 import { CountPill } from "@/components/shared/count-pill"
 import { StatCard } from "@/components/shared/stat-card"
@@ -80,21 +78,27 @@ function SchedulesStats() {
   )
 }
 
+/**
+ * Tab shell for /agentops/schedules. The URL is the source of truth:
+ * `SchedulesRoute` reads `?tab=`, `?agent=`, `?schedule=` and `?trigger=`
+ * and passes them in; tab changes and sheet opens are written back with
+ * `setQueryParam` (no navigation).
+ */
 export function SchedulesView({
-  initialTab = "schedules",
+  tab = "schedules",
   agentId,
   scheduleId,
   triggerId,
 }: {
-  initialTab?: SchedulesTab
+  /** `?tab=`, already validated with `isSchedulesTab`. */
+  tab?: SchedulesTab
   /** `?agent=`: preselects the agent facet and narrows the calendar. */
   agentId?: string
-  /** `?schedule=`: opens that schedule's sheet. */
+  /** `?schedule=`: the schedule whose sheet is open. */
   scheduleId?: string
-  /** `?trigger=`: opens that trigger's sheet. */
+  /** `?trigger=`: the trigger whose sheet is open. */
   triggerId?: string
 }) {
-  const [tab, setTab] = React.useState<SchedulesTab>(initialTab)
   const schedules = scheduleStore.use()
   const triggers = triggerStore.use()
   const runs = runStore.use()
@@ -127,7 +131,6 @@ export function SchedulesView({
         onValueChange={(v) => {
           if (!isSchedulesTab(String(v))) return
           const next = v as SchedulesTab
-          setTab(next)
           setQueryParam("tab", next === "schedules" ? null : next)
         }}
         className="gap-4"
@@ -138,17 +141,29 @@ export function SchedulesView({
           {trigger("calendar", "Calendar")}
           {trigger("runs", "Run history")}
         </TabsList>
+        {/* The agent facet is seeded once per `?agent=`; none of the panels
+            write that param, so the keys only change on navigation. */}
         <TabsContent value="schedules">
-          <SchedulesTable initialAgentId={agentId} initialOpenId={scheduleId} />
+          <SchedulesTable
+            key={agentId ?? ""}
+            initialAgentId={agentId}
+            openId={scheduleId ?? null}
+            onOpenChange={(id) => setQueryParam("schedule", id)}
+          />
         </TabsContent>
         <TabsContent value="triggers">
-          <TriggersTable initialAgentId={agentId} initialOpenId={triggerId} />
+          <TriggersTable
+            key={agentId ?? ""}
+            initialAgentId={agentId}
+            openId={triggerId ?? null}
+            onOpenChange={(id) => setQueryParam("trigger", id)}
+          />
         </TabsContent>
         <TabsContent value="calendar">
-          <ScheduleCalendar initialAgentId={agentId} />
+          <ScheduleCalendar key={agentId ?? ""} initialAgentId={agentId} />
         </TabsContent>
         <TabsContent value="runs">
-          <RunHistoryTable initialAgentId={agentId} />
+          <RunHistoryTable key={agentId ?? ""} initialAgentId={agentId} />
         </TabsContent>
       </Tabs>
     </>

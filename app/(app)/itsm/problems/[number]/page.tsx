@@ -34,8 +34,19 @@ import {
   getCi,
   getProblem,
   incidentsForProblem,
+  problems,
 } from "@/lib/data"
 import { formatDate, formatDateTime, timeAgo } from "@/lib/format"
+
+/**
+ * Every sample record is prerendered at build time so the static export has a
+ * page per number; anything else is a 404. The server build gets the same list.
+ */
+export const dynamicParams = false
+
+export function generateStaticParams() {
+  return problems.map((problem) => ({ number: problem.number }))
+}
 
 export async function generateMetadata({
   params,

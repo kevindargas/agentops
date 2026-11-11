@@ -7,12 +7,12 @@ Agent fleet analytics are not here; they live on the Fleet Overview and the Agen
 ## Where to find it
 
 - Route: `/analytics`. Sidebar: Workspace, Analytics. Chord `G` then `N`.
-- Period is in the URL: `?period=7d`, `?period=30d` or `?period=90d` (default `90d`). The selector writes the parameter and the server component re-renders.
-- Code: `app/(app)/analytics/page.tsx`, period helpers in `components/charts/period.ts` and `components/charts/period-select.tsx`.
+- Period is in the URL: `?period=7d`, `?period=30d` or `?period=90d` (default `90d`). The selector writes the parameter with `history.replaceState` (`useQueryParam`) and the client view re-renders every chart; the page itself is static.
+- Code: `app/(app)/analytics/page.tsx` (header and period select), KPIs, charts and table in `features/workspace/analytics-view.tsx` (client, inside `Suspense` with `TableSkeleton`), period helpers in `components/charts/period.ts` and `components/charts/period-select.tsx`.
 
 ## What is on the page
 
-**Header.** `PageHeader` with the Workspace eyebrow, "Figures cover the last N days unless noted", and the period select.
+**Header.** `PageHeader` with the Workspace eyebrow, "Figures cover the selected period unless noted", and the period select (the chosen period is named in the Incident volume chart description).
 
 **KPI tiles.** A `StatGrid` of four compact cards. Every value and delta is derived from the records for the selected window versus the window immediately before it (`countInWindows` and `meanTimeToResolveHours` in `lib/data/metrics.ts`); a delta is omitted when the previous window has no data.
 
@@ -50,7 +50,7 @@ Every week
 
 ## Actions
 
-- Period select: writes `?period=` to the URL (replace, no scroll) and re-renders the page.
+- Period select: writes `?period=` to the URL through `useQueryParam` (replace, no navigation, no scroll) and the view re-renders.
 - "Open incidents" button on the Incident volume card: navigates to `/itsm/incidents`.
 - No exports, no drill-down filters, no mutations.
 
@@ -68,7 +68,7 @@ Every week
 - Incidents and changes: `lib/data/itsm.ts`. Groups: `lib/data/users.ts` (`getGroup`).
 - Period parsing: `resolvePeriod` in `components/charts/period.ts`, with `7d`, `30d`, `90d` options.
 - KPI values and deltas: `meanTimeToResolveHours`, `countInWindows` and `mean` from `lib/data/metrics.ts` over `incidents` and `changes`.
-- The daily incident series, the weekly change series and the sparkline walks are generated in the page with `createRng(7 + days)` from `lib/data/seed.ts`, anchored to `NOW`. Replace `trend`, `weekly` and `sparks` with real aggregates when connecting a reporting backend.
+- The daily incident series, the weekly change series and the sparkline walks are generated in `AnalyticsView` with `createRng(7 + days)` from `lib/data/seed.ts`, anchored to `NOW`. Replace `trend`, `weekly` and `sparks` with real aggregates when connecting a reporting backend.
 
 ## Related pages
 
